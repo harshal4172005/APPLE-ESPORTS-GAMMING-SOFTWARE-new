@@ -1,0 +1,118 @@
+import api from '../config/api';
+
+// --- Branches ---
+export const getBranches = async () => {
+  const response = await api.get('/branches');
+  return response.data;
+};
+
+export const createBranch = async (branchData) => {
+  const response = await api.post('/branches', branchData);
+  return response.data;
+};
+
+export const updateBranch = async (id, branchData) => {
+  const response = await api.put(`/branches/${id}`, branchData);
+  return response.data;
+};
+
+export const deleteBranch = async (id) => {
+  const response = await api.delete(`/branches/${id}`);
+  return response.data;
+};
+
+export const deleteBranchPermanent = async (id) => {
+  const response = await api.delete(`/branches/${id}/permanent`);
+  return response.data;
+};
+
+// --- Operators ---
+export const getOperators = async () => {
+  const response = await api.get('/operators');
+  return response.data;
+};
+
+export const createOperator = async (operatorData) => {
+  const response = await api.post('/operators', operatorData);
+  return response.data;
+};
+
+export const updateOperator = async (id, operatorData) => {
+  const response = await api.put(`/operators/${id}`, operatorData);
+  return response.data;
+};
+
+export const deleteOperator = async (id) => {
+  const response = await api.delete(`/operators/${id}`);
+  return response.data;
+};
+
+export const manageOperatorAdminRole = async (id, data) => {
+  const response = await api.post(`/operators/${id}/admin-role`, data);
+  return response.data;
+};
+
+// --- PCs Management ---
+export const getBranchPcs = async (branchId) => {
+  const response = await api.get('/pcs', { params: { branchId } });
+  return response.data;
+};
+
+// Full PC details for Settings page fleet management (includes specs, zone, hardwareNotes, etc.)
+export const getBranchPcsDetailed = async (branchId) => {
+  const response = await api.get('/pcs/details', { params: { branchId } });
+  return response.data;
+};
+
+export const createPc = async (pcData) => {
+  const response = await api.post('/pcs', pcData);
+  return response.data;
+};
+
+export const updatePc = async (id, pcData) => {
+  const response = await api.put(`/pcs/${id}`, pcData);
+  return response.data;
+};
+
+export const deletePc = async (id) => {
+  const response = await api.delete(`/pcs/${id}`);
+  return response.data;
+};
+
+// --- Audit Logs ---
+export const getAuditLogs = async () => {
+  const response = await api.get('/audit-logs?limit=500');
+  return response.data;
+};
+
+// --- Activation / Permanent Deletion ---
+export const activateBranch = async (id) => {
+  const response = await api.post(`/branches/${id}/activate`);
+  return response.data;
+};
+
+export const activateOperator = async (id) => {
+  const response = await api.post(`/operators/${id}/activate`);
+  return response.data;
+};
+
+export const deleteOperatorPermanent = async (id) => {
+  const response = await api.delete(`/operators/${id}/permanent`);
+  return response.data;
+};
+
+// --- System Configuration ---
+export const getSystemConfigs = async () => {
+  const response = await api.get('/system-config');
+  return response.data;
+};
+
+export const saveSystemConfig = async (configData) => {
+  const response = await api.post('/system-config', configData);
+  return response.data;
+};
+
+export const forceLogoutOperator = async (id) => {
+  const response = await api.post(`/auth/force-logout/${id}`);
+  return response.data;
+};

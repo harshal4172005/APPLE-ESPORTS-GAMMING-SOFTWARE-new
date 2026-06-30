@@ -1,0 +1,63 @@
+using System.Collections.Concurrent;
+using Microsoft.EntityFrameworkCore.Storage;
+using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Infrastructure.Data;
+
+namespace AppleEsportsErp.Infrastructure.Repositories;
+
+/// <summary>
+/// UnitOfWork implementation — manages transactions and repository lifecycle.
+/// SOP: login+shift, bill+payment, wallet+audit all must be atomic.
+/// </summary>
+public class UnitOfWork : IUnitOfWork
+{
+    private readonly AppDbContext _db;
+    private readonly ConcurrentDictionary<Type, object> _repositories = new();
+    private IDbContextTransaction? _transaction;
+    private bool _disposed;
+
+    public UnitOfWork(AppDbContext db) => _db = db;
+
+    public IRepository<T> Repository<T>() where T : class
+    {
+        return (IRepository<T>)_repositories.GetOrAdd(typeof(T), _ => new Repository<T>(_db));
+    }
+
+    public async Task<int> SaveChangesAsync(CancellationToken ct = default)
+        => await _db.SaveChangesAsync(ct);
+
+    public async Task BeginTransactionAsync(CancellationToken ct = default)
+    {
+        _transaction = await _db.Database.BeginTransactionAsync(ct);
+    }
+
+    public async Task CommitTransactionAsync(CancellationToken ct = default)
+    {
+        if (_transaction == null)
+        {
+            await _db.SaveChangesAsync(ct);
+            return;
+        }
+        await _db.SaveChangesAsync(ct);
+        await _transaction.CommitAsync(ct);
+        await _transaction.DisposeAsync();
+        _transaction = null;
+    }
+
+    public async Task RollbackTransactionAsync(CancellationToken ct = default)
+    {
+        if (_transaction == null) return;
+        await _transaction.RollbackAsync(ct);
+        await _transaction.DisposeAsync();
+        _transaction = null;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _transaction?.Dispose();
+        _db.Dispose();
+        _disposed = true;
+        GC.SuppressFinalize(this);
+    }
+}

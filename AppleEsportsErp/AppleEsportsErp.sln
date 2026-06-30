@@ -1,0 +1,55 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{2231A88B-2210-44A8-B0A6-F3E8B2805AD0}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AppleEsportsErp.Api", "src\AppleEsportsErp.Api\AppleEsportsErp.Api.csproj", "{7E5DF149-42C9-480A-B2A2-4081E125A2D5}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AppleEsportsErp.Application", "src\AppleEsportsErp.Application\AppleEsportsErp.Application.csproj", "{25244FCA-C1BC-47FD-A867-43EE23A7FCC6}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AppleEsportsErp.Domain", "src\AppleEsportsErp.Domain\AppleEsportsErp.Domain.csproj", "{1CCEF68E-10A1-46D7-8E7F-27E03D7ED4F1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AppleEsportsErp.Infrastructure", "src\AppleEsportsErp.Infrastructure\AppleEsportsErp.Infrastructure.csproj", "{D373DCBE-E00F-43F0-B1AB-36045A792852}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AppleEsportsErp.ClientAgent", "src\AppleEsportsErp.ClientAgent\AppleEsportsErp.ClientAgent.csproj", "{3E48F097-95B0-40DD-B670-07C12E8DA4BA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7E5DF149-42C9-480A-B2A2-4081E125A2D5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7E5DF149-42C9-480A-B2A2-4081E125A2D5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7E5DF149-42C9-480A-B2A2-4081E125A2D5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7E5DF149-42C9-480A-B2A2-4081E125A2D5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{25244FCA-C1BC-47FD-A867-43EE23A7FCC6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{25244FCA-C1BC-47FD-A867-43EE23A7FCC6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{25244FCA-C1BC-47FD-A867-43EE23A7FCC6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{25244FCA-C1BC-47FD-A867-43EE23A7FCC6}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1CCEF68E-10A1-46D7-8E7F-27E03D7ED4F1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1CCEF68E-10A1-46D7-8E7F-27E03D7ED4F1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1CCEF68E-10A1-46D7-8E7F-27E03D7ED4F1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1CCEF68E-10A1-46D7-8E7F-27E03D7ED4F1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D373DCBE-E00F-43F0-B1AB-36045A792852}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D373DCBE-E00F-43F0-B1AB-36045A792852}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D373DCBE-E00F-43F0-B1AB-36045A792852}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D373DCBE-E00F-43F0-B1AB-36045A792852}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3E48F097-95B0-40DD-B670-07C12E8DA4BA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3E48F097-95B0-40DD-B670-07C12E8DA4BA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3E48F097-95B0-40DD-B670-07C12E8DA4BA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3E48F097-95B0-40DD-B670-07C12E8DA4BA}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{7E5DF149-42C9-480A-B2A2-4081E125A2D5} = {2231A88B-2210-44A8-B0A6-F3E8B2805AD0}
+		{25244FCA-C1BC-47FD-A867-43EE23A7FCC6} = {2231A88B-2210-44A8-B0A6-F3E8B2805AD0}
+		{1CCEF68E-10A1-46D7-8E7F-27E03D7ED4F1} = {2231A88B-2210-44A8-B0A6-F3E8B2805AD0}
+		{D373DCBE-E00F-43F0-B1AB-36045A792852} = {2231A88B-2210-44A8-B0A6-F3E8B2805AD0}
+		{3E48F097-95B0-40DD-B670-07C12E8DA4BA} = {2231A88B-2210-44A8-B0A6-F3E8B2805AD0}
+	EndGlobalSection
+EndGlobal

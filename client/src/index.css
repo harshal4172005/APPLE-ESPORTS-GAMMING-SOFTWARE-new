@@ -1,0 +1,187 @@
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════════
+   Apple Esports — Gaming Café Base Styles
+   ═══════════════════════════════════════════ */
+
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-bg text-text font-body text-sm min-h-screen overflow-x-hidden antialiased;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 4px;
+    height: 4px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-2 rounded;
+  }
+}
+
+@layer components {
+  /* Card component — base card from prototype */
+  .card {
+    @apply bg-bg-2 border border-border rounded-md p-3.5;
+  }
+
+  .card-header {
+    @apply flex items-center justify-between mb-3 gap-2;
+  }
+
+  .card-title {
+    @apply font-heading text-sm font-semibold tracking-wide flex items-center gap-2 text-text;
+  }
+
+  /* PC grid button states matching SOP §7.1 */
+  .pc-btn {
+    @apply border border-border-2 rounded-sm p-2 text-center cursor-pointer
+           transition-all duration-150 bg-bg-3 relative;
+  }
+
+  .pc-btn:hover {
+    @apply border-accent -translate-y-0.5;
+  }
+
+  .pc-btn-active {
+    @apply bg-accent/5 border-accent/50;
+  }
+
+  .pc-btn-reserved {
+    @apply bg-neon-purple/10 border-neon-purple;
+  }
+
+  .pc-btn-awaiting {
+    @apply bg-neon-orange/10 border-neon-orange animate-await-pulse;
+  }
+
+  .pc-btn-offline {
+    @apply opacity-40;
+  }
+
+  /* Session info strip */
+  .stat-card {
+    @apply bg-bg-3 rounded-sm p-2.5 border border-border;
+  }
+
+  .stat-label {
+    @apply text-[10px] text-text-2 mb-1 tracking-wide;
+  }
+
+  .stat-value {
+    @apply font-heading text-base font-semibold text-text;
+  }
+
+  /* Live indicator */
+  .live-dot {
+    @apply w-1.5 h-1.5 rounded-full bg-accent animate-blink;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply bg-accent hover:bg-accent-dark text-bg font-semibold 
+           px-4 py-2 rounded-sm transition-colors duration-150;
+  }
+
+  .btn-secondary {
+    @apply bg-bg-3 hover:bg-bg-4 text-text border border-border 
+           px-4 py-2 rounded-sm transition-colors duration-150;
+  }
+
+  .btn-danger {
+    @apply bg-neon-red/10 hover:bg-neon-red/20 text-neon-red border border-neon-red/30
+           px-4 py-2 rounded-sm transition-colors duration-150;
+  }
+
+  /* Form inputs */
+  .input {
+    @apply bg-bg-3 border border-border text-text rounded-sm px-3 py-2 
+           focus:border-accent focus:ring-1 focus:ring-accent/30 
+           outline-none transition-all duration-150 text-sm;
+  }
+
+  /* Badge */
+  .badge {
+    @apply text-[9px] font-semibold tracking-wider px-2 py-0.5 rounded-full;
+  }
+
+  .badge-active {
+    @apply bg-accent/10 border border-accent text-accent;
+  }
+
+  .badge-reserved {
+    @apply bg-neon-purple/10 border border-neon-purple text-neon-purple;
+  }
+
+  .badge-awaiting {
+    @apply bg-neon-orange/10 border border-neon-orange text-neon-orange;
+  }
+
+  .badge-offline {
+    @apply bg-neon-red/10 border border-neon-red text-neon-red;
+  }
+}
+
+/* ═══════════════════════════════════════════
+   Animations
+   ═══════════════════════════════════════════ */
+@keyframes slideIn {
+  from {
+    transform: translateX(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+/* Scrollbar utility */
+.scrollbar-thin::-webkit-scrollbar {
+  width: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  @apply bg-border rounded;
+}
+
+/* Print Styles */
+@media print {
+  @page {
+    size: landscape;
+    margin: 10mm;
+  }
+  /* Hide sidebar and topbar */
+  aside, header, nav, .print-hidden {
+    display: none !important;
+  }
+  /* Expand main content */
+  main, .card {
+    border: none !important;
+    background: transparent !important;
+    color: black !important;
+    box-shadow: none !important;
+  }
+  body {
+    background-color: white !important;
+    color: black !important;
+  }
+  .card-header, h2, div, td, th {
+    color: black !important;
+    border-color: #ccc !important;
+  }
+}
