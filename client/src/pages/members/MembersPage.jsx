@@ -749,7 +749,9 @@ export default function MembersPage() {
     setIsLoading(true);
     try {
       const res = await getMembers(targetBranchId, q || undefined, pg, 100);
-      setMembers(res?.items ?? (Array.isArray(res) ? res : []));
+      const items = res?.items ?? (Array.isArray(res) ? res : []);
+      // Ensure we don't show suspended members in case backend cache hasn't cleared
+      setMembers(items.filter(m => m.status !== 1 && m.status !== 'Suspended'));
       setPagination({
         page: pg,
         totalCount: res?.totalCount ?? 0,
@@ -903,6 +905,7 @@ export default function MembersPage() {
           member={deletingMember}
           onClose={() => setDeletingMember(null)}
           onConfirm={() => {
+            setMembers(prev => prev.filter(m => m.id !== deletingMember.id));
             setDeletingMember(null);
             setSelectedMember(null);
             fetchMembers(1, search);

@@ -23,28 +23,31 @@ export default function PcLockScreen() {
   const [profile, setProfile] = useState(null);
 
   // Time Selection State
-  const [durationMinutes, setDurationMinutes] = useState(60);
   const [isStarting, setIsStarting] = useState(false);
-  const RATE_PER_HOUR = 100;
-  const expectedAmount = (durationMinutes / 60) * RATE_PER_HOUR;
 
-  const [plans, setPlans] = useState([]);
+  // Plans
   const [selectedPlan, setSelectedPlan] = useState(null);
+  const [plans, setPlans] = useState([]);
+  const [plansError, setPlansError] = useState(false);
 
   // Fetch plans when step changes to walkin
   useEffect(() => {
-    if (step === 'walkin' && pcId) {
+    if ((step === 'walkin' || step === 'time_selection') && pcId) {
       const fetchPlans = async () => {
         try {
+          setPlansError(false);
           const res = await api.get(`/public/pcs/${pcId}/plans`);
           if (res.data.success) {
             setPlans(res.data.data);
             if (res.data.data.length > 0) {
               setSelectedPlan(res.data.data[0]);
             }
+          } else {
+            setPlansError(true);
           }
         } catch (err) {
           console.error("Failed to fetch plans", err);
+          setPlansError(true);
         }
       };
       fetchPlans();
@@ -76,7 +79,7 @@ export default function PcLockScreen() {
     setIsLoggingIn(true);
     setLoginError('');
     try {
-      const res = await api.post('/auth/member/login', {
+      const res = await api.post('/members/login', {
         identifier: identifier,
         password: password,
       });
@@ -109,9 +112,9 @@ export default function PcLockScreen() {
   };
 
   const handleStartSession = async () => {
-    if (!profile) return;
+    if (!profile || !selectedPlan) return;
     
-    if (profile.gamingBalance < expectedAmount) {
+    if (!selectedPlan.isPostpaid && (profile.gamingBalance || 0) < selectedPlan.price) {
       toast.error('Insufficient gaming balance');
       return;
     }
@@ -134,9 +137,9 @@ export default function PcLockScreen() {
           pcId: actualPcId,
           memberId: profile.memberId,
           customerName: profile.fullName,
-          durationMinutes: durationMinutes,
-          packageName: 'Member Session',
-          expectedAmount: expectedAmount,
+          durationMinutes: selectedPlan.duration,
+          packageName: selectedPlan.name,
+          expectedAmount: selectedPlan.price,
         },
         {
           headers: {
@@ -277,7 +280,11 @@ export default function PcLockScreen() {
 
             <div>
               <label className="block text-sm font-medium text-text-2 mb-2 font-body tracking-wide uppercase">Select Plan</label>
-              {plans.length === 0 ? (
+              {plansError ? (
+                <div className="flex justify-center p-4">
+                  <span className="text-accent font-bold">Failed to connect to backend. Is the server running?</span>
+                </div>
+              ) : plans.length === 0 ? (
                 <div className="flex justify-center p-4">
                   <Loader2 className="w-6 h-6 animate-spin text-accent" />
                 </div>
@@ -440,33 +447,45 @@ export default function PcLockScreen() {
       <h3 className="font-heading text-sm font-bold text-text-2 uppercase tracking-widest mb-4">Select Duration</h3>
       
       <div className="grid grid-cols-2 gap-4 mb-8">
-        {[30, 60, 120, 180].map((mins) => (
-          <button
-            key={mins}
-            onClick={() => setDurationMinutes(mins)}
-            className={`p-4 rounded-lg border transition-all flex flex-col items-center justify-center gap-2 ${
-              durationMinutes === mins 
-                ? 'bg-accent/20 border-accent shadow-[0_0_15px_rgba(220,38,38,0.2)]' 
-                : 'bg-bg-3 border-border hover:border-text-3'
-            }`}
-          >
-            <Clock className={`w-6 h-6 ${durationMinutes === mins ? 'text-accent' : 'text-text-3'}`} />
-            <span className={`font-mono font-bold text-lg ${durationMinutes === mins ? 'text-text' : 'text-text-2'}`}>
-              {mins / 60} {mins === 30 ? 'Min' : 'Hr'}
-            </span>
-          </button>
-        ))}
+        {plansError ? (
+          <div className="col-span-2 text-center text-accent font-bold">Failed to connect to backend.</div>
+        ) : plans.length === 0 ? (
+          <div className="col-span-2 flex justify-center p-4">
+            <Loader2 className="w-6 h-6 animate-spin text-accent" />
+          </div>
+        ) : (
+          plans.map((plan) => (
+            <button
+              key={plan.id}
+              onClick={() => setSelectedPlan(plan)}
+              className={`p-4 rounded-lg border transition-all flex flex-col items-center justify-center gap-2 ${
+                selectedPlan?.id === plan.id 
+                  ? 'bg-accent/20 border-accent shadow-[0_0_15px_rgba(220,38,38,0.2)]' 
+                  : 'bg-bg-3 border-border hover:border-text-3'
+              }`}
+            >
+              <Clock className={`w-6 h-6 ${selectedPlan?.id === plan.id ? 'text-accent' : 'text-text-3'}`} />
+              <span className={`font-mono font-bold text-lg ${selectedPlan?.id === plan.id ? 'text-text' : 'text-text-2'}`}>
+                {plan.name}
+              </span>
+              {plan.price > 0 && <span className="text-xs text-text-3">₹{plan.price}</span>}
+              {plan.isPostpaid && <span className="text-xs text-accent">Pay as you go</span>}
+            </button>
+          ))
+        )}
       </div>
 
       <div className="bg-bg-3 p-4 rounded-xl border border-border">
         <div className="flex justify-between items-center mb-4">
           <span className="text-text-2 font-body">Estimated Cost</span>
-          <span className="font-mono font-bold text-text text-2xl">₹{expectedAmount.toFixed(2)}</span>
+          <span className="font-mono font-bold text-text text-2xl">
+            {selectedPlan?.isPostpaid ? 'Postpaid' : `₹${(selectedPlan?.price || 0).toFixed(2)}`}
+          </span>
         </div>
 
         <button
           onClick={handleStartSession}
-          disabled={isStarting || (profile?.gamingBalance || 0) < expectedAmount}
+          disabled={isStarting || !selectedPlan || (!selectedPlan.isPostpaid && (profile?.gamingBalance || 0) < selectedPlan.price)}
           className="w-full bg-accent hover:bg-accent-dark text-white font-semibold py-3 px-4 rounded-sm transition-all duration-200 flex items-center justify-center shadow-[0_0_15px_rgba(220,38,38,0.3)] disabled:opacity-50 disabled:cursor-not-allowed border border-accent/50 gap-2"
         >
           {isStarting ? (
@@ -479,8 +498,8 @@ export default function PcLockScreen() {
           )}
         </button>
         
-        {(profile?.gamingBalance || 0) < expectedAmount && (
-          <p className="text-neon-orange text-sm text-center mt-3 font-body">Insufficient balance for this duration.</p>
+        {!selectedPlan?.isPostpaid && (profile?.gamingBalance || 0) < (selectedPlan?.price || 0) && (
+          <p className="text-neon-orange text-sm text-center mt-3 font-body">Insufficient balance for this plan.</p>
         )}
       </div>
     </motion.div>

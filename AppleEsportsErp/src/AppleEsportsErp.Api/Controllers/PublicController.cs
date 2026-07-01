@@ -407,6 +407,98 @@ public class PublicController : ControllerBase
 
         return Ok(ApiResponse<object>.Ok(items));
     }
+    [HttpPost("bills/{billId}/approve-wallet")]
+    public async Task<IActionResult> ApproveWalletPayment(Guid billId, [FromBody] WalletApprovalResponseDto dto, [FromServices] IHubContext<PcStatusHub> pcStatusHub)
+    {
+        if (!BillingController.PendingApprovals.TryGetValue(dto.ApprovalToken, out var pending))
+            return BadRequest(new { success = false, error = "Invalid or expired approval token." });
+            
+        if (pending.BillId != billId)
+            return BadRequest(new { success = false, error = "Bill ID mismatch." });
+
+        var bill = await _db.Bills.Include(b => b.Session).FirstOrDefaultAsync(b => b.Id == billId);
+        if (bill == null || bill.MemberId == null) return BadRequest(new { success = false, error = "Bill not found or not linked to member." });
+
+        var member = await _db.Members.FindAsync(bill.MemberId.Value);
+        if (member == null) return BadRequest(new { success = false, error = "Member not found." });
+
+        if (string.IsNullOrEmpty(dto.Password) || !BCrypt.Net.BCrypt.Verify(dto.Password, member.PasswordHash))
+            return BadRequest(new { success = false, error = "Invalid password." });
+
+        if (member.GamingBalance < pending.Amount)
+        {
+            return BadRequest(new { success = false, error = "Insufficient wallet balance." });
+        }
+
+        var amountToDeduct = pending.Amount;
+        member.GamingBalance -= amountToDeduct;
+        _db.Members.Update(member);
+
+        var walletTx = new WalletTransaction
+        {
+            MemberId = member.Id,
+            BranchId = pending.BranchId,
+            OperatorId = pending.OperatorId,
+            Action = WalletAction.Correction,
+            TargetWallet = WalletType.Gaming,
+            Amount = amountToDeduct,
+            BalanceBefore = member.GamingBalance + amountToDeduct,
+            BalanceAfter = member.GamingBalance,
+            PaymentType = "Wallet",
+            CashAmount = 0,
+            OnlineAmount = 0,
+            BillId = bill.Id,
+            Reason = "Member Approved Wallet Deduction",
+            CreatedAt = DateTimeOffset.UtcNow
+        };
+        await _db.WalletTransactions.AddAsync(walletTx);
+
+        bill.Status = BillStatus.Completed;
+        bill.WalletAmount = amountToDeduct;
+
+        if (bill.PcId.HasValue)
+        {
+            var pc = await _db.Pcs.FindAsync(bill.PcId.Value);
+            if (pc != null && pc.State == PcState.AwaitingBilling)
+            {
+                pc.State = PcState.Idle;
+                _db.Pcs.Update(pc);
+            }
+        }
+
+        await _db.SaveChangesAsync();
+
+        BillingController.PendingApprovals.TryRemove(dto.ApprovalToken, out _);
+
+        if (bill.PcId.HasValue)
+        {
+            await pcStatusHub.Clients.All.SendAsync("PcStatusUpdated", new
+            {
+                PcId = bill.PcId.Value,
+                Status = "idle",
+                LastActive = DateTimeOffset.UtcNow
+            });
+            await pcStatusHub.Clients.All.SendAsync("BillUpdated", new { id = bill.Id, status = "Completed" });
+        }
+
+        return Ok(new { success = true });
+    }
+
+    [HttpPost("bills/{billId}/decline-wallet")]
+    public async Task<IActionResult> DeclineWalletPayment(Guid billId, [FromBody] WalletApprovalResponseDto dto)
+    {
+        if (BillingController.PendingApprovals.TryRemove(dto.ApprovalToken, out _))
+        {
+            return Ok(new { success = true });
+        }
+        return BadRequest(new { success = false, error = "Invalid token." });
+    }
+}
+
+public class WalletApprovalResponseDto
+{
+    public Guid ApprovalToken { get; set; }
+    public string? Password { get; set; }
 }
 
 public class ApproveWalletRequest

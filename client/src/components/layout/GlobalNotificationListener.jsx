@@ -16,29 +16,38 @@ export default function GlobalNotificationListener() {
   useEffect(() => {
     if (!connected) return;
 
-    const unsubscribe = subscribe(SIGNALR_HUBS.NOTIFICATIONS, 'Alert', (data) => {
+    const unsubscribe = subscribe(SIGNALR_HUBS.NOTIFICATIONS, 'Alert', async (data) => {
       const type = data.type || data.Type;
+      
+      let pcName = data.pcId || data.PcId;
+      try {
+        const res = await api.get(`/public/pcs/${pcName}`);
+        if (res.data.success) pcName = res.data.data.name;
+      } catch (e) {
+        // silent fallback to ID
+      }
+
       if (type === 'WalkinSessionRequest') {
         // Add to our list of active requests
         setRequests(prev => {
           const pcId = data.pcId || data.PcId;
           // avoid duplicates if same PC sends multiple times
           const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId);
-          return [...filtered, data];
+          return [...filtered, { ...data, resolvedPcName: pcName }];
         });
-        toast.info(`Walk-in request from ${data.pcId || data.PcId}`);
+        toast.info(`Walk-in request from ${pcName}`);
       } else if (type === 'OperatorCall') {
         const pcId = data.pcId || data.PcId;
         const msg = data.message || data.Message || `Assistance required at ${pcId}`;
         
         setRequests(prev => {
           const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId || r.type !== 'OperatorCall');
-          return [...filtered, { ...data, type: 'OperatorCall' }];
+          return [...filtered, { ...data, type: 'OperatorCall', resolvedPcName: pcName }];
         });
         
         // Speak the notification
         if ('speechSynthesis' in window) {
-           const utterance = new SpeechSynthesisUtterance(`Attention Operator. ${pcId} is calling you.`);
+           const utterance = new SpeechSynthesisUtterance(`Attention Operator. ${pcName} is calling you.`);
            utterance.rate = 0.9;
            utterance.pitch = 1.1;
            window.speechSynthesis.speak(utterance);
@@ -46,7 +55,8 @@ export default function GlobalNotificationListener() {
       }
     });
 
-    const unsubscribeStatus = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (data) => {
+    const unsubscribeStatus = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (payload) => {
+      const data = payload.data || payload.Data || payload;
       // If PC becomes active, remove any pending walk-in requests for it
       // Wait, our backend sends 'PcStatusChanged' on PC_STATUS hub
       const status = data.status || data.State || data.state;
@@ -55,14 +65,20 @@ export default function GlobalNotificationListener() {
       }
     });
 
-    const unsubscribeExtension = subscribe(SIGNALR_HUBS.SESSIONS, 'ExtensionRequested', (data) => {
+    const unsubscribeExtension = subscribe(SIGNALR_HUBS.SESSIONS, 'ExtensionRequested', async (data) => {
+      let pcName = data.pcId || data.PcId;
+      try {
+        const res = await api.get(`/public/pcs/${pcName}`);
+        if (res.data.success) pcName = res.data.data.name;
+      } catch (e) { }
+
       setRequests(prev => {
         const pcId = data.pcId || data.PcId;
-        const reqData = { ...data, type: 'ExtensionRequested' };
+        const reqData = { ...data, type: 'ExtensionRequested', resolvedPcName: pcName };
         const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId);
         return [...filtered, reqData];
       });
-      toast.info(`Time extension request from ${data.pcId || data.PcId}`);
+      toast.info(`Time extension request from ${pcName}`);
     });
 
     return () => {
@@ -172,6 +188,7 @@ export default function GlobalNotificationListener() {
           const isExtension = req.type === 'ExtensionRequested';
           const isOperatorCall = req.type === 'OperatorCall';
           const pcId = req.pcId || req.PcId;
+          const pcName = req.resolvedPcName || pcId;
           const customerName = req.customerName || req.CustomerName || 'Current User';
           const duration = req.duration || req.Duration || 0;
           return (
@@ -190,7 +207,7 @@ export default function GlobalNotificationListener() {
                   <h3 className="font-heading font-bold text-text uppercase tracking-widest text-sm">
                     {isOperatorCall ? 'Operator Call' : isExtension ? 'Time Extension' : 'Walk-in Request'}
                   </h3>
-                  <p className="text-text-2 font-body text-xs mt-0.5">Station <span className="text-accent font-semibold">{pcId}</span></p>
+                  <p className="text-text-2 font-body text-xs mt-0.5">Station <span className="text-accent font-semibold">{pcName}</span></p>
                 </div>
               </div>
 

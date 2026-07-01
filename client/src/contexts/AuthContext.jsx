@@ -20,8 +20,13 @@ export function AuthProvider({ children }) {
     const storedUser = localStorage.getItem('user');
     const token = localStorage.getItem('accessToken');
 
-    if (storedUser && token) {
-      setUser(JSON.parse(storedUser));
+    if (storedUser && storedUser !== 'undefined' && token) {
+      try {
+        setUser(JSON.parse(storedUser));
+      } catch (e) {
+        console.error("Failed to parse stored user", e);
+        localStorage.removeItem('user');
+      }
       // Verify token is still valid by fetching current user
       api.get('/auth/me')
         .then((res) => {

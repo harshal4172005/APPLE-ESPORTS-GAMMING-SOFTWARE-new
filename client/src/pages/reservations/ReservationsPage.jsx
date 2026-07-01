@@ -140,18 +140,20 @@ export default function ReservationsPage() {
     if (!connected || !targetBranchId) return;
     
     // Listen to reservation updates
-    const unsubRes = subscribe(SIGNALR_HUBS.RESERVATIONS, 'ReservationUpdated', () => {
+    const unsubRes = subscribe(SIGNALR_HUBS.RESERVATIONS, 'ReservationUpdated', (payload) => {
+      const data = payload?.data || payload?.Data;
       fetchReservationsList();
-      fetchPcsList();
     });
 
     // Listen to PC changes (which affect eligibility/availability)
-    const unsubPc = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', () => {
+    const unsubPc = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (payload) => {
+      const data = payload?.data || payload?.Data;
       fetchReservationsList();
       fetchPcsAndSessions();
     });
 
-    const unsubSessions = subscribe(SIGNALR_HUBS.SESSIONS, 'SessionUpdated', () => {
+    const unsubSessions = subscribe(SIGNALR_HUBS.SESSIONS, 'SessionUpdated', (payload) => {
+      const data = payload?.data || payload?.Data;
       fetchPcsAndSessions();
     });
 

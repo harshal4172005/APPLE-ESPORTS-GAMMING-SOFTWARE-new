@@ -25,6 +25,89 @@
 
 ---
 
+## COMPREHENSIVE END-TO-END SYSTEM WORKFLOWS (BY ROLE) (FLOW)
+
+The system supports three distinct operational roles. Below is the complete start-to-end lifecycle and feature access for each.
+
+### 1. SUPER ADMIN WORKFLOW
+
+**Goal**: Full system oversight, multi-branch management, global revenue tracking, and configuration.
+
+**A. Authentication & Entry**
+1. **Login**: The Super Admin navigates to the global login gateway (`/login/super-admin`).
+2. **Authentication**: Enters master credentials. The system authenticates against global permissions.
+3. **Dashboard Access**: Redirects to the Global Dashboard (not tied to any specific branch).
+
+**B. Global Management & Monitoring**
+1. **Cross-Branch Oversight**: Can view aggregate revenue, active sessions, and PC statuses across all branches (e.g., Adajan, Citylight).
+2. **Operator Management**: Creates, edits, or revokes operator accounts and assigns them to specific branches.
+3. **Inventory & Menu**: Manages the global food and beverage menu, updating prices and stock that reflect in all branches.
+4. **System Configuration**: Edits global rules (base PC rates, monitor Hz pricing multipliers, tax configurations).
+
+**C. Auditing & Reporting**
+1. **Shift Logs**: Reviews End-of-Day (EOD) and shift reports submitted by operators.
+2. **Audit Trails**: Tracks overriding actions (e.g., operator canceling a reservation or applying a manual discount).
+3. **Revenue Analytics**: Generates date-range filtered reports for gross gaming, food sales, and tax liabilities.
+
+---
+
+### 2. OPERATOR WORKFLOW
+
+**Goal**: Manage a specific branch's day-to-day operations, including PC sessions, billing, walk-ins, and shift cash handling.
+
+**A. Authentication & Shift Start**
+1. **Branch Selection**: Navigates to `/login/operator` and selects their assigned branch (secured by backend data isolation).
+2. **Login**: Enters personal PIN/Password.
+3. **Shift Initialization**: The system logs the exact time, operator ID, and cash float. The shift becomes "ACTIVE".
+
+**B. Day-to-Day Operations**
+1. **Walk-in Handling**:
+   - Customer arrives; Operator checks the **PC Status Grid** for available (gray) computers.
+   - Operator clicks an available PC, inputs Customer Name and Duration (or Pay-As-You-Go), and hits **Start Session**.
+   - PC status turns **Active (Green)**, and the system sends a SignalR command to unlock the user's PC.
+2. **Reservation Management**:
+   - Operator creates future bookings. PC turns **Reserved (Purple)**.
+   - If a walk-in tries to take a reserved PC, the system pops up a warning preventing the session unless manually overridden.
+   - When the customer arrives, the operator converts the reservation to an Active Session.
+3. **Remote PC Control**: Operator can Reboot, Shutdown, or Lock any PC remotely from the dashboard.
+
+**C. Requests & Food Orders**
+1. **Overlay Notifications**: Listens (via `GlobalNotificationListener.jsx`) for incoming SignalR events.
+2. **Time Extensions**: A popup alerts the operator that PC-X wants 30 more minutes. Operator clicks **Approve**; the system dynamically calculates the new cost based on the PC's monitor Hz rate and extends the session.
+3. **Food Orders**: Operator receives order tickets in the Kanban board. Moves tickets from "Pending" -> "Preparing" -> "Delivered". Charges are added to the active session's bill.
+4. **Call Operator**: A modal popup appears with a text-to-speech voice alert if a user needs physical assistance at their desk.
+
+**D. Checkout & Shift End**
+1. **Billing**: Customer finishes. Operator opens the bill, reviews gaming + food charges, applies discounts if applicable, logs the payment method (Cash/UPI), and closes the bill. The PC auto-locks and returns to Idle.
+2. **EOD / Shift End**: Operator closes their shift, reconciles physical cash with the system's expected cash, and submits the shift report to the Super Admin.
+
+---
+
+### 3. USER (GAMER) WORKFLOW
+
+**Goal**: Seamless gaming experience with in-seat ordering and session management, powered by a lightweight PC overlay.
+
+**A. Session Start**
+1. **Idle State**: PC is locked by the Client Overlay, showing the branch logo and a "Please see the front desk" message.
+2. **Activation**: Upon Operator starting the session, the backend broadcasts a SignalR `SessionUpdated` event.
+3. **Unlock**: The PC overlay unlocks the Windows environment, allowing the user to launch games.
+
+**B. Active Session Experience**
+1. **Overlay Access**: The lightweight widget (designed for minimal RAM/CPU usage) sits on the screen.
+2. **Real-time Tracker**: Shows exact remaining time syncing dynamically with the server.
+3. **Self-Service Actions**:
+   - **Order Food**: Opens a digital menu. User adds items to the cart and places the order. It sends a payload directly to the operator's Kanban board.
+   - **Extend Time**: User selects +30 mins or +1 hr. The request pauses locally until the Operator approves it.
+   - **Call Operator**: Sends an urgent ping to the front desk.
+   - **View Bill**: User can check their current running total (Gaming + Food) at any time.
+
+**C. Session End**
+1. **Warning**: At 5 minutes remaining, the overlay pulses to warn the user.
+2. **Auto-Lock**: When time expires (or if the operator ends the session manually), the PC Overlay instantly re-locks the Windows environment.
+3. **Logout**: User leaves the desk, proceeds to the counter to pay the final bill.
+
+---
+
 ## Table of Contents
 1. [System Architecture & Tech Stack](#1-system-architecture--tech-stack)
 2. [Database Schema & Entities](#2-database-schema--entities)

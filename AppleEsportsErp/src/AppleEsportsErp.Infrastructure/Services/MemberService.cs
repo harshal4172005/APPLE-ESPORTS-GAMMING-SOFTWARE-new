@@ -29,7 +29,8 @@ public class MemberService : IMemberService
 
     public async Task<PaginatedResult<MemberDto>> GetMembersAsync(Guid branchId, string? search, int page = 1, int pageSize = 50)
     {
-        var query = _unitOfWork.Repository<Member>().Query();
+        var query = _unitOfWork.Repository<Member>().Query()
+            .Where(m => m.Status != MemberStatus.Suspended);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -258,9 +259,11 @@ public class MemberService : IMemberService
 
     public async Task<MemberLoginResponseDto> LoginMemberAsync(MemberLoginDto dto)
     {
-        var username = dto.Username.Trim().ToLowerInvariant();
+        var identifier = dto.Identifier.Trim().ToLowerInvariant();
         var member = await _unitOfWork.Repository<Member>().Query()
-            .FirstOrDefaultAsync(m => m.Username == username);
+            .FirstOrDefaultAsync(m => (m.Username != null && m.Username.ToLower() == identifier) || 
+                                      (m.MobileNumber != null && m.MobileNumber == identifier) || 
+                                      (m.Email != null && m.Email.ToLower() == identifier));
 
         if (member == null || string.IsNullOrEmpty(member.PasswordHash))
             throw new AuthenticationException("Invalid username or password.", "INVALID_CREDENTIALS");

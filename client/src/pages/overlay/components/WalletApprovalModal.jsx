@@ -1,17 +1,27 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Wallet, CheckCircle, XCircle, Loader2 } from 'lucide-react';
+import { Wallet, CheckCircle, XCircle, Loader2, KeyRound } from 'lucide-react';
 import { useOverlaySocket } from '../../../contexts/OverlaySocketContext';
 
 export default function WalletApprovalModal() {
   const { walletApprovalRequest, respondToWalletApproval } = useOverlaySocket();
   const [processing, setProcessing] = useState(false);
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
 
   if (!walletApprovalRequest) return null;
 
   const handleApprove = async () => {
+    if (!password) {
+      setError('Password is required');
+      return;
+    }
     setProcessing(true);
-    await respondToWalletApproval(walletApprovalRequest.billId, true);
+    setError('');
+    const res = await respondToWalletApproval(walletApprovalRequest.billId, true, password);
+    if (!res?.success) {
+      setError(res?.error || 'Invalid password or failed to approve.');
+    }
     setProcessing(false);
   };
 
@@ -35,12 +45,24 @@ export default function WalletApprovalModal() {
         </div>
         
         <h2 className="font-heading font-bold text-2xl uppercase tracking-wider text-text mb-2">Payment Request</h2>
-        <p className="text-text-2 font-body text-sm mb-6">
-          The operator has requested a wallet deduction of 
+        <p className="text-text-2 font-body text-sm mb-4">
+          The operator requested a wallet deduction of 
           <strong className="text-neon-orange text-lg ml-2 font-mono drop-shadow-[0_0_8px_rgba(255,153,0,0.5)]">
             ₹{walletApprovalRequest.amount?.toFixed(0)}
           </strong>
         </p>
+
+        <div className="w-full relative mb-4">
+          <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-3" />
+          <input
+            type="password"
+            placeholder="Enter Password to Approve"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            className="w-full bg-bg-3 border border-border rounded p-2 pl-9 text-text focus:outline-none focus:border-accent font-body text-sm placeholder:text-text-3/50"
+          />
+          {error && <p className="text-neon-red text-xs mt-1 text-left">{error}</p>}
+        </div>
 
         <div className="flex w-full gap-3">
           <button 

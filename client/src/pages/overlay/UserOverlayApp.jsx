@@ -20,8 +20,9 @@ function OverlayContent({ isMinimized, setIsMinimized }) {
 
   // Show full-screen lock screen if there's no active session or time has run out
   const isTimeUp = sessionData && sessionData.remainingTime !== null && sessionData.remainingTime <= 0;
+  const isSessionEnded = sessionData && sessionData.sessionStatus !== 'active';
 
-  if (!sessionLoading && (!sessionData || isTimeUp)) {
+  if (!sessionLoading && (!sessionData || isTimeUp || isSessionEnded)) {
     return (
       <>
         <PcLockScreen />

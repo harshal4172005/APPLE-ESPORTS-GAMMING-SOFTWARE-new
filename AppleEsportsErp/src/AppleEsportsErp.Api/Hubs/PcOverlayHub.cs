@@ -235,7 +235,6 @@ public class PcOverlayHub : Hub
         // Real-time push to all connected operator dashboards
         await _notificationHub.Clients.All.SendAsync("Alert", new
         {
-            type = "WalkinSessionRequest",
             Type = "WalkinSessionRequest",
             pcId = payload.PcId,
             customerName = payload.CustomerName,

@@ -294,41 +294,8 @@ public class SessionService : ISessionService
                 }
             }
 
-            // 2. Automatic Wallet Deduction for Members
-            if (session.MemberId.HasValue && bill != null && bill.Status != BillStatus.Completed)
-            {
-                var member = await _db.Members.FindAsync(session.MemberId.Value);
-                if (member != null)
-                {
-                    // Deduct up to the TotalAmount (Gaming + Food if any)
-                    var amountToDeduct = bill.TotalAmount;
-                    
-                    member.GamingBalance -= amountToDeduct; // Can go negative if they don't have enough
-                    _uow.Repository<Member>().Update(member);
-
-                    var walletTx = new WalletTransaction
-                    {
-                        MemberId = member.Id,
-                        BranchId = branchId,
-                        OperatorId = operatorId,
-                        Action = WalletAction.Correction,
-                        TargetWallet = WalletType.Gaming,
-                        Amount = amountToDeduct,
-                        BalanceBefore = member.GamingBalance + amountToDeduct,
-                        BalanceAfter = member.GamingBalance,
-                        PaymentType = "Wallet",
-                        CashAmount = 0,
-                        OnlineAmount = 0,
-                        BillId = bill.Id,
-                        Reason = "Automatic Session & Bill Deduction",
-                        CreatedAt = now
-                    };
-                    await _uow.Repository<WalletTransaction>().AddAsync(walletTx);
-
-                    bill.Status = BillStatus.Completed;
-                    bill.WalletAmount = amountToDeduct;
-                }
-            }
+            // 2. Wallet Deduction for Members is now handled manually via Overlay Approval
+            // The session goes to Completed, bill stays Pending, PC goes to AwaitingBilling.
             
             var pc = session.Pc!;
 

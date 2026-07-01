@@ -69,7 +69,7 @@ public class UpdateMemberDto
 public class MemberLoginDto
 {
     [Required]
-    public string Username { get; set; } = null!;
+    public string Identifier { get; set; } = null!;
 
     [Required]
     public string Password { get; set; } = null!;

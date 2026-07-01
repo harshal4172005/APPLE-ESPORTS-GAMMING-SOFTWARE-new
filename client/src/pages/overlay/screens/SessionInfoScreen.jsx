@@ -8,10 +8,9 @@ export default function SessionInfoScreen() {
   const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
-    if (!sessionData) return;
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
-  }, [sessionData]);
+  }, []);
 
   const formatTime = (seconds) => {
     if (seconds <= 0) return '00:00:00';

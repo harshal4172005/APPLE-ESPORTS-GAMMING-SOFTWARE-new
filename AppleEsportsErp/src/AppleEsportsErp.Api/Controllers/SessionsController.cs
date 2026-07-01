@@ -17,10 +17,17 @@ namespace AppleEsportsErp.Api.Controllers;
 public class SessionsController : ControllerBase
 {
     private readonly ISessionService _sessionService;
+    private readonly Microsoft.AspNetCore.SignalR.IHubContext<AppleEsportsErp.Api.Hubs.PcOverlayHub> _pcOverlayHub;
+    private readonly AppleEsportsErp.Application.Interfaces.IBillingService _billingService;
 
-    public SessionsController(ISessionService sessionService)
+    public SessionsController(
+        ISessionService sessionService,
+        Microsoft.AspNetCore.SignalR.IHubContext<AppleEsportsErp.Api.Hubs.PcOverlayHub> pcOverlayHub,
+        AppleEsportsErp.Application.Interfaces.IBillingService billingService)
     {
         _sessionService = sessionService;
+        _pcOverlayHub = pcOverlayHub;
+        _billingService = billingService;
     }
     private Guid GetBranchId() => Guid.Parse(HttpContext.Items["BranchId"]!.ToString()!);
 
@@ -45,7 +52,35 @@ public class SessionsController : ControllerBase
     {
         Console.WriteLine($"[SessionsController] StopSession called for {id}. dto is null? {dto == null}. DeferPayment: {dto?.DeferPayment}");
         var result = await _sessionService.StopSessionAsync(GetBranchId(), (await this.GetOperatorIdAsync()), id, dto?.DeferPayment ?? false);
-        PcOverlayHub.PendingWalkinRequests.TryRemove(result.PcId.ToString(), out _);
+        AppleEsportsErp.Api.Hubs.PcOverlayHub.PendingWalkinRequests.TryRemove(result.PcId.ToString(), out _);
+
+        // Auto-trigger wallet approval request for members
+        if (result.MemberId != null)
+        {
+            var bill = await _billingService.GetBillAsync(GetBranchId(), result.BillId);
+            if (bill != null && bill.Status != AppleEsportsErp.Domain.Enums.BillStatus.Completed && bill.TotalAmount > 0)
+            {
+                var approvalToken = Guid.NewGuid();
+                var pendingRequest = new AppleEsportsErp.Application.DTOs.Billing.PendingWalletApproval
+                {
+                    BillId = result.BillId,
+                    OperatorId = await this.GetOperatorIdAsync(),
+                    ShiftId = await this.GetShiftIdAsync(),
+                    BranchId = GetBranchId(),
+                    Amount = bill.TotalAmount
+                };
+
+                BillingController.PendingApprovals.TryAdd(approvalToken, pendingRequest);
+
+                await _pcOverlayHub.Clients.Group($"pc:{result.PcId}").SendAsync("ReceiveWalletApprovalRequest", new
+                {
+                    billId = result.BillId,
+                    amount = bill.TotalAmount,
+                    approvalToken = approvalToken
+                });
+            }
+        }
+
         return Ok(ApiResponse<SessionDto>.Ok(result));
     }
 

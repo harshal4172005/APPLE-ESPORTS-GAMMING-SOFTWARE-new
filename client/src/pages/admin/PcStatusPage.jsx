@@ -146,7 +146,8 @@ export default function PcStatusPage() {
   // SignalR realtime PC state updates
   useEffect(() => {
     if (!connected || !activeBranch?.id) return;
-    const unsub = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (updatedPc) => {
+    const unsub = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (payload) => {
+      const updatedPc = payload.data || payload.Data || payload;
       setPcs(current => {
         const idx = current.findIndex(p => p.id === updatedPc.id);
         if (idx === -1) return current;

@@ -149,7 +149,8 @@ export default function SessionsPage() {
   // SignalR realtime PC state updates & immediate walk-in notification
   useEffect(() => {
     if (!connected || !targetBranchId) return;
-    const unsubPcStatus = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (updatedPc) => {
+    const unsubPcStatus = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (payload) => {
+      const updatedPc = payload.data || payload.Data || payload;
       setPcs(current => {
         const idx = current.findIndex(p => p.id === updatedPc.id);
         if (idx === -1) return current;

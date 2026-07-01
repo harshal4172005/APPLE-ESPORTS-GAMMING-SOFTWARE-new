@@ -104,6 +104,9 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
           sessionStatus: d.sessionStatus,
           memberId: d.memberId,
         });
+      } else {
+        // No active session found
+        setSessionData(null);
       }
     } catch (err) {
       console.error('[Overlay] Failed to fetch session:', err);
@@ -152,14 +155,31 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
 
     const timer = setInterval(() => {
       setSessionData(prev => {
-        if (!prev || prev.remainingTime <= 0) return prev;
-        const nextTime = prev.remainingTime - 1;
+        if (!prev) return prev;
 
-        if (nextTime === 600) playTimeAlert(10);
-        else if (nextTime === 300) playTimeAlert(5);
-        else if (nextTime === 60) playTimeAlert(1);
+        const isPrepaid = prev.plannedDurationMin != null;
 
-        return { ...prev, remainingTime: nextTime };
+        let nextTime = prev.remainingTime;
+        if (isPrepaid && prev.remainingTime > 0) {
+          nextTime = prev.remainingTime - 1;
+          if (nextTime === 600) playTimeAlert(10);
+          else if (nextTime === 300) playTimeAlert(5);
+          else if (nextTime === 60) playTimeAlert(1);
+        }
+
+        let nextGamingCharges = prev.gamingCharges;
+        if (!isPrepaid && prev.sessionStart) {
+          const elapsedMs = Date.now() - new Date(prev.sessionStart).getTime();
+          const elapsedHours = elapsedMs / (1000 * 60 * 60);
+          nextGamingCharges = elapsedHours * (prev.ratePerHour || 0);
+        }
+
+        return { 
+          ...prev, 
+          remainingTime: nextTime,
+          gamingCharges: nextGamingCharges,
+          totalBill: nextGamingCharges + (prev.foodCharges || 0)
+        };
       });
     }, 1000);
 
@@ -301,7 +321,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
   }, [pcId, sessionData?.sessionId, connection, isMockMode]);
 
   // ── INVOKERS ──
-  const emitActivity = (eventName) => {
+  const emitActivity = useCallback((eventName) => {
     if (!isMockMode && connection?.state === 'Connected') {
       connection.invoke('ActivityEvent', {
         pcId,
@@ -310,7 +330,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
         timestamp: new Date().toISOString(),
       }).catch(console.error);
     }
-  };
+  }, [connection, isMockMode, pcId, sessionData?.sessionId]);
 
   const placeFoodOrder = async (items, totalAmount) => {
     const orderId = `ORD-${Date.now()}`;
