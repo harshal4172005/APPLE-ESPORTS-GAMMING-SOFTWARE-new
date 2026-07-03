@@ -143,25 +143,48 @@ export default function EodDashboardPage() {
         </h2>
 
         {/* PC Grid */}
-        <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-8 gap-3 mb-6">
-          {pcs.map(pc => (
-            <button
-              key={pc.id}
-              onClick={() => setSelectedPcId(pc.id)}
-              className={`p-3 rounded-lg border flex flex-col items-center justify-center transition-all ${
-                selectedPcId === pc.id 
-                  ? 'bg-neon-blue/20 border-neon-blue shadow-[0_0_15px_rgba(0,240,255,0.3)]' 
-                  : 'bg-bg-3 border-border hover:border-neon-blue/50'
-              }`}
-            >
-              <div className="w-8 h-8 rounded-full bg-bg-2 flex items-center justify-center mb-2">
-                <Monitor className={`w-4 h-4 ${selectedPcId === pc.id ? 'text-neon-blue' : 'text-text-3'}`} />
-              </div>
-              <div className="font-heading font-bold text-xs text-text truncate w-full text-center">
-                {pc.name || pc.pcName || pc.pcNumber}
-              </div>
-            </button>
-          ))}
+        <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
+          {pcs.map(pc => {
+            const pcBills = allBills?.filter(b => b.pcId === pc.id) || [];
+            const pcDayTotal = pcBills.reduce((sum, b) => sum + (b.totalRevenue || 0), 0);
+            const pcBillCount = pcBills.length;
+            const hasEarnings = pcDayTotal > 0;
+
+            return (
+              <button
+                key={pc.id}
+                onClick={() => setSelectedPcId(pc.id)}
+                className={`p-3 rounded-lg border flex flex-col items-center justify-center transition-all relative ${
+                  selectedPcId === pc.id 
+                    ? 'bg-neon-blue/20 border-neon-blue shadow-[0_0_15px_rgba(0,240,255,0.3)]' 
+                    : hasEarnings 
+                      ? 'bg-bg-3 border-neon-green/30 hover:border-neon-green/60' 
+                      : 'bg-bg-3 border-border hover:border-neon-blue/50'
+                }`}
+              >
+                {pcBillCount > 0 && (
+                  <span className="absolute -top-1.5 -right-1.5 bg-accent text-white text-[9px] font-bold w-5 h-5 rounded-full flex items-center justify-center shadow-md">
+                    {pcBillCount}
+                  </span>
+                )}
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center mb-1.5 ${
+                  selectedPcId === pc.id ? 'bg-neon-blue/20' : hasEarnings ? 'bg-neon-green/10' : 'bg-bg-2'
+                }`}>
+                  <Monitor className={`w-4 h-4 ${
+                    selectedPcId === pc.id ? 'text-neon-blue' : hasEarnings ? 'text-neon-green' : 'text-text-3'
+                  }`} />
+                </div>
+                <div className="font-heading font-bold text-[10px] text-text truncate w-full text-center mb-1">
+                  {pc.name || pc.pcName || pc.pcNumber}
+                </div>
+                <div className={`font-mono font-bold text-xs ${
+                  hasEarnings ? 'text-neon-green' : 'text-text-3'
+                }`}>
+                  ₹{pcDayTotal.toFixed(0)}
+                </div>
+              </button>
+            );
+          })}
         </div>
 
         {/* Selected PC Details */}

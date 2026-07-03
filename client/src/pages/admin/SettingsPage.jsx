@@ -105,8 +105,20 @@ export default function SettingsPage() {
     }
     // Calculate position from the button's bounding rect
     const rect = e.currentTarget.getBoundingClientRect();
+    const dropdownHeight = 220; // approximate height of the dropdown
+    const spaceBelow = window.innerHeight - rect.bottom;
+    
+    let top = rect.bottom + 4;
+    let bottom = 'auto';
+
+    if (spaceBelow < dropdownHeight && rect.top > dropdownHeight) {
+      top = 'auto';
+      bottom = window.innerHeight - rect.top + 4;
+    }
+
     setDropdownPos({
-      top: rect.bottom + 4,
+      top,
+      bottom,
       right: window.innerWidth - rect.right,
     });
     setActiveDropdown(id);
@@ -437,7 +449,7 @@ export default function SettingsPage() {
                                 <MoreVertical size={14} />
                               </button>
                               {activeDropdown === `branch-${b.id}` && (
-                                <div className="dropdown-menu" style={{ top: dropdownPos.top, right: dropdownPos.right }}>
+                                <div className="dropdown-menu" style={{ top: dropdownPos.top, bottom: dropdownPos.bottom, right: dropdownPos.right }}>
                                   <button onClick={() => { closeDropdown(); setBranchDrawer({ isOpen: true, data: b }); }}><Edit size={12} /> Edit Details</button>
                                   <button onClick={() => { closeDropdown(); openPcManager(b); }}><Monitor size={12} /> Manage PCs</button>
                                   {b.status === 'Active' ? (
@@ -516,7 +528,7 @@ export default function SettingsPage() {
                                 <MoreVertical size={14} />
                               </button>
                               {activeDropdown === `op-${o.id}` && (
-                                <div className="dropdown-menu" style={{ top: dropdownPos.top, right: dropdownPos.right }}>
+                                <div className="dropdown-menu" style={{ top: dropdownPos.top, bottom: dropdownPos.bottom, right: dropdownPos.right }}>
                                   <button onClick={() => { closeDropdown(); setOperatorDrawer({ isOpen: true, data: o }); }}><Edit size={12} /> Edit operator</button>
                                   {isStrictSuperAdmin && (
                                     <button onClick={() => { closeDropdown(); setAdminRoleDrawer({ isOpen: true, data: o }); }}><Shield size={12} /> Manage Admin Privileges</button>
@@ -1082,6 +1094,7 @@ function OperatorForm({ initialData, branches, onSave }) {
   const [fields, setFields] = useState({
     fullName: '',
     username: '',
+    email: '',
     password: '',
     branchId: '',
   });
@@ -1093,6 +1106,7 @@ function OperatorForm({ initialData, branches, onSave }) {
     setFields({
       fullName: initialData?.fullName || '',
       username: initialData?.username || '',
+      email: initialData?.email || '',
       password: '', // Always blank — user must explicitly type to change
       branchId: initialData?.branchId || '',
     });
@@ -1153,6 +1167,7 @@ function OperatorForm({ initialData, branches, onSave }) {
     const payload = {
       fullName: fields.fullName.trim(),
       username: fields.username.trim(),
+      email: fields.email.trim(),
       branchId: fields.branchId,
       dashboardPermissions: JSON.stringify(matrix),
       // Only send password if the user explicitly typed one
@@ -1186,6 +1201,19 @@ function OperatorForm({ initialData, branches, onSave }) {
             onChange={set('username')}
             className="form-control"
             placeholder="e.g. joperator"
+          />
+        </div>
+
+        <div className="form-group">
+          <label>Email *</label>
+          <input
+            type="email"
+            required
+            autoComplete="off"
+            value={fields.email}
+            onChange={set('email')}
+            className="form-control"
+            placeholder="e.g. operator@appleesports.com"
           />
         </div>
 
@@ -1265,7 +1293,7 @@ function OperatorForm({ initialData, branches, onSave }) {
           </div>
         </div>
 
-        <div className="matrix-table-container scrollbar-thin overflow-y-auto">
+        <div className="matrix-table-container scrollbar-thin overflow-y-auto max-h-[35vh]">
           <table className="matrix-table text-xs">
             <thead>
               <tr className="border-b border-border bg-bg-3">

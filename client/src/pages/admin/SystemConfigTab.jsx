@@ -65,7 +65,9 @@ export default function SystemConfigTab() {
         minRedemption: Number(formData.get('minRedemption'))
       },
       emailNotifications: {
-        receivers: formData.get('emailReceivers')
+        receivers: formData.get('emailReceivers'),
+        sender: formData.get('emailSender'),
+        appPassword: formData.get('emailAppPassword')
       }
     };
 
@@ -88,7 +90,9 @@ export default function SystemConfigTab() {
     reservation: { gracePeriodMinutes: 15, maxAdvanceDays: 7 },
     loyalty: { pointsPerRupee: 0.1, minRedemption: 100 },
     emailNotifications: { 
-      receivers: ''
+      receivers: '',
+      sender: '',
+      appPassword: ''
     }
   };
 
@@ -182,12 +186,20 @@ export default function SystemConfigTab() {
 
         <div className="bg-bg-2 p-5 rounded-lg border border-border">
           <h3 className="text-sm font-semibold mb-1 text-accent">Email Verifier & Notifications</h3>
-          <p className="text-xs text-text-2 mb-4">Set up email addresses to receive alerts when members or operators join/leave.</p>
+          <p className="text-xs text-text-2 mb-4">Set up email sender credentials and receivers to get alerts when members or operators join/leave.</p>
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div className="form-group md:col-span-2">
-              <label>Notification Sender & Receiver Email</label>
-              <input type="text" name="emailReceivers" defaultValue={currentRules.emailNotifications?.receivers} className="form-control" placeholder="your_email@gmail.com" />
+            <div className="form-group">
+              <label>Sender Mail ID (Super Admin)</label>
+              <input type="email" name="emailSender" defaultValue={currentRules.emailNotifications?.sender} className="form-control" placeholder="superadmin@gmail.com" />
+            </div>
+            <div className="form-group">
+              <label>App Password (16-letter Gmail App Password)</label>
+              <input type="password" name="emailAppPassword" defaultValue={currentRules.emailNotifications?.appPassword} className="form-control" placeholder="abcd efgh ijkl mnop" />
+            </div>
+            <div className="form-group md:col-span-2 mt-2">
+              <label>Notification Receiver Email(s) (Comma separated)</label>
+              <input type="text" name="emailReceivers" defaultValue={currentRules.emailNotifications?.receivers} className="form-control" placeholder="receiver1@gmail.com, receiver2@gmail.com" />
             </div>
           </div>
         </div>

@@ -176,6 +176,10 @@ var signalRBuilder = builder.Services.AddSignalR(options =>
     options.KeepAliveInterval = TimeSpan.FromSeconds(15);
     options.ClientTimeoutInterval = TimeSpan.FromSeconds(30);
     options.MaximumReceiveMessageSize = 128 * 1024; // 128 KB
+})
+.AddJsonProtocol(options =>
+{
+    options.PayloadSerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
 
 var redisConnectionString = builder.Configuration["Redis:ConnectionString"];

@@ -195,7 +195,7 @@ const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReserved
           <User className="w-3.5 h-3.5" />
           <span>Available</span>
         </div>
-        <div className="grid grid-cols-[1fr_auto] gap-1.5">
+        <div className="flex flex-col gap-1.5">
           <button
             onClick={() => onStartSession?.(pc)}
             className="w-full py-1.5 rounded border border-pc-idle/40 bg-pc-idle/10 text-pc-idle text-[11px] font-bold uppercase tracking-widest hover:bg-pc-idle/20 transition-colors"
@@ -203,21 +203,10 @@ const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReserved
             START
           </button>
           
-          {pc.lastCustomerName && (
-            <button
-              onClick={() => onStartSession?.({ ...pc, isRestart: true })}
-              title={`Restart session for ${pc.lastCustomerName}`}
-              className="px-2.5 py-1.5 rounded border border-neon-blue/40 bg-neon-blue/10 text-neon-blue hover:bg-neon-blue/20 transition-colors flex items-center justify-center whitespace-nowrap text-[10px] font-bold"
-            >
-              <RefreshCw className="w-3.5 h-3.5 mr-1" />
-              RESTART
-            </button>
-          )}
-
           <button
             onClick={() => onFlagMaintenance?.(pc, true)}
             title="Flag for Maintenance"
-            className="px-2.5 py-1.5 rounded border border-pc-offline/40 bg-pc-offline/10 text-pc-offline hover:bg-pc-offline/20 transition-colors flex items-center justify-center"
+            className="w-full py-1.5 rounded border border-pc-offline/40 bg-pc-offline/10 text-pc-offline hover:bg-pc-offline/20 transition-colors flex items-center justify-center"
           >
             <Wrench className="w-3.5 h-3.5" />
           </button>

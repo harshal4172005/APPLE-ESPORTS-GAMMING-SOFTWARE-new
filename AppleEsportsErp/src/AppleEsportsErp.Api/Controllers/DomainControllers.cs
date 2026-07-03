@@ -663,7 +663,37 @@ public class OperatorsController : ControllerBase
         await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.Operator>().AddAsync(op);
         await _unitOfWork.SaveChangesAsync();
 
-        await SendNotificationAsync($"New Operator Joined: {op.FullName}", $"A new operator has been registered.\n\nName: {op.FullName}\nUsername: {op.Username}\nBranch ID: {op.BranchId}\nCreated At: {op.CreatedAt}");
+        var branch = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.Branch>().Query()
+            .FirstOrDefaultAsync(b => b.Id == op.BranchId);
+        var branchName = branch?.Name ?? "Unknown Branch";
+
+        string emailBody = $@"
+        <div style='background-color:#050505; color:#ffffff; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; padding:40px 20px; text-align:center;'>
+            <div style='max-width: 600px; margin: 0 auto; background-color: #111111; border: 1px solid #333333; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);'>
+                <div style='background: linear-gradient(135deg, #1a1a24 0%, #0d0d14 100%); padding: 30px 20px; border-bottom: 2px solid #dc2626;'>
+                    <h1 style='margin: 0; font-size: 28px; letter-spacing: 2px; color: #ffffff; text-transform: uppercase;'>
+                        <img src='https://appleesports.in/apple-touch-icon.png' alt='Logo' style='height: 40px; vertical-align: middle; margin-right: 15px;' /> APPLE ESPORTS
+                    </h1>
+                </div>
+                <div style='padding: 40px 30px; text-align: left;'>
+                    <h2 style='margin-top: 0; color: #a3a3a3; font-size: 24px; border-bottom: 2px solid #333333; padding-bottom: 15px;'>New Operator Registered</h2>
+                    <p style='font-size: 16px; color: #d1d5db; line-height: 1.6;'>A new operator account has been provisioned in the Apple Esports system.</p>
+                    
+                    <div style='background-color: #0a0a0a; border: 1px solid #222222; border-radius: 8px; padding: 20px; margin-top: 25px;'>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Name:</span> <strong style='color: #ffffff;'>{op.FullName}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Username:</span> <strong style='color: #ffffff;'>{op.Username}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Branch:</span> <strong style='color: #ffffff;'>{branchName}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Time:</span> <strong style='color: #ffffff;'>{op.CreatedAt.ToString("MMM dd, yyyy HH:mm")}</strong></p>
+                    </div>
+                </div>
+                <div style='background-color: #080808; padding: 20px; border-top: 1px solid #222222; text-align: center;'>
+                    <p style='margin: 0; color: #6b7280; font-size: 12px;'>This is an automated security notification from Apple Esports ERP.</p>
+                    <p style='margin: 5px 0 0 0; color: #4b5563; font-size: 11px;'>© {DateTime.UtcNow.Year} Apple Esports. All rights reserved.</p>
+                </div>
+            </div>
+        </div>";
+
+        await SendNotificationAsync($"New Operator Joined: {op.FullName}", emailBody);
 
         return Ok(AppleEsportsErp.Application.DTOs.Common.ApiResponse<object>.Ok(new { op.Id, op.Username }));
     }
@@ -704,7 +734,32 @@ public class OperatorsController : ControllerBase
         _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.Operator>().Update(op);
         await _unitOfWork.SaveChangesAsync();
 
-        await SendNotificationAsync($"Operator Disabled: {op.FullName}", $"An operator has been disabled.\n\nName: {op.FullName}\nUsername: {op.Username}\nAction At: {op.UpdatedAt}");
+        string emailBody = $@"
+        <div style='background-color:#050505; color:#ffffff; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; padding:40px 20px; text-align:center;'>
+            <div style='max-width: 600px; margin: 0 auto; background-color: #111111; border: 1px solid #333333; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);'>
+                <div style='background: linear-gradient(135deg, #1a1a24 0%, #0d0d14 100%); padding: 30px 20px; border-bottom: 2px solid #dc2626;'>
+                    <h1 style='margin: 0; font-size: 28px; letter-spacing: 2px; color: #ffffff; text-transform: uppercase;'>
+                        <img src='https://appleesports.in/apple-touch-icon.png' alt='Logo' style='height: 40px; vertical-align: middle; margin-right: 15px;' /> APPLE ESPORTS
+                    </h1>
+                </div>
+                <div style='padding: 40px 30px; text-align: left;'>
+                    <h2 style='margin-top: 0; color: #f59e0b; font-size: 24px; border-bottom: 2px solid #333333; padding-bottom: 15px;'>Operator Disabled</h2>
+                    <p style='font-size: 16px; color: #d1d5db; line-height: 1.6;'>An operator account has been disabled and its access has been revoked.</p>
+                    
+                    <div style='background-color: #0a0a0a; border: 1px solid #222222; border-radius: 8px; padding: 20px; margin-top: 25px;'>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Name:</span> <strong style='color: #ffffff;'>{op.FullName}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Username:</span> <strong style='color: #ffffff;'>{op.Username}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Time:</span> <strong style='color: #ffffff;'>{op.UpdatedAt.ToString("MMM dd, yyyy HH:mm")}</strong></p>
+                    </div>
+                </div>
+                <div style='background-color: #080808; padding: 20px; border-top: 1px solid #222222; text-align: center;'>
+                    <p style='margin: 0; color: #6b7280; font-size: 12px;'>This is an automated security notification from Apple Esports ERP.</p>
+                    <p style='margin: 5px 0 0 0; color: #4b5563; font-size: 11px;'>© {DateTime.UtcNow.Year} Apple Esports. All rights reserved.</p>
+                </div>
+            </div>
+        </div>";
+
+        await SendNotificationAsync($"Operator Disabled: {op.FullName}", emailBody);
 
         return Ok(AppleEsportsErp.Application.DTOs.Common.ApiResponse<object>.Ok(new { message = "Operator disabled successfully" }));
     }
@@ -734,7 +789,32 @@ public class OperatorsController : ControllerBase
             _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.Operator>().Remove(op);
             await _unitOfWork.SaveChangesAsync();
 
-            await SendNotificationAsync($"Operator Deleted: {op.FullName}", $"An operator has been permanently deleted.\n\nName: {op.FullName}\nUsername: {op.Username}\nAction At: {DateTimeOffset.UtcNow}");
+            string emailBody = $@"
+            <div style='background-color:#050505; color:#ffffff; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; padding:40px 20px; text-align:center;'>
+                <div style='max-width: 600px; margin: 0 auto; background-color: #111111; border: 1px solid #333333; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);'>
+                    <div style='background: linear-gradient(135deg, #1a1a24 0%, #0d0d14 100%); padding: 30px 20px; border-bottom: 2px solid #dc2626;'>
+                        <h1 style='margin: 0; font-size: 28px; letter-spacing: 2px; color: #ffffff; text-transform: uppercase;'>
+                            <img src='https://appleesports.in/apple-touch-icon.png' alt='Logo' style='height: 40px; vertical-align: middle; margin-right: 15px;' /> APPLE ESPORTS
+                        </h1>
+                    </div>
+                    <div style='padding: 40px 30px; text-align: left;'>
+                        <h2 style='margin-top: 0; color: #ef4444; font-size: 24px; border-bottom: 2px solid #333333; padding-bottom: 15px;'>Operator Deleted</h2>
+                        <p style='font-size: 16px; color: #d1d5db; line-height: 1.6;'>An operator account has been permanently deleted from the system.</p>
+                        
+                        <div style='background-color: #0a0a0a; border: 1px solid #222222; border-radius: 8px; padding: 20px; margin-top: 25px;'>
+                            <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Name:</span> <strong style='color: #ffffff;'>{op.FullName}</strong></p>
+                            <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Username:</span> <strong style='color: #ffffff;'>{op.Username}</strong></p>
+                            <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Time:</span> <strong style='color: #ffffff;'>{DateTimeOffset.UtcNow.ToString("MMM dd, yyyy HH:mm")}</strong></p>
+                        </div>
+                    </div>
+                    <div style='background-color: #080808; padding: 20px; border-top: 1px solid #222222; text-align: center;'>
+                        <p style='margin: 0; color: #6b7280; font-size: 12px;'>This is an automated security notification from Apple Esports ERP.</p>
+                        <p style='margin: 5px 0 0 0; color: #4b5563; font-size: 11px;'>© {DateTime.UtcNow.Year} Apple Esports. All rights reserved.</p>
+                    </div>
+                </div>
+            </div>";
+
+            await SendNotificationAsync($"Operator Deleted: {op.FullName}", emailBody);
 
             return Ok(AppleEsportsErp.Application.DTOs.Common.ApiResponse<object>.Ok(new { message = "Operator deleted permanently" }));
         }

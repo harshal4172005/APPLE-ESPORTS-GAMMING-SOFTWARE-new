@@ -130,8 +130,39 @@ public class MemberService : IMemberService
         await _unitOfWork.CommitTransactionAsync();
 
         // Send Email Notification
-        await SendNotificationAsync($"New Member Joined: {member.FullName} (ID: {member.MemberNumber})", 
-            $"A new member has joined the system.\n\nName: {member.FullName}\nMobile: {member.MobileNumber}\nMember ID: {member.MemberNumber}\nJoined At: {member.JoinDate}");
+        var branchName = "Unknown Branch";
+        var branch = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.Branch>().Query()
+            .FirstOrDefaultAsync(b => b.Id == branchId);
+        if (branch != null) branchName = branch.Name;
+
+        string emailBody = $@"
+        <div style='background-color:#050505; color:#ffffff; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; padding:40px 20px; text-align:center;'>
+            <div style='max-width: 600px; margin: 0 auto; background-color: #111111; border: 1px solid #333333; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);'>
+                <div style='background: linear-gradient(135deg, #1a1a24 0%, #0d0d14 100%); padding: 30px 20px; border-bottom: 2px solid #dc2626;'>
+                    <h1 style='margin: 0; font-size: 28px; letter-spacing: 2px; color: #ffffff; text-transform: uppercase;'>
+                        <img src='https://appleesports.in/apple-touch-icon.png' alt='Logo' style='height: 40px; vertical-align: middle; margin-right: 15px;' /> APPLE ESPORTS
+                    </h1>
+                </div>
+                <div style='padding: 40px 30px; text-align: left;'>
+                    <h2 style='margin-top: 0; color: #3b82f6; font-size: 24px; border-bottom: 2px solid #333333; padding-bottom: 15px;'>New Member Joined</h2>
+                    <p style='font-size: 16px; color: #d1d5db; line-height: 1.6;'>A new member has officially joined the Apple Esports system.</p>
+                    
+                    <div style='background-color: #0a0a0a; border: 1px solid #222222; border-radius: 8px; padding: 20px; margin-top: 25px;'>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Name:</span> <strong style='color: #ffffff;'>{member.FullName}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Mobile:</span> <strong style='color: #ffffff;'>{member.MobileNumber}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Member ID:</span> <strong style='color: #ffffff;'>{member.MemberNumber}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Branch:</span> <strong style='color: #ffffff;'>{branchName}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Time:</span> <strong style='color: #ffffff;'>{member.JoinDate.ToString("MMM dd, yyyy HH:mm")}</strong></p>
+                    </div>
+                </div>
+                <div style='background-color: #080808; padding: 20px; border-top: 1px solid #222222; text-align: center;'>
+                    <p style='margin: 0; color: #6b7280; font-size: 12px;'>This is an automated notification from Apple Esports ERP.</p>
+                    <p style='margin: 5px 0 0 0; color: #4b5563; font-size: 11px;'>© {DateTime.UtcNow.Year} Apple Esports. All rights reserved.</p>
+                </div>
+            </div>
+        </div>";
+
+        await SendNotificationAsync($"New Member Joined: {member.FullName} (ID: {member.MemberNumber})", emailBody);
 
         return MapToDto(member);
     }
@@ -225,8 +256,33 @@ public class MemberService : IMemberService
         await _unitOfWork.CommitTransactionAsync();
 
         // Send Email Notification
-        await SendNotificationAsync($"Member Suspended/Deleted: {member.FullName} (ID: {member.MemberNumber})", 
-            $"A member has been removed from the system.\n\nName: {member.FullName}\nMobile: {member.MobileNumber}\nMember ID: {member.MemberNumber}\nAction At: {DateTimeOffset.UtcNow}");
+        string emailBody = $@"
+        <div style='background-color:#050505; color:#ffffff; font-family:""Segoe UI"", Tahoma, Geneva, Verdana, sans-serif; padding:40px 20px; text-align:center;'>
+            <div style='max-width: 600px; margin: 0 auto; background-color: #111111; border: 1px solid #333333; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.5);'>
+                <div style='background: linear-gradient(135deg, #1a1a24 0%, #0d0d14 100%); padding: 30px 20px; border-bottom: 2px solid #dc2626;'>
+                    <h1 style='margin: 0; font-size: 28px; letter-spacing: 2px; color: #ffffff; text-transform: uppercase;'>
+                        <img src='https://appleesports.in/apple-touch-icon.png' alt='Logo' style='height: 40px; vertical-align: middle; margin-right: 15px;' /> APPLE ESPORTS
+                    </h1>
+                </div>
+                <div style='padding: 40px 30px; text-align: left;'>
+                    <h2 style='margin-top: 0; color: #ef4444; font-size: 24px; border-bottom: 2px solid #333333; padding-bottom: 15px;'>Member Deleted</h2>
+                    <p style='font-size: 16px; color: #d1d5db; line-height: 1.6;'>A member account has been removed from the system.</p>
+                    
+                    <div style='background-color: #0a0a0a; border: 1px solid #222222; border-radius: 8px; padding: 20px; margin-top: 25px;'>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Name:</span> <strong style='color: #ffffff;'>{member.FullName}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Mobile:</span> <strong style='color: #ffffff;'>{member.MobileNumber}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Member ID:</span> <strong style='color: #ffffff;'>{member.MemberNumber}</strong></p>
+                        <p style='margin: 10px 0;'><span style='color: #6b7280; display: inline-block; width: 100px;'>Time:</span> <strong style='color: #ffffff;'>{DateTimeOffset.UtcNow.ToString("MMM dd, yyyy HH:mm")}</strong></p>
+                    </div>
+                </div>
+                <div style='background-color: #080808; padding: 20px; border-top: 1px solid #222222; text-align: center;'>
+                    <p style='margin: 0; color: #6b7280; font-size: 12px;'>This is an automated security notification from Apple Esports ERP.</p>
+                    <p style='margin: 5px 0 0 0; color: #4b5563; font-size: 11px;'>© {DateTime.UtcNow.Year} Apple Esports. All rights reserved.</p>
+                </div>
+            </div>
+        </div>";
+
+        await SendNotificationAsync($"Member Suspended/Deleted: {member.FullName} (ID: {member.MemberNumber})", emailBody);
     }
 
     private async Task SendNotificationAsync(string subject, string body)

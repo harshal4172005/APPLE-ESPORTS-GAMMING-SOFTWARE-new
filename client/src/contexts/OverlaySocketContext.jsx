@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import axios from 'axios';
 
@@ -248,6 +248,16 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
       setWalletApprovalRequest(data);
     });
 
+    // When PC status changes to Idle (e.g. after wallet payment completes), clear the overlay
+    newConnection.on('PcStatusChanged', (pcStatus) => {
+      const state = pcStatus?.state || pcStatus?.State;
+      if (state === 'Idle' || state === 0) {
+        console.log('[Overlay] PC is now Idle, clearing session');
+        setSessionData(null);
+        setWalletApprovalRequest(null);
+      }
+    });
+
     newConnection.start()
       .then(() => {
         setConnectionStatus('connected');
@@ -417,6 +427,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
   const respondToWalletApproval = async (billId, approved) => {
     if (isMockMode) {
       setWalletApprovalRequest(null);
+      if (approved) setSessionData(null);
       return { success: true };
     }
     try {
@@ -424,7 +435,15 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
       const res = await axios.post(`/api/public/bills/${billId}/${endpoint}`, {
         approvalToken: walletApprovalRequest.approvalToken
       });
-      setWalletApprovalRequest(null);
+      // If approved successfully, delay clearing the session to show a success message
+      if (approved && res.data?.success !== false) {
+        setTimeout(() => {
+          setWalletApprovalRequest(null);
+          setSessionData(null);
+        }, 2500);
+      } else {
+        setWalletApprovalRequest(null);
+      }
       return { success: true, data: res.data };
     } catch (err) {
       console.error('[Overlay] respondToWalletApproval error:', err);

@@ -9,7 +9,7 @@ import { useOverlaySocket } from '../../../contexts/OverlaySocketContext';
 export default function PcLockScreen() {
   // step: 'selection' | 'walkin' | 'member_login' | 'time_selection'
   const [step, setStep] = useState('selection');
-  const { pcId, requestWalkinSession, walkinDeclineEvent, fetchSession } = useOverlaySocket();
+  const { pcId, requestWalkinSession, walkinDeclineEvent, fetchSession, sessionData } = useOverlaySocket();
   const toast = useToast();
 
   const [walkinName, setWalkinName] = useState('');
@@ -25,10 +25,11 @@ export default function PcLockScreen() {
   // Time Selection State
   const [isStarting, setIsStarting] = useState(false);
 
-  // Plans
   const [selectedPlan, setSelectedPlan] = useState(null);
   const [plans, setPlans] = useState([]);
   const [plansError, setPlansError] = useState(false);
+
+
 
   // Fetch plans when step changes to walkin
   useEffect(() => {
@@ -504,6 +505,20 @@ export default function PcLockScreen() {
       </div>
     </motion.div>
   );
+
+  // If session is awaiting billing, block everything and show logo
+  if (sessionData?.sessionStatus === 'awaiting_billing') {
+    return (
+      <div className="w-full h-full bg-black/95 flex flex-col items-center justify-center p-8 text-center relative border-2 border-accent shadow-[0_0_50px_rgba(255,51,102,0.3)]">
+        <img src="https://appleesports.in/apple-touch-icon.png" alt="Apple Esports" className="w-48 h-48 mb-8 animate-pulse shadow-[0_0_50px_rgba(255,51,102,0.5)] rounded-full" />
+        <h1 className="text-5xl font-heading font-bold text-text uppercase tracking-[0.2em] mb-4 drop-shadow-[0_0_15px_rgba(255,51,102,0.8)]">Session Ended</h1>
+        <p className="text-xl text-text-2 font-mono uppercase tracking-widest flex items-center gap-3">
+            <Loader2 className="w-6 h-6 animate-spin text-neon-orange" />
+            Awaiting Billing at Counter...
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 z-[100] bg-bg flex items-center justify-center p-4 overflow-y-auto overflow-x-hidden min-h-screen">

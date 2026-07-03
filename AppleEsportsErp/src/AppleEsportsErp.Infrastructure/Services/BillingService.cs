@@ -267,6 +267,9 @@ public class BillingService : IBillingService
                 await _unitOfWork.Repository<CashTransaction>().AddAsync(cashTx);
             }
 
+            Guid? completedSessionId = null;
+            Guid? releasedPcId = null;
+
             // Release PC & Session (SOP §9.2)
             if (bill.Pc != null)
             {
@@ -284,7 +287,7 @@ public class BillingService : IBillingService
                         session.EndTime = now;
                         session.ActualDurationMin = (int)(now - session.StartTime).TotalMinutes;
                         _unitOfWork.Repository<Session>().Update(session);
-                        await _hubNotification.BroadcastSessionUpdateAsync(branchId, session.Id);
+                        completedSessionId = session.Id;
                     }
                 }
 
@@ -294,7 +297,7 @@ public class BillingService : IBillingService
                     pc.State = PcState.Idle;
                     pc.CurrentSessionId = null;
                     _unitOfWork.Repository<Pc>().Update(pc);
-                    await _hubNotification.BroadcastPcStatusChangeAsync(branchId, pc.Id);
+                    releasedPcId = pc.Id;
                 }
             }
 
@@ -325,6 +328,12 @@ public class BillingService : IBillingService
 
             await _unitOfWork.CommitTransactionAsync();
             await _hubNotification.BroadcastBillingUpdateAsync(branchId, bill.Id);
+            
+            if (completedSessionId.HasValue)
+                await _hubNotification.BroadcastSessionUpdateAsync(branchId, completedSessionId.Value);
+            
+            if (releasedPcId.HasValue)
+                await _hubNotification.BroadcastPcStatusChangeAsync(branchId, releasedPcId.Value);
 
             return MapToDto(bill);
         }

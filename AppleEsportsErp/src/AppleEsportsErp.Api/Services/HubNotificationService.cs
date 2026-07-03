@@ -48,6 +48,12 @@ public class HubNotificationService : IHubNotificationService
             var pcStatus = await pcStatusService.GetPcStatusAsync(pcId);
             await _pcStatusHub.Clients.Group($"branch:{branchId}")
                 .SendAsync("PcStatusChanged", new EventEnvelope<object>(pcStatus));
+            await _pcStatusHub.Clients.Group("admin:all")
+                .SendAsync("PcStatusChanged", new EventEnvelope<object>(pcStatus));
+                
+            // Also notify the PC overlay directly
+            await _pcOverlayHub.Clients.Group($"pc:{pcId}")
+                .SendAsync("PcStatusChanged", pcStatus);
         }
         await InvalidateDashboardCacheAsync(branchId);
     }
@@ -56,6 +62,8 @@ public class HubNotificationService : IHubNotificationService
     {
         var payload = new { sessionId, branchId };
         await _sessionHub.Clients.Group($"branch:{branchId}")
+            .SendAsync("SessionUpdated", new EventEnvelope<object>(payload));
+        await _sessionHub.Clients.Group("admin:all")
             .SendAsync("SessionUpdated", new EventEnvelope<object>(payload));
             
         // Also notify PC Overlay
@@ -101,6 +109,8 @@ public class HubNotificationService : IHubNotificationService
         var payload = new { reservationId, branchId };
         await _reservationHub.Clients.Group($"branch:{branchId}")
             .SendAsync("ReservationUpdated", new EventEnvelope<object>(payload));
+        await _reservationHub.Clients.Group("admin:all")
+            .SendAsync("ReservationUpdated", new EventEnvelope<object>(payload));
         await InvalidateDashboardCacheAsync(branchId);
     }
 
@@ -108,6 +118,8 @@ public class HubNotificationService : IHubNotificationService
     {
         var payload = new { billId, branchId };
         await _billingHub.Clients.Group($"branch:{branchId}")
+            .SendAsync("BillUpdated", new EventEnvelope<object>(payload));
+        await _billingHub.Clients.Group("admin:all")
             .SendAsync("BillUpdated", new EventEnvelope<object>(payload));
         await InvalidateDashboardCacheAsync(branchId);
     }
@@ -126,6 +138,8 @@ public class HubNotificationService : IHubNotificationService
         var payload = new { registerId, branchId };
         await _cashHub.Clients.Group($"branch:{branchId}")
             .SendAsync("CashRegisterUpdated", new EventEnvelope<object>(payload));
+        await _cashHub.Clients.Group("admin:all")
+            .SendAsync("CashRegisterUpdated", new EventEnvelope<object>(payload));
         await InvalidateDashboardCacheAsync(branchId);
     }
 
@@ -133,6 +147,8 @@ public class HubNotificationService : IHubNotificationService
     {
         var payload = new { pcId, branchId, action };
         await _pcStatusHub.Clients.Group($"branch:{branchId}")
+            .SendAsync("PcManagementUpdated", new EventEnvelope<object>(payload));
+        await _pcStatusHub.Clients.Group("admin:all")
             .SendAsync("PcManagementUpdated", new EventEnvelope<object>(payload));
         await InvalidateDashboardCacheAsync(branchId);
     }

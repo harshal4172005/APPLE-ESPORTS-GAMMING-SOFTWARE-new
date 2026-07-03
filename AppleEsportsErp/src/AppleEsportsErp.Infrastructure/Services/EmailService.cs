@@ -32,6 +32,34 @@ namespace AppleEsportsErp.Infrastructure.Services
             string password = _configuration["EmailSettings:Password"] ?? "";
             string fromEmail = _configuration["EmailSettings:FromEmail"] ?? "noreply@appleesports.com";
 
+            // Override with global system config from UI if available
+            var config = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.SystemConfig>().Query()
+                .FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
+
+            if (config != null && !string.IsNullOrWhiteSpace(config.ConfigValue))
+            {
+                try
+                {
+                    var doc = System.Text.Json.JsonDocument.Parse(config.ConfigValue);
+                    if (doc.RootElement.TryGetProperty("emailNotifications", out var emailNode))
+                    {
+                        if (emailNode.TryGetProperty("sender", out var senderNode) && !string.IsNullOrWhiteSpace(senderNode.GetString()))
+                        {
+                            username = senderNode.GetString()!;
+                            fromEmail = username;
+                        }
+                        if (emailNode.TryGetProperty("appPassword", out var pwdNode) && !string.IsNullOrWhiteSpace(pwdNode.GetString()))
+                        {
+                            password = pwdNode.GetString()!;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning($"Failed to parse global_system_rules for email config: {ex.Message}");
+                }
+            }
+
             // If SMTP is not configured, we just log it (Mock mode)
             if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
             {
@@ -57,14 +85,13 @@ namespace AppleEsportsErp.Infrastructure.Services
 
                 // Handle multiple comma-separated emails
                 var emails = to.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries);
-                var firstEmail = emails.Length > 0 ? emails[0].Trim() : fromEmail;
 
                 var mailMessage = new MailMessage
                 {
-                    From = new MailAddress(firstEmail, "Apple Esports System"),
+                    From = new MailAddress(fromEmail, "Apple Esports System"),
                     Subject = subject,
                     Body = body,
-                    IsBodyHtml = true // HTML formatting enabled
+                    IsBodyHtml = true
                 };
 
                 // Handle multiple comma-separated emails

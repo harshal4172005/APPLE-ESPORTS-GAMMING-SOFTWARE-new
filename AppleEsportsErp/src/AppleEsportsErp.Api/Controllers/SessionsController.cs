@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using AppleEsportsErp.Api.Extensions;
 using AppleEsportsErp.Api.Filters;
 using AppleEsportsErp.Api.Hubs;
+using Microsoft.AspNetCore.SignalR;
 using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.DTOs.Sessions;
 using AppleEsportsErp.Application.Interfaces;

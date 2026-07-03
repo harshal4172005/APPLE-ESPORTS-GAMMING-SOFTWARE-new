@@ -4,7 +4,6 @@
   left: 0;
   right: 0;
   bottom: 0;
-  height: calc(100vh - 53px);
   background: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(8px);
   z-index: 1000;
@@ -67,6 +66,8 @@
   flex: 1;
   overflow-y: auto;
   padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes slideInRight {

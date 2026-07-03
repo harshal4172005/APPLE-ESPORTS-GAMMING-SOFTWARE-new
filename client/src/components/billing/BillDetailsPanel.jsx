@@ -48,14 +48,29 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess 
 
   useEffect(() => {
     if (!bill?.id) return;
-    const unsub = subscribe(SIGNALR_HUBS.BILLING, 'WalletApprovalDeclined', (data) => {
-      if (data.billId === bill.id) {
+    const handleWalletDeclined = (data) => {
+      if (data.billId === bill?.id) {
+        toast.error(`Wallet payment declined: ${data.reason}`);
         setWalletWaiting(false);
-        setPayError(data.reason || 'Member declined the wallet payment request.');
       }
-    });
-    return () => unsub();
-  }, [bill?.id, subscribe, SIGNALR_HUBS]);
+    };
+    
+    const handleWalletApproved = (data) => {
+      if (data.billId === bill?.id) {
+        toast.success('Wallet payment approved!');
+        setWalletWaiting(false);
+        onPaymentSuccess?.();
+      }
+    };
+
+    const unsubDeclined = subscribe(SIGNALR_HUBS.BILLING, 'WalletApprovalDeclined', handleWalletDeclined);
+    const unsubApproved = subscribe(SIGNALR_HUBS.BILLING, 'WalletApprovalApproved', handleWalletApproved);
+
+    return () => {
+      unsubDeclined();
+      unsubApproved();
+    };
+  }, [bill?.id, toast, onPaymentSuccess, subscribe, SIGNALR_HUBS]);
 
   // Fetch member wallet whenever the linked member changes
   useEffect(() => {
