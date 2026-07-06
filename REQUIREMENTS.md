@@ -8,4 +8,4 @@
 
 ## ✨ New Features to Add
 - i want food orders notification on screen like how we get notification of operator calling (basically this is for when the customer orders food from the user pannel !!)
-- ![alt text](image.png), 
+- ![alt text](image.png)
