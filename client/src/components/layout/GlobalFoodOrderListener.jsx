@@ -86,10 +86,12 @@ export default function GlobalFoodOrderListener() {
     
     const unsubNew = subscribe(SIGNALR_HUBS.FOOD_ORDERS, 'NewFoodOrder', (payload) => {
       const order = payload.data || payload.Data || payload;
-      if (order && (order.id || order.Id)) {
+      const actualOrderId = order.orderId || order.OrderId || order.id || order.Id;
+      if (order && actualOrderId) {
         setNewOrderAlerts(prev => {
-          if (prev.some(o => o.id === (order.id || order.Id) || o.Id === (order.id || order.Id))) return prev;
-          return [...prev, order];
+          if (prev.some(o => (o.orderId || o.OrderId || o.id || o.Id) === actualOrderId)) return prev;
+          // Normalize the object to always have an id property for consistency
+          return [...prev, { ...order, id: actualOrderId }];
         });
       }
       checkOrders();
@@ -113,7 +115,7 @@ export default function GlobalFoodOrderListener() {
         {newOrderAlerts.map((order) => {
           const orderId = order.id || order.Id;
           const pcId = order.pcId || order.PcId;
-          const pcNumber = order.pcNumber || order.PcNumber;
+          const pcNumber = order.pcName || order.PcName || order.pcNumber || order.PcNumber;
           const customerName = order.customerName || order.CustomerName || 'Walk-in';
           const items = order.items || order.Items || [];
           const totalAmount = order.totalAmount || order.TotalAmount || 0;
