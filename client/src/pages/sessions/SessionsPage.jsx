@@ -43,7 +43,7 @@ export default function SessionsPage() {
       return;
     }
     try {
-      const { data } = await api.get('/pcs', { params: { branchId: targetBranchId, _t: Date.now() } });
+      const { data } = await api.get('/pcs', { params: { branchId: targetBranchId } });
       const sorted = (data?.data || []).sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { numeric: true })
       );
@@ -104,10 +104,10 @@ export default function SessionsPage() {
     if (!targetBranchId) return;
     setAuditLoading(true);
     try {
-      const response = await getRangeReport({ 
-        startDate: `${auditDate}T00:00:00Z`, 
-        endDate: `${auditDate}T23:59:59Z`, 
-        branchId: targetBranchId 
+      const response = await getRangeReport({
+        startDate: `${auditDate}T00:00:00Z`,
+        endDate: `${auditDate}T23:59:59Z`,
+        branchId: targetBranchId
       });
       setAuditLogs(response?.data?.allBills || []);
     } catch (err) {
