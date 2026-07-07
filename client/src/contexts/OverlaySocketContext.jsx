@@ -451,6 +451,24 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
     }
   };
 
+  const memberCheckout = async (sessionId) => {
+    const token = localStorage.getItem('memberToken');
+    if (!token) return { success: false, error: 'Not logged in' };
+
+    try {
+      const response = await fetch(`http://localhost:5032/api/public/sessions/${sessionId}/member-checkout`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      return await response.json();
+    } catch (error) {
+      console.error('Member checkout error:', error);
+      return { success: false, error: error.message };
+    }
+  };
+
   return (
     <OverlaySocketContext.Provider value={{
       pcId,
@@ -470,6 +488,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
       walletApprovalRequest,
       respondToWalletApproval,
       branchId,
+      memberCheckout
     }}>
       {children}
     </OverlaySocketContext.Provider>

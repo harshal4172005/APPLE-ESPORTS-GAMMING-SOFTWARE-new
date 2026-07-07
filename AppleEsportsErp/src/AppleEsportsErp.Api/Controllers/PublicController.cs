@@ -346,6 +346,77 @@ public class PublicController : ControllerBase
         return Ok(ApiResponse<SessionDto>.Ok(result));
     }
 
+    [HttpPost("sessions/{sessionId:guid}/member-checkout")]
+    [Authorize] // Requires valid MemberToken
+    public async Task<IActionResult> MemberCheckout(
+        Guid sessionId,
+        [FromServices] ISessionService sessionService,
+        [FromServices] IBillingService billingService,
+        [FromServices] IHubContext<PcStatusHub> pcStatusHub,
+        [FromServices] IHubContext<BillingHub> billingHub,
+        [FromServices] IHubContext<SessionHub> sessionHub,
+        [FromServices] IHubContext<PcOverlayHub> overlayHub)
+    {
+        var memberIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(memberIdStr) || !Guid.TryParse(memberIdStr, out var memberId))
+            return Unauthorized(new { success = false, error = "Invalid Member token." });
+
+        var session = await _db.Sessions.FirstOrDefaultAsync(s => s.Id == sessionId);
+        if (session == null || session.MemberId != memberId)
+            return BadRequest(new { success = false, error = "Session not found or not owned by you." });
+
+        var branchId = session.BranchId;
+        var sysUsername = $"system_admin_{branchId:N}";
+        var sysOp = await _db.Operators.FirstOrDefaultAsync(o => o.BranchId == branchId && o.Username == sysUsername);
+        if (sysOp == null) return BadRequest(new { success = false, error = "System operator not found." });
+
+        var activeShift = await _db.Shifts.FirstOrDefaultAsync(s => s.BranchId == branchId && s.Status == ShiftStatus.Active && s.OperatorId == sysOp.Id);
+        var shiftId = activeShift?.Id ?? Guid.Empty;
+
+        // 1. Stop the session to finalize bill
+        var sessionResult = await sessionService.StopSessionAsync(branchId, sysOp.Id, sessionId, false);
+
+        // 2. Fetch the bill to get the total amount
+        var bill = await billingService.GetBillAsync(branchId, sessionResult.BillId);
+        if (bill != null && bill.Status != AppleEsportsErp.Domain.Enums.BillStatus.Completed && bill.TotalAmount > 0)
+        {
+            // 3. Process wallet payment automatically
+            var paymentDto = new AppleEsportsErp.Application.DTOs.Billing.ProcessPaymentDto
+            {
+                PaymentType = AppleEsportsErp.Domain.Enums.PaymentType.Wallet,
+                CashAmount = 0,
+                OnlineAmount = 0,
+                WalletAmount = bill.TotalAmount,
+                CashReceived = 0,
+                MemberId = memberId
+            };
+
+            try
+            {
+                var paidBill = await billingService.ProcessPaymentAsync(branchId, sysOp.Id, shiftId, bill.Id, paymentDto);
+                
+                // SignalR updates for Admin dashboards
+                await billingHub.Clients.Group($"branch:{branchId}").SendAsync("WalletApprovalApproved", new { billId = bill.Id });
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(new { success = false, error = "Wallet payment failed: " + ex.Message });
+            }
+        }
+
+        // Broadcast PC Idle status to operator dashboard
+        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.Id == sessionResult.PcId);
+        if (pc != null)
+        {
+            await pcStatusHub.Clients.All.SendAsync("PcStatusUpdated", new { id = pc.Id, state = pc.State.ToString() });
+        }
+
+        // Notify overlay so it goes to idle screen
+        await overlayHub.Clients.Group($"pc:{sessionResult.PcId}").SendAsync("PcStatusChanged", new { State = "Idle" });
+
+        return Ok(new { success = true, data = sessionResult });
+    }
+
     [HttpPost("bills/{billId:guid}/approve-wallet")]
     public async Task<IActionResult> ApproveWalletPayment(Guid billId, [FromBody] ApproveWalletRequest req, [FromServices] IBillingService billingService, [FromServices] IHubContext<BillingHub> billingHub)
     {
