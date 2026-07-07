@@ -137,6 +137,16 @@ public class PublicController : ControllerBase
             ratePerHour = hrRate;
         }
 
+        decimal? walletBalance = null;
+        if (session.MemberId.HasValue)
+        {
+            var member = await _db.Members.FirstOrDefaultAsync(m => m.Id == session.MemberId.Value);
+            if (member != null)
+            {
+                walletBalance = member.GamingBalance + member.FoodBalance;
+            }
+        }
+
         var result = new
         {
             sessionId = session.Id.ToString(),
@@ -157,6 +167,7 @@ public class PublicController : ControllerBase
             totalBill = session.GamingAmount + foodCharges,
             sessionStatus = session.State.ToString().ToLowerInvariant(),
             memberId = session.MemberId?.ToString(),
+            walletBalance = walletBalance
         };
 
         return Ok(ApiResponse<object>.Ok(result));
