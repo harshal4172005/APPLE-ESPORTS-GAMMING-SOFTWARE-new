@@ -15,6 +15,39 @@ export default function SessionInfoScreen() {
     return () => clearInterval(interval);
   }, []);
 
+  const liveBill = React.useMemo(() => {
+    if (!sessionData) return 0;
+    const isPayAsYouGo = !sessionData.plannedDurationMin || sessionData.plannedDurationMin === 0;
+    if (isPayAsYouGo) {
+      const elapsedSeconds = Math.max(0, Math.floor((now - new Date(sessionData.sessionStart).getTime()) / 1000));
+      const elapsedMin = elapsedSeconds / 60;
+      const ratePerHour = sessionData.ratePerHour || 100;
+      const hours = Math.max(elapsedMin / 60, 1 / 60);
+      const liveGamingCharge = Number((hours * ratePerHour).toFixed(2));
+      return (sessionData.foodCharges || 0) + liveGamingCharge;
+    }
+    return sessionData.totalBill || 0;
+  }, [sessionData, now]);
+
+  useEffect(() => {
+    if (sessionData?.memberLinked && sessionData?.walletBalance != null) {
+      if (liveBill >= sessionData.walletBalance && !isCheckingOut && !checkoutLoading) {
+        setIsCheckingOut(true);
+        setCheckoutLoading(true);
+        setCheckoutError("You have no balance left. Please recharge!");
+        localStorage.setItem('walletEmptyAlert', 'true');
+        
+        memberCheckout(sessionData.sessionId).then(res => {
+          if (!res?.success) {
+            setCheckoutError(`You have no balance left. Please recharge! (${res?.error || 'Failed to checkout'})`);
+            setCheckoutLoading(false);
+            setTimeout(() => window.location.reload(), 3000);
+          }
+        });
+      }
+    }
+  }, [liveBill, sessionData, isCheckingOut, checkoutLoading, memberCheckout]);
+
   const formatTime = (seconds) => {
     if (seconds <= 0) return '00:00:00';
     const h = Math.floor(seconds / 3600);
@@ -24,11 +57,32 @@ export default function SessionInfoScreen() {
   };
 
   if (!sessionData) {
+    const showWalletEmpty = localStorage.getItem('walletEmptyAlert') === 'true';
+
     return (
       <div className="flex flex-col items-center justify-center h-full p-6 text-center">
         <MonitorPlay className="w-16 h-16 text-text-3 mb-4 opacity-50" />
-        <h2 className="font-heading text-2xl font-bold text-text-2 tracking-wide uppercase">No Active Session</h2>
-        <p className="text-text-3 font-body mt-2">Please see the counter to start a session on {pcId}.</p>
+        
+        {showWalletEmpty ? (
+          <div className="bg-neon-red/10 border border-neon-red/30 p-6 rounded-xl max-w-md animate-in zoom-in mb-6">
+            <AlertTriangle className="w-12 h-12 text-neon-red mx-auto mb-4" />
+            <h2 className="font-heading text-2xl font-bold text-neon-red tracking-wide uppercase mb-2">Session Ended</h2>
+            <p className="text-neon-red font-body font-bold text-lg">
+              You have no balance left.<br/>Please recharge!!!
+            </p>
+            <button 
+              onClick={() => localStorage.removeItem('walletEmptyAlert')}
+              className="mt-4 px-4 py-2 bg-bg-3 border border-border text-text hover:bg-bg-4 rounded-md transition-colors text-sm"
+            >
+              Dismiss
+            </button>
+          </div>
+        ) : (
+          <>
+            <h2 className="font-heading text-2xl font-bold text-text-2 tracking-wide uppercase">No Active Session</h2>
+            <p className="text-text-3 font-body mt-2">Please see the counter to start a session on {pcId}.</p>
+          </>
+        )}
         
         <div className="mt-8">
           <p className="text-text-3 text-sm mb-3">Or login to start session automatically</p>
@@ -56,20 +110,12 @@ export default function SessionInfoScreen() {
   let displayTime = '';
   let timeLabel = '';
   let isLowTime = false;
-  let liveBill = sessionData.totalBill || 0;
 
   if (isPayAsYouGo) {
     const elapsedSeconds = Math.max(0, Math.floor((now - new Date(sessionData.sessionStart).getTime()) / 1000));
     displayTime = formatTime(elapsedSeconds);
     timeLabel = 'Elapsed Time';
     isLowTime = false;
-    
-    // Calculate live bill for Pay As You Go (100 per hour default if ratePerHour not specified)
-    const elapsedMin = elapsedSeconds / 60;
-    const ratePerHour = sessionData.ratePerHour || 100;
-    const hours = Math.max(elapsedMin / 60, 1 / 60);
-    const liveGamingCharge = Number((hours * ratePerHour).toFixed(2));
-    liveBill = (sessionData.foodCharges || 0) + liveGamingCharge;
   } else {
     // Dynamically calculate remaining time based on start time and planned duration
     const expectedEndTimeMs = new Date(sessionData.sessionStart).getTime() + (sessionData.plannedDurationMin * 60 * 1000);
@@ -78,7 +124,6 @@ export default function SessionInfoScreen() {
     displayTime = formatTime(remainingSeconds);
     timeLabel = 'Remaining Time';
     isLowTime = remainingSeconds < 900;
-    liveBill = sessionData.totalBill;
   }
 
   return (

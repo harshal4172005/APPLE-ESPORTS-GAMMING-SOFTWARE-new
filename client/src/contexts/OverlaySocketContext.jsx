@@ -103,6 +103,8 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
           totalBill: d.totalBill,
           sessionStatus: d.sessionStatus,
           memberId: d.memberId,
+          memberLinked: !!d.memberId,
+          walletBalance: d.walletBalance,
         });
       } else {
         // No active session found
