@@ -43,7 +43,7 @@ export default function SessionsPage() {
       return;
     }
     try {
-      const { data } = await api.get('/pcs', { params: { branchId: targetBranchId } });
+      const { data } = await api.get('/pcs', { params: { branchId: targetBranchId, _t: Date.now() } });
       const sorted = (data?.data || []).sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { numeric: true })
       );
