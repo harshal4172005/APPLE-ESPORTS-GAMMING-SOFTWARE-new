@@ -21,6 +21,8 @@ export default function PcLockScreen() {
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loginError, setLoginError] = useState('');
   const [profile, setProfile] = useState(null);
+  
+  const [walletEmpty, setWalletEmpty] = useState(localStorage.getItem('walletEmptyAlert') === 'true');
 
   // Time Selection State
   const [isStarting, setIsStarting] = useState(false);
@@ -526,6 +528,25 @@ export default function PcLockScreen() {
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/20 rounded-full blur-[120px] pointer-events-none" />
 
       <div className="relative z-10 w-full py-8 my-auto">
+        {walletEmpty && (
+          <div className="mx-auto bg-neon-red/10 border border-neon-red/30 p-6 rounded-xl max-w-md animate-in zoom-in mb-8 text-center backdrop-blur-md shadow-[0_0_30px_rgba(255,51,102,0.2)]">
+            <AlertTriangle className="w-12 h-12 text-neon-red mx-auto mb-4 animate-pulse" />
+            <h2 className="font-heading text-2xl font-bold text-neon-red tracking-wide uppercase mb-2">Session Ended</h2>
+            <p className="text-neon-red font-body font-bold text-lg">
+              You have no balance left.<br/>Please recharge!!!
+            </p>
+            <button 
+              onClick={() => {
+                localStorage.removeItem('walletEmptyAlert');
+                setWalletEmpty(false);
+              }}
+              className="mt-6 px-8 py-3 bg-neon-red/20 border border-neon-red/50 text-neon-red font-bold hover:bg-neon-red/30 rounded-md transition-colors uppercase tracking-widest text-sm w-full"
+            >
+              Acknowledge & Dismiss
+            </button>
+          </div>
+        )}
+        
         <AnimatePresence mode="wait">
           {step === 'selection' && renderSelection()}
           {step === 'walkin' && renderWalkin()}
