@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, AlertTriangle, FileText, CheckCircle, Lock, Monitor, Utensils } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, FileText, CheckCircle, Lock, Monitor, Utensils, Clock } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import api from '../../config/api';
@@ -407,6 +407,59 @@ export default function EodDashboardPage() {
                   <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Food Orders</div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* ── Complete Billing Audit Logs ── */}
+          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg mt-8">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2">
+                <Clock className="w-4.5 h-4.5 text-accent" />
+                Complete Billing Audit Logs ({targetDate})
+              </h2>
+            </div>
+
+            <div className="overflow-x-auto">
+              {!allBills || allBills.length === 0 ? (
+                <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
+                  No bills found for the selected date.
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
+                      <th className="py-3 px-4">Date/Time</th>
+                      <th className="py-3 px-4">Bill Number</th>
+                      <th className="py-3 px-4">Operator</th>
+                      <th className="py-3 px-4">Customer</th>
+                      <th className="py-3 px-4 text-center">Payment</th>
+                      <th className="py-3 px-4 text-right">Gaming</th>
+                      <th className="py-3 px-4 text-right">Food</th>
+                      <th className="py-3 px-4 text-right">Discount</th>
+                      <th className="py-3 px-4 text-right">Total</th>
+                      <th className="py-3 px-4">Notes</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40 font-mono">
+                    {allBills.map(bill => (
+                      <tr key={bill.billId} className="hover:bg-bg-3/40 transition-colors">
+                        <td className="py-3 px-4 text-text-2 flex items-center gap-1">
+                          {new Date(bill.date).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-text font-bold">{bill.billId}</td>
+                        <td className="py-3 px-4 text-neon-blue font-bold">{bill.operator}</td>
+                        <td className="py-3 px-4 text-text-2 font-sans">{bill.customer}</td>
+                        <td className="py-3 px-4 text-center text-text-3 uppercase">{bill.paymentType}</td>
+                        <td className="py-3 px-4 text-right text-text">₹{bill.gamingRevenue.toFixed(2)}</td>
+                        <td className="py-3 px-4 text-right text-text">₹{bill.foodRevenue.toFixed(2)}</td>
+                        <td className="py-3 px-4 text-right text-neon-red">{bill.discount > 0 ? `-₹${bill.discount.toFixed(2)}` : '-'}</td>
+                        <td className="py-3 px-4 text-right text-neon-green font-bold">₹{bill.totalRevenue.toFixed(2)}</td>
+                        <td className="py-3 px-4 text-text-3 text-[10px] whitespace-pre-wrap">{bill.sessionNotes || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
 
