@@ -9,6 +9,14 @@ export default function LandingGatewayPage() {
   const [setupStatus, setSetupStatus] = useState(null);
 
   useEffect(() => {
+    // Hidden escape hatch to clear dedicated PC from this browser
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('clear') === 'true') {
+      localStorage.removeItem('dedicatedPcId');
+      window.location.href = '/';
+      return;
+    }
+
     // Check if PC is already dedicated to a specific client
     const pcId = localStorage.getItem('dedicatedPcId');
     if (pcId) {

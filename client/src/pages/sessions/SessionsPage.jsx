@@ -126,6 +126,15 @@ export default function SessionsPage() {
     fetchAuditLogs();
   }, [fetchAuditLogs]);
 
+  useEffect(() => {
+    const handleRefresh = () => {
+      fetchPcs();
+      fetchAuditLogs(); // Refreshing audit logs too for consistency
+    };
+    window.addEventListener('refresh-pcs', handleRefresh);
+    return () => window.removeEventListener('refresh-pcs', handleRefresh);
+  }, [fetchPcs, fetchAuditLogs]);
+
   // Poll for pending walk-in requests every 5 seconds — reliable fallback regardless of SignalR state
   useEffect(() => {
     if (!targetBranchId) return;
