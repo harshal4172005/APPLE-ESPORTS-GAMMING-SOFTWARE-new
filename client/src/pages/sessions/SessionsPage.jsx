@@ -127,7 +127,17 @@ export default function SessionsPage() {
   }, [fetchAuditLogs]);
 
   useEffect(() => {
-    const handleRefresh = () => {
+    const handleRefresh = (e) => {
+      const pcId = e.detail?.pcId;
+      if (pcId) {
+        setPcs(current => {
+          const idx = current.findIndex(p => p.id === pcId || p.name === pcId);
+          if (idx === -1) return current;
+          const next = [...current];
+          next[idx] = { ...next[idx], state: 'Active' };
+          return next;
+        });
+      }
       fetchPcs();
       fetchAuditLogs(); // Refreshing audit logs too for consistency
     };
@@ -208,6 +218,13 @@ export default function SessionsPage() {
       if (res.data.success) {
         toast.success(`Walk-in session started for ${req.pcId}`);
         setWalkinRequests(prev => prev.filter(r => r.pcId !== req.pcId));
+        setPcs(current => {
+          const idx = current.findIndex(p => p.id === actualPcId);
+          if (idx === -1) return current;
+          const next = [...current];
+          next[idx] = { ...next[idx], state: 'Active' };
+          return next;
+        });
         fetchPcs();
       }
     } catch (err) {

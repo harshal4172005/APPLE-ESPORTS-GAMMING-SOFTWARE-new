@@ -119,7 +119,7 @@ export default function GlobalNotificationListener() {
         if (extendRes.data.success) {
           toast.success(`Time extended for ${pcId}`);
           setRequests(prev => prev.filter(r => (r.pcId || r.PcId) !== pcId));
-          window.dispatchEvent(new Event('refresh-pcs'));
+          window.dispatchEvent(new CustomEvent('refresh-pcs', { detail: { pcId } }));
         }
         setIsProcessing(false);
         return;
@@ -150,7 +150,7 @@ export default function GlobalNotificationListener() {
       if (startRes.data.success) {
         toast.success(`Session started for ${pcId}`);
         setRequests(prev => prev.filter(r => (r.pcId || r.PcId) !== pcId));
-        window.dispatchEvent(new Event('refresh-pcs'));
+        window.dispatchEvent(new CustomEvent('refresh-pcs', { detail: { pcId: actualPcId } }));
       }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to approve request');
