@@ -15,6 +15,19 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const fetchCurrentUser = useCallback(async () => {
+    try {
+      const res = await api.get('/auth/me');
+      const userData = res.data.data;
+      setUser(userData);
+      localStorage.setItem('user', JSON.stringify(userData));
+    } catch (error) {
+      if (error.response && (error.response.status === 401 || error.response.status === 403)) {
+        logout();
+      }
+    }
+  }, []);
+
   // ── Initialize auth state from localStorage ──
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
@@ -28,22 +41,7 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('user');
       }
       // Verify token is still valid by fetching current user
-      api.get('/auth/me')
-        .then((res) => {
-          const userData = res.data.data;
-          setUser(userData);
-          localStorage.setItem('user', JSON.stringify(userData));
-        })
-        .catch((error) => {
-          // Token invalid or network error.
-          // If it's explicitly a 401/403, log them out. 
-          // (Though the interceptor handles most 401s, this is a fallback).
-          // If it's a network error (no response), KEEP them logged in so they don't lose session on brief disconnects.
-          if (error.response && (error.response.status === 401 || error.response.status === 403)) {
-            logout();
-          }
-        })
-        .finally(() => setLoading(false));
+      fetchCurrentUser().finally(() => setLoading(false));
     } else {
       setLoading(false);
     }
@@ -151,6 +149,7 @@ export function AuthProvider({ children }) {
     loginOperator,
     logout,
     hasDashboardAccess,
+    fetchCurrentUser,
     setError,
   };
 

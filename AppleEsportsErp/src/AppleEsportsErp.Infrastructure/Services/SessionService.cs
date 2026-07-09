@@ -316,6 +316,22 @@ public class SessionService : ISessionService
             if (deferPayment && bill != null && bill.Status != BillStatus.Completed)
             {
                 bill.IsDeferred = true;
+                bill.Status = BillStatus.Completed; // It leaves the billing counter
+                
+                var customerCredit = new CustomerCredit
+                {
+                    BranchId = branchId,
+                    OperatorId = operatorId,
+                    BillId = bill.Id,
+                    CustomerName = session.CustomerName ?? session.Member?.Username ?? "Walk-in",
+                    PcNumber = pc.PcNumber ?? "N/A",
+                    OriginalBillAmount = bill.TotalAmount,
+                    AmountPaidInitially = 0,
+                    CreditAmount = bill.TotalAmount,
+                    Status = "pending",
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+                await _uow.Repository<CustomerCredit>().AddAsync(customerCredit);
             }
 
             pc.CurrentSessionId = null;

@@ -1,6 +1,6 @@
 import PcCard from './PcCard';
 
-export default function PcGrid({ pcs, walkinRequests, onStartSession, onRefresh, onStartReservedSession, onOverrideReservation, onApproveWalkin, onDeclineWalkin, onFlagMaintenance }) {
+export default function PcGrid({ pcs, walkinRequests, onStartSession, onRefresh, onStartReservedSession, onOverrideReservation, onApproveWalkin, onDeclineWalkin, onFlagMaintenance, onCreditClick }) {
   if (!pcs || pcs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-12 text-center bg-bg-2 border border-border rounded-lg">
@@ -26,6 +26,7 @@ export default function PcGrid({ pcs, walkinRequests, onStartSession, onRefresh,
             onApproveWalkin={onApproveWalkin}
             onDeclineWalkin={onDeclineWalkin}
             onFlagMaintenance={onFlagMaintenance}
+            onCreditClick={onCreditClick}
           />
         );
       })}

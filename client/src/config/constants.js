@@ -48,6 +48,7 @@ export const DASHBOARDS = {
   SESSIONS: 'sessions',
   RESERVATIONS: 'reservations',
   FOOD_ORDERS: 'food_orders',
+  CREDITS: 'credits',
   CASH_REGISTER: 'cash_register',
   CASH_DESK: 'cash_desk',
   ONLINE_DESK: 'online_desk',

@@ -27,7 +27,7 @@ const HUB_BASE_URL = import.meta.env.VITE_API_URL
   : '';
 
 export function SocketProvider({ children }) {
-  const { isAuthenticated, logout } = useAuth();
+  const { isAuthenticated, logout, fetchCurrentUser } = useAuth();
   const [connected, setConnected] = useState(false);
   const hubsRef = useRef({});
 
@@ -91,6 +91,10 @@ export function SocketProvider({ children }) {
             logout();
             window.location.href = '/?reason=forced_logout';
           });
+          notifHub.on('PermissionsUpdated', () => {
+            console.log('Permissions updated by admin. Refreshing user profile...');
+            fetchCurrentUser();
+          });
         }
       } catch (err) {
         console.error('SignalR Connection Error:', err);
@@ -111,7 +115,7 @@ export function SocketProvider({ children }) {
       hubsRef.current = {};
       setConnected(false);
     };
-  }, [isAuthenticated, logout]);
+  }, [isAuthenticated, logout, fetchCurrentUser]);
 
   // ── Get a specific hub connection ──
   const getHub = useCallback((hubPath) => {

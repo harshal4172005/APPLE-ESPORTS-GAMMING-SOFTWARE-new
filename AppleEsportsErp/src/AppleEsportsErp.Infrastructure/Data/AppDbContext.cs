@@ -24,6 +24,7 @@ public class AppDbContext : DbContext
     public DbSet<Bill> Bills => Set<Bill>();
     public DbSet<BillItem> BillItems => Set<BillItem>();
     public DbSet<Payment> Payments => Set<Payment>();
+    public DbSet<CustomerCredit> CustomerCredits => Set<CustomerCredit>();
     public DbSet<CashRegister> CashRegisters => Set<CashRegister>();
     public DbSet<CashTransaction> CashTransactions => Set<CashTransaction>();
     public DbSet<DenominationCount> DenominationCounts => Set<DenominationCount>();

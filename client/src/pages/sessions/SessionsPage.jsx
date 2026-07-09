@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { MonitorPlay, MonitorOff, IndianRupee, Clock, ShieldAlert } from 'lucide-react';
+import { MonitorPlay, MonitorOff, IndianRupee, Clock, ShieldAlert, Banknote } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import { useSocket } from '../../contexts/SocketContext';
@@ -10,6 +10,7 @@ import SessionActionModal from '../../components/sessions/SessionActionModal';
 import { useToast } from '../../components/ui/Toast';
 import { startReservedSession, overrideReservation } from '../../api/reservations.api';
 import { getRangeReport } from '../../api/food.api';
+import { getActiveBills, getBill, processPayment } from '../../api/billing.api';
 
 export default function SessionsPage() {
   const { isSuperAdmin, user } = useAuth();
@@ -242,6 +243,25 @@ export default function SessionsPage() {
     }
   };
 
+  const handleCreditClick = async (pc) => {
+    try {
+      if (pc.activeSessionId) {
+        // Stop session to generate final bill
+        await api.post(`/sessions/${pc.activeSessionId}/stop`, { deferPayment: false });
+      }
+      navigate('/app/billing', { state: { autoSelectPcId: pc.id, autoSelectPaymentMethod: 'credit' } });
+    } catch (err) {
+      const errCode = err.response?.data?.code || err.response?.data?.errorCode;
+      const errMsg = err.response?.data?.error || err.response?.data?.message || '';
+      
+      if (errCode === 'SESSION_ALREADY_ENDED' || errMsg.toLowerCase().includes('already ended')) {
+        navigate('/app/billing', { state: { autoSelectPcId: pc.id, autoSelectPaymentMethod: 'credit' } });
+      } else {
+        toast.error(errMsg || 'Failed to stop session for credit');
+      }
+    }
+  };
+
   // Ticker to force live revenue update every 10 seconds
   const [ticker, setTicker] = useState(0);
   useEffect(() => {
@@ -327,13 +347,14 @@ export default function SessionsPage() {
       <PcGrid
         pcs={pcs}
         walkinRequests={walkinRequests}
-        onStartSession={setStartModalPc}
+        onStartSession={(pc) => setStartModalPc(pc)}
         onRefresh={fetchPcs}
         onStartReservedSession={handleStartReservedSession}
         onOverrideReservation={handleOverrideClick}
         onApproveWalkin={handleApproveWalkin}
         onDeclineWalkin={handleDeclineWalkin}
         onFlagMaintenance={handleFlagMaintenance}
+        onCreditClick={handleCreditClick}
       />
 
       {/* ── Complete Billing Audit Logs ── */}
@@ -475,6 +496,8 @@ export default function SessionsPage() {
           </div>
         </div>
       )}
+
+
     </div>
   );
 }

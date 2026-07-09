@@ -60,7 +60,7 @@ public class DashboardService : IDashboardService
         var activeOperators = await operatorsQuery.CountAsync(s => s.Status == ShiftStatus.Active);
 
         // Financials (Cached briefly)
-        var todaysBills = await billsQuery.Where(b => b.CreatedAt >= today && b.Status == BillStatus.Completed).ToListAsync();
+        var todaysBills = await billsQuery.Where(b => b.CompletedAt >= today && b.Status == BillStatus.Completed).ToListAsync();
         var todaysPayments = await paymentsQuery.Where(p => p.CreatedAt >= today).ToListAsync();
 
         var totalRevenue = todaysPayments.Sum(p => p.TotalAmount);
@@ -211,7 +211,7 @@ public class DashboardService : IDashboardService
 
             // Sales (since midnight today)
             var todaysBills = await _context.Bills
-                .Where(b => b.BranchId == branchId && b.CreatedAt >= today && b.Status == BillStatus.Completed)
+                .Where(b => b.BranchId == branchId && b.CompletedAt >= today && b.Status == BillStatus.Completed)
                 .ToListAsync();
 
             var totalSales = todaysBills.Sum(b => b.TotalAmount);

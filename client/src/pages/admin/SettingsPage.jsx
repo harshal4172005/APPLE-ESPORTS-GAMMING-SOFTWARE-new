@@ -23,21 +23,22 @@ import AdminsTab from './AdminsTab';
 import './SettingsPage.css';
 
 const PERMISSION_KEYS = [
-  { id: 'main_dashboard', label: 'Operational Dashboard', desc: 'Summary of active play, operator shift totals' },
+  { id: 'main_dashboard', label: 'Dashboard', desc: 'Summary of active play, operator shift totals' },
   { id: 'billing_counter', label: 'Billing Counter', desc: 'Initiate play sessions, process items & checkout' },
-  { id: 'sessions', label: 'Sessions Console', desc: 'Track PC play status and live timers' },
-  { id: 'reservations', label: 'Reservations Board', desc: 'Book play slots and manage guest bookings' },
-  { id: 'food_orders', label: 'Food & Beverage Orders', desc: 'Process orders and dispatch kitchen items' },
-  { id: 'cash_register', label: 'Cash Register Drawer', desc: 'Manage cash transactions in open shift' },
-  { id: 'cash_desk', label: 'Cash Desk Verification', desc: 'Verify expected vs counted cash in drawer' },
+  { id: 'sessions', label: 'Sessions', desc: 'Track PC play status and live timers' },
+  { id: 'reservations', label: 'Reservations', desc: 'Book play slots and manage guest bookings' },
+  { id: 'food_orders', label: 'Food Orders', desc: 'Process orders and dispatch kitchen items' },
+  { id: 'cash_register', label: 'Cash Register', desc: 'Manage cash transactions in open shift' },
+  { id: 'cash_desk', label: 'Cash Desk', desc: 'Verify expected vs counted cash in drawer' },
   { id: 'online_desk', label: 'Online Desk', desc: 'Track all online (UPI/Card) payments in real-time' },
   { id: 'wallet_desk', label: 'Wallet Desk', desc: 'Track member wallet top-ups and session deductions' },
-  { id: 'members', label: 'Member Management', desc: 'Register new loyalty accounts and top-up wallets' },
-  { id: 'menu_editor', label: 'Menu & Pricing Profiles', desc: 'Configure cafe rates and menu card items' },
-  { id: 'pc_status', label: 'PC Fleet Status', desc: 'Full PC network health overview (Admin only)' },
-  { id: 'reports', label: 'Reports & Analytics', desc: 'Reconciliation reports, shift summaries and revenue data' },
-  { id: 'eod', label: 'End of Day (EOD) Snapshots', desc: 'Review shifts summaries and register snapshot reports' },
-  { id: 'settings', label: 'System Settings', desc: 'Configure operators, branches, and logs' }
+  { id: 'members', label: 'Members', desc: 'Register new loyalty accounts and top-up wallets' },
+  { id: 'menu_editor', label: 'Menu Editor', desc: 'Configure cafe rates and menu card items' },
+  { id: 'pc_status', label: 'PC Status', desc: 'Full PC network health overview (Admin only)' },
+  { id: 'reports', label: 'Reports', desc: 'Reconciliation reports, shift summaries and revenue data' },
+  { id: 'credits', label: 'Credits', desc: 'Manage unpaid bills and settle customer tabs' },
+  { id: 'eod', label: 'End of Day', desc: 'Review shifts summaries and register snapshot reports' },
+  { id: 'settings', label: 'Settings', desc: 'Configure operators, branches, and logs' }
 ];
 
 export default function SettingsPage() {
@@ -1293,7 +1294,7 @@ function OperatorForm({ initialData, branches, onSave }) {
           </div>
         </div>
 
-        <div className="matrix-table-container scrollbar-thin overflow-y-auto max-h-[35vh]">
+        <div className="matrix-table-container overflow-y-auto">
           <table className="matrix-table text-xs">
             <thead>
               <tr className="border-b border-border bg-bg-3">

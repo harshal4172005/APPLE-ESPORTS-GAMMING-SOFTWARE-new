@@ -44,6 +44,7 @@ import CashRegisterPage from './pages/cash/CashRegisterPage';
 import CashDeskPage from './pages/cash/CashDeskPage';
 import OnlineDeskPage from './pages/finance/OnlineDeskPage';
 import WalletDeskPage from './pages/finance/WalletDeskPage';
+import CreditsPage from './pages/credits/CreditsPage';
 import EodDashboardPage from './pages/eod/EodDashboardPage';
 
 // ── Management ──
@@ -159,6 +160,14 @@ export default function App() {
                     element={
                       <ProtectedRoute dashboardKey={DASHBOARDS.ONLINE_DESK}>
                         <OnlineDeskPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="credits"
+                    element={
+                      <ProtectedRoute dashboardKey={DASHBOARDS.CREDITS}>
+                        <CreditsPage />
                       </ProtectedRoute>
                     }
                   />

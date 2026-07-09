@@ -4,6 +4,7 @@ using System.Security.Claims;
 using System.ComponentModel.DataAnnotations;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 using AppleEsportsErp.Api.Extensions;
 using AppleEsportsErp.Api.Filters;
 
@@ -597,15 +598,18 @@ public class OperatorsController : ControllerBase
     private readonly AppleEsportsErp.Application.Interfaces.IUnitOfWork _unitOfWork;
     private readonly AppleEsportsErp.Application.Interfaces.IAuditService _auditService;
     private readonly AppleEsportsErp.Application.Interfaces.IEmailService _emailService;
+    private readonly Microsoft.AspNetCore.SignalR.IHubContext<AppleEsportsErp.Api.Hubs.NotificationHub> _notificationHub;
 
     public OperatorsController(
         AppleEsportsErp.Application.Interfaces.IUnitOfWork unitOfWork, 
         AppleEsportsErp.Application.Interfaces.IAuditService auditService,
-        AppleEsportsErp.Application.Interfaces.IEmailService emailService)
+        AppleEsportsErp.Application.Interfaces.IEmailService emailService,
+        Microsoft.AspNetCore.SignalR.IHubContext<AppleEsportsErp.Api.Hubs.NotificationHub> notificationHub)
     {
         _unitOfWork = unitOfWork;
         _auditService = auditService;
         _emailService = emailService;
+        _notificationHub = notificationHub;
     }
 
     [HttpGet]
@@ -623,6 +627,7 @@ public class OperatorsController : ControllerBase
             Id = o.Id,
             FullName = o.FullName,
             Username = o.Username,
+            Email = o.Email,
             BranchId = o.BranchId,
             BranchName = o.Branch?.Name ?? "Unknown",
             Status = o.Status.ToString(),
@@ -706,7 +711,10 @@ public class OperatorsController : ControllerBase
 
         op.FullName = dto.FullName;
         op.Username = dto.Username;
-        op.Email = dto.Email;
+        if (!string.IsNullOrWhiteSpace(dto.Email))
+        {
+            op.Email = dto.Email;
+        }
         op.BranchId = dto.BranchId;
         op.DashboardPermissions = dto.DashboardPermissions;
         op.UpdatedAt = DateTimeOffset.UtcNow;
@@ -718,6 +726,8 @@ public class OperatorsController : ControllerBase
 
         _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.Operator>().Update(op);
         await _unitOfWork.SaveChangesAsync();
+
+        await _notificationHub.Clients.Group($"user:{op.Id}").SendAsync("PermissionsUpdated");
 
         return Ok(AppleEsportsErp.Application.DTOs.Common.ApiResponse<object>.Ok(new { op.Id, op.Username }));
     }

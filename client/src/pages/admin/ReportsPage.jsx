@@ -441,7 +441,7 @@ export default function ReportsPage() {
               No bills found in the selected date range.
             </div>
           ) : (
-            <table className="w-full text-left border-collapse text-xs">
+            <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
               <thead>
                 <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
                   <th className="py-3 px-4">Date/Time</th>
@@ -465,12 +465,93 @@ export default function ReportsPage() {
                     <td className="py-3 px-4 text-text font-bold">{bill.billId}</td>
                     <td className="py-3 px-4 text-neon-blue font-bold">{bill.operator}</td>
                     <td className="py-3 px-4 text-text-2 font-sans">{bill.customer}</td>
-                    <td className="py-3 px-4 text-center text-text-3 uppercase">{bill.paymentType}</td>
+                    <td className="py-3 px-4 text-center">
+                      {bill.paymentType?.toUpperCase() === 'CREDIT' ? (
+                        <div className="flex flex-col items-center gap-1">
+                          <span className="text-text-3 font-bold uppercase text-[10px]">Credit</span>
+                          {bill.creditStatus?.toLowerCase() === 'cleared' ? (
+                            <>
+                              <span className="text-neon-green text-[9px] bg-neon-green/10 px-1.5 py-0.5 rounded border border-neon-green/20 uppercase tracking-wider font-bold">Cleared</span>
+                              <span className="text-text-3 text-[9px]">Total Paid: ₹{bill.totalRevenue.toFixed(2)}</span>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-neon-orange text-[9px] bg-neon-orange/10 px-1.5 py-0.5 rounded border border-neon-orange/20 uppercase tracking-wider font-bold">
+                                ₹{(bill.creditAmount || 0).toFixed(2)} Pending
+                              </span>
+                              <span className="text-text-3 text-[9px]">Upfront: ₹{(bill.amountPaidInitially || 0).toFixed(2)}</span>
+                            </>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-text-3 uppercase">{bill.paymentType}</span>
+                      )}
+                    </td>
                     <td className="py-3 px-4 text-right text-text">₹{bill.gamingRevenue.toFixed(2)}</td>
                     <td className="py-3 px-4 text-right text-text">₹{bill.foodRevenue.toFixed(2)}</td>
                     <td className="py-3 px-4 text-right text-neon-red">{bill.discount > 0 ? `-₹${bill.discount.toFixed(2)}` : '-'}</td>
                     <td className="py-3 px-4 text-right text-neon-green font-bold">₹{bill.totalRevenue.toFixed(2)}</td>
                     <td className="py-3 px-4 text-text-3 text-[10px] whitespace-pre-wrap">{bill.sessionNotes || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* ── Credit Audit Logs ── */}
+      <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg mt-8 print:break-before-page">
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2">
+            <Clock className="w-4.5 h-4.5 text-accent" />
+            Credit Audit Logs
+          </h2>
+        </div>
+
+        <div className="overflow-x-auto">
+          {!reportData.allCredits || reportData.allCredits.length === 0 ? (
+            <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
+              No credit records found for the selected date range.
+            </div>
+          ) : (
+            <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+              <thead>
+                <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
+                  <th className="py-3 px-4">Date Created</th>
+                  <th className="py-3 px-4">Customer</th>
+                  <th className="py-3 px-4">PC</th>
+                  <th className="py-3 px-4 text-right">Original Bill</th>
+                  <th className="py-3 px-4 text-right">Initial Paid</th>
+                  <th className="py-3 px-4 text-right">Amount Due</th>
+                  <th className="py-3 px-4 text-center">Status</th>
+                  <th className="py-3 px-4">Date Cleared</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40 font-mono">
+                {reportData.allCredits.map(credit => (
+                  <tr key={credit.creditId} className="hover:bg-bg-3/40 transition-colors">
+                    <td className="py-3 px-4 text-text-2 flex items-center gap-1">
+                      {new Date(credit.createdAt).toLocaleString()}
+                    </td>
+                    <td className="py-3 px-4 text-neon-blue font-bold">
+                      {credit.customerName}
+                      <div className="text-[10px] text-text-3 font-sans font-normal">{credit.customerPhone}</div>
+                    </td>
+                    <td className="py-3 px-4 text-text-2">{credit.pcNumber}</td>
+                    <td className="py-3 px-4 text-right text-text">₹{credit.originalBillAmount.toFixed(2)}</td>
+                    <td className="py-3 px-4 text-right text-text">₹{credit.amountPaidInitially.toFixed(2)}</td>
+                    <td className="py-3 px-4 text-right text-neon-orange font-bold">₹{credit.creditAmount.toFixed(2)}</td>
+                    <td className="py-3 px-4 text-center">
+                      {credit.status.toLowerCase() === 'cleared' ? (
+                        <span className="text-neon-green font-bold uppercase tracking-wider text-[10px] bg-neon-green/10 px-2 py-1 rounded border border-neon-green/20">Cleared</span>
+                      ) : (
+                        <span className="text-neon-orange font-bold uppercase tracking-wider text-[10px] bg-neon-orange/10 px-2 py-1 rounded border border-neon-orange/20">Pending</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 text-text-3">
+                      {credit.clearedAt ? new Date(credit.clearedAt).toLocaleString() : '-'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -504,7 +585,7 @@ export default function ReportsPage() {
               No shifts found in the selected date range.
             </div>
           ) : (
-            <table className="w-full text-left border-collapse text-xs">
+            <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
               <thead>
                 <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
                   <th className="py-3 px-4">Shift Date/Time</th>

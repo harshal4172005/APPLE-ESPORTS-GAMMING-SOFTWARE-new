@@ -219,6 +219,7 @@ builder.Services.AddScoped<IReservationService, ReservationService>();
 builder.Services.AddScoped<IMemberService, MemberService>();
 builder.Services.AddScoped<IWalletService, WalletService>();
 builder.Services.AddScoped<IBillingService, BillingService>();
+builder.Services.AddScoped<ICreditService, CreditService>();
 builder.Services.AddScoped<IFoodOrderService, FoodOrderService>();
 builder.Services.AddScoped<ICashRegisterService, CashRegisterService>();
 builder.Services.AddScoped<ICashDeskService, CashDeskService>();

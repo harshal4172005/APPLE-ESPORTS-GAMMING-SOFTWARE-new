@@ -11,6 +11,21 @@ public class EodReportDto
     public PaymentMethodSummaryDto PaymentMethods { get; set; } = new();
     public ShiftSummaryDto Shifts { get; set; } = new();
     public OperationalStatsDto Operations { get; set; } = new();
+    public List<EodCreditLogDto> CreditLogs { get; set; } = new();
+}
+
+public class EodCreditLogDto
+{
+    public Guid CreditId { get; set; }
+    public string CustomerName { get; set; } = null!;
+    public string CustomerPhone { get; set; } = null!;
+    public string PcNumber { get; set; } = null!;
+    public decimal OriginalBillAmount { get; set; }
+    public decimal AmountPaidInitially { get; set; }
+    public decimal CreditAmount { get; set; }
+    public string Status { get; set; } = null!;
+    public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset? ClearedAt { get; set; }
 }
 
 public class RevenueSummaryDto

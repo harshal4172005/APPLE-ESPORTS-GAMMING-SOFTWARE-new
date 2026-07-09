@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   Receipt, Gamepad2, Coffee, Tag, CheckCircle,
   Banknote, CreditCard, Wallet, ArrowLeftRight, Smartphone,
-  KeyRound, ShieldCheck, ShieldAlert, Eye, EyeOff, Trash2
+  KeyRound, ShieldCheck, ShieldAlert, Eye, EyeOff, Trash2, Clock
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { applyDiscount, processPayment, getMemberById, removeBillItem, requestWalletApproval } from '../../api/billing.api';
@@ -12,7 +12,7 @@ import { useToast } from '../ui/Toast';
 const DENOMINATIONS = [20, 50, 100, 200, 500, 1000, 2000];
 const DISC_PRESETS   = [0, 5, 10, 15, 20];
 
-export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess }) {
+export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess, defaultPaymentMethod }) {
   const { isSuperAdmin } = useAuth();
   const { subscribe, SIGNALR_HUBS } = useSocket();
   const toast = useToast();
@@ -30,6 +30,8 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess 
   const [payError,    setPayError]    = useState(null);
 
   const [walletWaiting, setWalletWaiting] = useState(false);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
 
   // Reset form whenever the selected bill changes
   useEffect(() => {
@@ -42,9 +44,11 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess 
     setSplitCash('');
     setSplitUpi('');
     setPayError(null);
-    setPayMethod('cash');
+    setPayMethod(defaultPaymentMethod || 'cash');
     setWalletWaiting(false);
-  }, [bill?.id]);
+    setCustomerName(bill?.customerName || '');
+    setCustomerPhone(bill?.customerPhone || '');
+  }, [bill?.id, defaultPaymentMethod]);
 
   useEffect(() => {
     if (!bill?.id) return;
@@ -111,6 +115,7 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess 
       (memberInfo.gamingBalance ?? 0) >= (bill.gamingAmount || 0) &&
       (memberInfo.foodBalance ?? 0) >= (bill.foodAmount || 0) && !walletWaiting;
     if (payMethod === 'split')  return Math.abs(splitDiff) <= 0.01;
+    if (payMethod === 'credit') return customerName.trim() !== '' && customerPhone.trim() !== '' && (parseFloat(cashReceived) || 0) <= total;
     return false;
   })();
 
@@ -179,6 +184,24 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess 
           return;
         }
         payload = { paymentType: 'Split', cashAmount: sc, onlineAmount: su, walletAmount: 0, cashReceived: sc };
+      } else if (payMethod === 'credit') {
+        const received = parseFloat(cashReceived) || 0;
+        if (received > total) {
+          setPayError('Paid amount cannot exceed total bill.');
+          setProcessing(false);
+          return;
+        }
+        const creditAmount = total - received;
+        payload = { 
+          paymentType: 'Cash', 
+          cashAmount: received, 
+          onlineAmount: 0, 
+          walletAmount: 0, 
+          cashReceived: received, 
+          creditAmount: creditAmount,
+          customerName: customerName,
+          customerPhone: customerPhone
+        };
       }
 
       await processPayment(bill.id, payload);
@@ -330,13 +353,14 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess 
             </span>
           </div>
 
-          {/* Payment method 2×2 grid */}
-          <div className="grid grid-cols-2 gap-2">
+          {/* Payment method grid */}
+          <div className="grid grid-cols-3 gap-2">
             {[
               { id: 'cash',   label: 'Cash',   Icon: Banknote      },
               { id: 'upi',    label: 'UPI',    Icon: Smartphone    },
               { id: 'split',  label: 'Split',  Icon: ArrowLeftRight},
               { id: 'wallet', label: 'Wallet', Icon: Wallet        },
+              { id: 'credit', label: 'Credit', Icon: Clock         },
             ].map(({ id, label, Icon }) => (
               <button
                 key={id}
@@ -395,6 +419,50 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess 
                   <span className="font-mono text-xl font-bold text-neon-orange">₹{cashChange.toFixed(0)}</span>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ── Credit section ── */}
+          {payMethod === 'credit' && (
+            <div className="bg-bg-2 border border-border rounded-lg p-3 space-y-3">
+              <div className="space-y-2 mb-3 border-b border-border pb-3">
+                <label className="text-[10px] text-neon-orange uppercase font-bold tracking-widest block">
+                  Compulsory Customer Info
+                </label>
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={e => setCustomerName(e.target.value)}
+                  placeholder="Customer Name"
+                  className="w-full bg-bg-3 border border-border text-text text-sm rounded-lg p-2 focus:border-neon-orange focus:ring-1 focus:ring-neon-orange transition-all"
+                />
+                <input
+                  type="text"
+                  value={customerPhone}
+                  onChange={e => setCustomerPhone(e.target.value)}
+                  placeholder="Contact Number (Phone)"
+                  className="w-full bg-bg-3 border border-border text-text text-sm rounded-lg p-2 focus:border-neon-orange focus:ring-1 focus:ring-neon-orange transition-all"
+                />
+              </div>
+              <label className="text-[10px] text-text-3 uppercase font-bold tracking-widest block">
+                Amount Paid Today (₹)
+              </label>
+              <input
+                type="number"
+                min="0"
+                max={total}
+                value={cashReceived}
+                onChange={e => setCashReceived(e.target.value)}
+                placeholder={`e.g. 0`}
+                className="w-full bg-bg-3 border border-border text-text font-mono text-xl rounded-lg p-2.5 focus:border-accent focus:ring-1 focus:ring-accent transition-all"
+              />
+              {/* Show Credit Remaining */}
+              <div className="flex justify-between items-center bg-neon-orange/10 border border-neon-orange/30 rounded-lg px-3 py-2.5">
+                <span className="text-xs font-bold uppercase tracking-wider text-neon-orange">Credit Remaining</span>
+                <span className="font-mono text-xl font-bold text-neon-orange">
+                  ₹{Math.max(0, total - (parseFloat(cashReceived) || 0)).toFixed(0)}
+                </span>
+              </div>
             </div>
           )}
 

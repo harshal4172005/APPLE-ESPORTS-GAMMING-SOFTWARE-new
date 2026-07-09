@@ -26,7 +26,6 @@ export default function BillingCounterPage() {
   const [selectedBillData, setSelectedBillData] = useState(null);
   const [summary, setSummary] = useState(null);
   const [pendingWalkins, setPendingWalkins] = useState([]);
-  const [deferredBills, setDeferredBills] = useState([]);
   const toast = useToast();
 
   const [isLoading, setIsLoading] = useState(true);
@@ -156,27 +155,9 @@ export default function BillingCounterPage() {
     }
   }, [selectedItem]);
 
-  // ── 3b. Fetch Deferred Bills ──
-  const fetchDeferredBills = useCallback(async () => {
-    if (!targetBranchId) return;
-    try {
-      const { data } = await api.get('/bills/deferred');
-      if (data?.success) setDeferredBills(data.data || []);
-    } catch {
-      // silent
-    }
-  }, [targetBranchId]);
-
-  useEffect(() => {
-    fetchDeferredBills();
-    const interval = setInterval(fetchDeferredBills, 15000);
-    return () => clearInterval(interval);
-  }, [fetchDeferredBills]);
-
   // ── 4. Handlers ──
   const handlePaymentSuccess = () => {
     fetchDashboardData();
-    fetchDeferredBills();
     if (selectedItem?.id) {
       fetchBillDetails(selectedItem.id);
     }
@@ -283,49 +264,6 @@ export default function BillingCounterPage() {
         </div>
       )}
 
-      {/* ── Review Billing: Deferred (Pay Later) Bills ── */}
-      {deferredBills.length > 0 && (
-        <div className="mt-4 bg-bg-2 border border-pc-reserved/30 rounded-xl p-4 shadow-md">
-          <h3 className="text-[11px] font-mono font-bold uppercase tracking-widest text-pc-reserved mb-3 flex items-center gap-2">
-            <Clock className="w-3.5 h-3.5" />
-            Review Billing — Deferred Payments ({deferredBills.length})
-          </h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2">
-            {deferredBills.map(bill => (
-              <button
-                key={bill.id}
-                onClick={() => setSelectedItem({ type: 'bill', id: bill.id })}
-                className={`text-left p-3 rounded-lg border transition-all ${
-                  selectedItem?.id === bill.id
-                    ? 'border-pc-reserved bg-pc-reserved/15 shadow-[0_0_10px_rgba(234,179,8,0.15)]'
-                    : 'border-border bg-bg-3 hover:border-pc-reserved/50'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="font-mono font-bold text-xs text-text">{bill.pcNumber || 'PC'}</span>
-                  <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-reserved/50 text-pc-reserved rounded">DEFERRED</span>
-                </div>
-                <div className="flex items-center gap-1 text-text-2 text-xs mb-1">
-                  <User className="w-3 h-3 text-text-3" />
-                  <span className="truncate">{bill.customerName || 'Walk-in'}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-text-3 font-mono">
-                    Played: {bill.sessionEndTime
-                      ? new Date(bill.sessionEndTime).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
-                      : new Date(bill.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                  </span>
-                  <span className="flex items-center gap-0.5 font-mono font-bold text-xs text-neon-orange">
-                    <IndianRupee className="w-3 h-3" />
-                    {bill.totalAmount.toFixed(0)}
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="flex flex-col lg:flex-row gap-6 mt-4 flex-1 min-h-0">
         
         {/* Left Column: Lists */}
@@ -360,14 +298,20 @@ export default function BillingCounterPage() {
 
         {/* Right Column: Details Panel */}
         <div className="w-full lg:w-[34%] h-full">
-          <BillDetailsPanel
-            bill={selectedBillData}
-            onBillUpdate={(updatedBill) => {
-              setSelectedBillData(updatedBill);
-              fetchDashboardData();
-            }}
-            onPaymentSuccess={handlePaymentSuccess}
-          />
+          {selectedBillData ? (
+            <BillDetailsPanel 
+              bill={selectedBillData} 
+              onBillUpdate={(updated) => {
+                fetchBillDetails(updated.id);
+                fetchDashboardData();
+              }}
+              onPaymentSuccess={() => {
+                setSelectedItem(null);
+                fetchDashboardData();
+              }}
+              defaultPaymentMethod={selectedBillData.pcId === autoSelectPcId ? state?.autoSelectPaymentMethod : undefined}
+            />
+          ) : null}
         </div>
 
       </div>

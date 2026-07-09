@@ -81,9 +81,13 @@ public class ProcessPaymentDto
     public decimal CashAmount { get; set; }
     public decimal OnlineAmount { get; set; }
     public decimal WalletAmount { get; set; }
+    public decimal CreditAmount { get; set; }
     
     // Specifically for cash payments
     public decimal CashReceived { get; set; }
 
     public Guid? MemberId { get; set; }
+
+    public string? CustomerName { get; set; }
+    public string? CustomerPhone { get; set; }
 }

@@ -45,7 +45,7 @@ function fmtTime(isoString) {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReservedSession, onOverrideReservation, onApproveWalkin, onDeclineWalkin, onFlagMaintenance }) => {
+const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReservedSession, onOverrideReservation, onApproveWalkin, onDeclineWalkin, onFlagMaintenance, onCreditClick }) => {
   const { isSuperAdmin, user } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
@@ -288,9 +288,16 @@ const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReserved
           <ActionBtn
             color="yellow"
             icon={<Banknote className="w-3 h-3" />}
-            label="Pay Later"
-            loading={actionLoading === 'defer'}
-            onClick={() => doAction('stop', { deferPayment: true }, 'defer')}
+            label="Credit"
+            loading={actionLoading === 'credit'}
+            onClick={async () => {
+              setActionLoading('credit');
+              try {
+                await onCreditClick?.(pc);
+              } finally {
+                setActionLoading(null);
+              }
+            }}
           />
           <ActionBtn
             color="blue"

@@ -18,6 +18,28 @@
 - **Issue**: The operator dashboard calculated time extensions and walk-in bill estimates using a hardcoded base rate of `₹100/hr`, ignoring variable PC monitor rates (e.g., PS5 or 240Hz PCs).
 - **Fix**: Adjusted `GlobalNotificationListener.jsx` to perform API calls fetching the exact `ratePerHour` applied to the specific `pcId` (from `/api/public/session/pc/${pcId}` or `/api/public/pcs/${pcId}`) and multiplying dynamically for correct expected billing amounts in backend `SessionExtendDto`.
 
+## RECENT UPDATES & BUG FIXES (July 2026)
+
+### 1. Shift & Billing Reconciliation Dashboard Refactor
+- **Issue**: The end-of-day shift reports displayed incorrect calculation totals (e.g., random 26k amounts), confusing terminology ("Final discrepancy"), poor grammar ("1 transaction done"), missing credit totals, and lacked a unified overall summary.
+- **Fix**: Rewrote the shift summary calculation logic in the frontend to correctly aggregate "Cash", "Online", "Wallet", and "Credit" totals. Renamed "Final discrepancy" to "Total Cash Difference" for clarity. Added pluralization to transaction counts and ensured a clean, structured breakdown of end-of-day totals.
+
+### 2. Operator Permission Sidebar Mapping
+- **Issue**: Newly added dashboards (like Credit Clearances and Menu Editor) were missing from the Super Admin's Operator Access Settings panel, and existing labels didn't match the actual sidebar strings.
+- **Fix**: Added missing permission keys (`credits`, `menu_editor`, `pc_status`) into the `PERMISSION_KEYS` array in `SettingsPage.jsx` and renamed their labels to be an exact 1:1 match with the sidebar for intuitive administration.
+
+### 3. Real-Time Permission Synchronization
+- **Issue**: When a Super Admin checked or unchecked a permission for an Operator, the Operator had to manually refresh the page or log out to see the changes.
+- **Fix**: Injected `IHubContext<NotificationHub>` into the `OperatorsController.cs` `.NET 8` backend to broadcast a `PermissionsUpdated` SignalR event specifically targeted at `user:{op.Id}` whenever a PUT request updates their access. The `SocketContext.jsx` client now listens for this event and triggers a silent `fetchCurrentUser` refresh, instantly hiding or showing sidebar modules on the operator's active screen.
+
+### 4. Operator Dashboard State Synchronization (Cache Busting)
+- **Issue**: When operators approved walk-in requests, the dashboard's `fetchPcs` request was aggressively cached by browsers, causing the PC to momentarily revert to the "Idle" state on the UI until manually refreshed.
+- **Fix**: Added a cache-busting timestamp (`_t: Date.now()`) to the `/pcs` GET request in `SessionsPage.jsx` to bypass browser caching and ensure the UI immediately reflects the fresh database state.
+
+### 2. Global Refresh Event & Dedicated PC Identification
+- **Issue**: Needed a centralized way to refresh PC sessions and handle dedicated PC identification clearing on the overlay.
+- **Fix**: Implemented a global refresh event for PC sessions and added a URL parameter to correctly clear dedicated PC identification (Commit by Meet).
+
 ---
 
 ## COMPREHENSIVE END-TO-END SYSTEM WORKFLOWS (BY ROLE)

@@ -28,7 +28,7 @@ public class EodService : IEodService
 
         // 1. Check for unclosed Shifts
         var unclosedShifts = await _unitOfWork.Repository<Shift>().Query()
-            .Where(s => s.BranchId == branchId && s.CreatedAt >= startOfDay && s.CreatedAt < endOfDay && s.Status != ShiftStatus.Completed)
+            .Where(s => s.BranchId == branchId && s.Status != ShiftStatus.Completed)
             .CountAsync();
             
         if (unclosedShifts > 0)
@@ -36,7 +36,7 @@ public class EodService : IEodService
 
         // 2. Check for unclosed Cash Registers
         var unclosedRegisters = await _unitOfWork.Repository<CashRegister>().Query()
-            .Where(r => r.BranchId == branchId && r.OpenedAt >= startOfDay && r.OpenedAt < endOfDay && r.Status != CashRegisterStatus.Closed)
+            .Where(r => r.BranchId == branchId && r.Status != CashRegisterStatus.Closed)
             .CountAsync();
 
         if (unclosedRegisters > 0)
@@ -71,9 +71,9 @@ public class EodService : IEodService
 
         // Fetch Bills
         var bills = await _unitOfWork.Repository<Bill>().Query()
-            .Where(b => b.BranchId == branchId && b.CreatedAt >= startOfDay && b.CreatedAt < endOfDay)
+            .Where(b => b.BranchId == branchId && b.Status == BillStatus.Completed && b.CompletedAt >= startOfDay && b.CompletedAt < endOfDay)
             .ToListAsync();
-        var completedBills = bills.Where(b => b.Status == BillStatus.Completed).ToList();
+        var completedBills = bills;
 
         // Fetch Payments
         var payments = await _unitOfWork.Repository<Payment>().Query()
@@ -84,7 +84,11 @@ public class EodService : IEodService
         var registers = await _unitOfWork.Repository<CashRegister>().Query()
             .Include(r => r.Operator)
             .Include(r => r.CashTransactions)
-            .Where(r => r.BranchId == branchId && r.OpenedAt >= startOfDay && r.OpenedAt < endOfDay)
+            .Where(r => r.BranchId == branchId && (
+                (r.OpenedAt >= startOfDay && r.OpenedAt < endOfDay) || 
+                (r.ClosedAt >= startOfDay && r.ClosedAt < endOfDay) || 
+                r.Status == CashRegisterStatus.Open
+            ))
             .ToListAsync();
 
         var walletTxs = await _unitOfWork.Repository<WalletTransaction>().Query()
@@ -142,6 +146,25 @@ public class EodService : IEodService
         report.Operations.TotalReservations = await _unitOfWork.Repository<Reservation>().Query().CountAsync(r => r.BranchId == branchId && r.CreatedAt >= startOfDay && r.CreatedAt < endOfDay);
         report.Operations.TotalFoodOrders = await _unitOfWork.Repository<FoodOrder>().Query().CountAsync(o => o.BranchId == branchId && o.CreatedAt >= startOfDay && o.CreatedAt < endOfDay);
         report.Operations.NewMembersRegistered = await _unitOfWork.Repository<Member>().Query().CountAsync(m => m.HomeBranchId == branchId && m.CreatedAt >= startOfDay && m.CreatedAt < endOfDay);
+
+        // Credit Logs
+        var credits = await _unitOfWork.Repository<CustomerCredit>().Query()
+            .Where(c => c.BranchId == branchId && ((c.CreatedAt >= startOfDay && c.CreatedAt < endOfDay) || (c.ClearedAt >= startOfDay && c.ClearedAt < endOfDay)))
+            .ToListAsync();
+
+        report.CreditLogs = credits.Select(c => new EodCreditLogDto
+        {
+            CreditId = c.Id,
+            CustomerName = c.CustomerName,
+            CustomerPhone = c.CustomerPhone,
+            PcNumber = c.PcNumber,
+            OriginalBillAmount = c.OriginalBillAmount,
+            AmountPaidInitially = c.AmountPaidInitially,
+            CreditAmount = c.CreditAmount,
+            Status = c.Status,
+            CreatedAt = c.CreatedAt,
+            ClearedAt = c.ClearedAt
+        }).ToList();
 
         return report;
     }

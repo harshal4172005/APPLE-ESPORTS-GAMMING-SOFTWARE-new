@@ -90,33 +90,70 @@ public class EodController : ControllerBase
             .OrderByDescending(d => d.Date)
             .ToList();
 
-        var allBills = bills.Select(b => new {
-            BillId = b.BillNumber,
-            Date = b.CompletedAt,
-            Operator = b.Operator != null ? b.Operator.FullName : "Unknown",
-            Customer = string.IsNullOrEmpty(b.CustomerName) ? "Walk-in" : b.CustomerName,
-            GamingRevenue = b.GamingAmount,
-            FoodRevenue = b.FoodAmount,
-            Discount = b.DiscountAmount,
-            TotalRevenue = b.TotalAmount,
-            PaymentType = b.PaymentType?.ToString() ?? "Unknown",
-            SessionNotes = b.Session?.Notes,
-            SessionStartTime = b.Session != null ? b.Session.StartTime : (DateTimeOffset?)null,
-            SessionEndTime = b.Session != null ? b.Session.EndTime : (DateTimeOffset?)null,
-            SessionDurationMinutes = b.Session != null && b.Session.EndTime.HasValue 
-                ? (b.Session.EndTime.Value - b.Session.StartTime).TotalMinutes 
-                : 0,
-            PcId = b.PcId,
-            PcName = b.Pc != null ? (b.Pc.PcName ?? b.Pc.PcNumber.ToString()) : "Walk-in"
+        var billIds = bills.Select(b => b.Id).ToList();
+        var billCredits = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.CustomerCredit>()
+            .Query()
+            .Where(c => billIds.Contains(c.BillId))
+            .ToListAsync();
+
+        var allBills = bills.Select(b => {
+            var credit = billCredits.FirstOrDefault(c => c.BillId == b.Id);
+            var actualPaid = b.CashAmount + b.OnlineAmount + b.WalletAmount;
+            var isCredit = credit != null || actualPaid < b.TotalAmount || b.PaymentType?.ToString() == "Credit";
+            
+            return new {
+                BillId = b.BillNumber,
+                Date = b.CompletedAt,
+                Operator = b.Operator != null ? b.Operator.FullName : "Unknown",
+                Customer = string.IsNullOrEmpty(b.CustomerName) ? "Walk-in" : b.CustomerName,
+                GamingRevenue = b.GamingAmount,
+                FoodRevenue = b.FoodAmount,
+                Discount = b.DiscountAmount,
+                TotalRevenue = b.TotalAmount,
+                PaymentType = isCredit ? "Credit" : (b.PaymentType?.ToString() ?? "Unknown"),
+                AmountPaidInitially = credit != null ? credit.AmountPaidInitially : actualPaid,
+                CreditAmount = credit != null ? credit.CreditAmount : (isCredit ? Math.Max(0, b.TotalAmount - actualPaid) : 0),
+                CreditStatus = credit != null ? credit.Status : (isCredit ? "pending" : null), // Fallback to pending if it's a credit bill without a log
+                SessionNotes = b.Session?.Notes,
+                SessionStartTime = b.Session != null ? b.Session.StartTime : (DateTimeOffset?)null,
+                SessionEndTime = b.Session != null ? b.Session.EndTime : (DateTimeOffset?)null,
+                SessionDurationMinutes = b.Session != null && b.Session.EndTime.HasValue 
+                    ? (b.Session.EndTime.Value - b.Session.StartTime).TotalMinutes 
+                    : 0,
+                PcId = b.PcId,
+                PcName = b.Pc != null ? (b.Pc.PcName ?? b.Pc.PcNumber.ToString()) : "Walk-in"
+            };
         })
         .OrderByDescending(b => b.Date)
+        .ToList();
+
+        var credits = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.CustomerCredit>()
+            .Query()
+            .Where(c => c.BranchId == targetBranchId 
+                     && ((c.CreatedAt >= startUtc && c.CreatedAt <= endUtc) || (c.ClearedAt >= startUtc && c.ClearedAt <= endUtc)))
+            .ToListAsync();
+
+        var allCredits = credits.Select(c => new {
+            CreditId = c.Id,
+            CustomerName = c.CustomerName,
+            CustomerPhone = c.CustomerPhone,
+            PcNumber = c.PcNumber,
+            OriginalBillAmount = c.OriginalBillAmount,
+            AmountPaidInitially = c.AmountPaidInitially,
+            CreditAmount = c.CreditAmount,
+            Status = c.Status,
+            CreatedAt = c.CreatedAt,
+            ClearedAt = c.ClearedAt
+        })
+        .OrderByDescending(c => c.CreatedAt)
         .ToList();
 
         return Ok(ApiResponse<object>.Ok(new {
             Daily = dailyReport,
             Monthly = monthlyReport,
             Discounts = discountAudit,
-            AllBills = allBills
+            AllBills = allBills,
+            AllCredits = allCredits
         }));
     }
 

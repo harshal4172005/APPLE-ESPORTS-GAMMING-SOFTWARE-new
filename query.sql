@@ -1,1 +1,1 @@
-SELECT w."Id", w."Action", w."Amount", w."BalanceBefore", w."BalanceAfter", w."CreatedAt", m."Username" FROM wallet_transactions w JOIN members m ON w."MemberId" = m."Id" WHERE m."Username" = 'hpp' ORDER BY w."CreatedAt" DESC LIMIT 10;
+SELECT "Id", "State", "CurrentSessionId" FROM "pcs" WHERE "PcNumber" = 'ADJ-PC-02';

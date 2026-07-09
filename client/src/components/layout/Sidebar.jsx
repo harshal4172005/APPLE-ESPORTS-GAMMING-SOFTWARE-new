@@ -74,6 +74,13 @@ const NAV_ITEMS = [
         icon: 'M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z',
       },
       {
+        label: 'Credits',
+        route: '/app/credits',
+        dashboard: DASHBOARDS.CREDITS,
+        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.OPERATOR],
+        icon: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
+      },
+      {
         label: 'End of Day',
         route: '/app/eod',
         dashboard: DASHBOARDS.EOD,
@@ -103,34 +110,33 @@ const NAV_ITEMS = [
   },
   {
     section: 'Admin',
-    adminOnly: true,
     items: [
       {
         label: 'Dashboard',
         route: '/app/dashboard',
         dashboard: DASHBOARDS.MAIN_DASHBOARD,
-        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN],
+        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.OPERATOR],
         icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z',
       },
       {
         label: 'PC Status',
         route: '/app/pc-status',
         dashboard: DASHBOARDS.PC_STATUS,
-        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN],
+        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.OPERATOR],
         icon: 'M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z',
       },
       {
         label: 'Reports',
         route: '/app/reports',
         dashboard: DASHBOARDS.REPORTS,
-        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN],
+        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.OPERATOR],
         icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 002 2h2a2 2 0 002-2',
       },
       {
         label: 'Settings',
         route: '/app/settings',
         dashboard: DASHBOARDS.SETTINGS,
-        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN],
+        roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.OPERATOR],
         icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z',
         secondIcon: 'M15 12a3 3 0 11-6 0 3 3 0 016 0z',
       },
@@ -187,8 +193,8 @@ export default function Sidebar({ isOpen, onClose }) {
         {/* Navigation Links */}
         <nav className="flex-1 overflow-y-auto py-2 px-2 scrollbar-thin">
           {NAV_ITEMS.map((section) => {
-            // Hide admin sections from normal operators
-            if (section.adminOnly && user?.role === ROLES.OPERATOR) return null;
+            // Permissions handle visibility instead
+            // if (section.adminOnly && user?.role === ROLES.OPERATOR) return null;
 
             const visibleItems = section.items.filter(isItemVisible);
             if (visibleItems.length === 0) return null;

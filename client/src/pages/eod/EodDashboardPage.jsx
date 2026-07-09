@@ -232,7 +232,7 @@ export default function EodDashboardPage() {
                         No billing records found for this PC.
                       </div>
                     ) : (
-                      <table className="w-full text-left border-collapse text-xs">
+                      <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                         <thead>
                           <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
                             <th className="py-3 px-4">Start Time</th>
@@ -366,7 +366,7 @@ export default function EodDashboardPage() {
                   <span className="font-mono font-bold text-text">₹{report.cash.actualPhysicalCashCounted}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm bg-bg-3 p-3 rounded-lg border border-border mt-2">
-                  <span className="font-bold text-text uppercase tracking-widest text-xs">Final Discrepancy</span>
+                  <span className="font-bold text-text uppercase tracking-widest text-xs">Total Difference</span>
                   <span className={`font-mono font-bold ${report.cash.totalDiscrepancy === 0 ? 'text-neon-blue' : 'text-neon-red'}`}>
                     ₹{report.cash.totalDiscrepancy}
                   </span>
@@ -375,36 +375,53 @@ export default function EodDashboardPage() {
             </div>
 
             {/* Payment Methods */}
-            <div className="bg-bg-2 rounded-xl border border-border shadow-lg p-6">
-              <h3 className="text-sm uppercase font-bold text-text-2 tracking-widest mb-6 border-b border-border pb-3 flex items-center gap-2">
-                <FileText className="w-4 h-4" /> Payment Collection
-              </h3>
-              <div className="space-y-4">
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-text-2">Cash Collected</span>
-                  <span className="font-mono text-text">₹{report.paymentMethods.totalCash}</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-text-2">Online (UPI/Card)</span>
-                  <span className="font-mono text-text">₹{report.paymentMethods.totalOnline}</span>
-                </div>
-                <div className="flex justify-between items-center text-sm">
-                  <span className="text-text-2">Wallet Deductions</span>
-                  <span className="font-mono text-neon-purple">₹{report.paymentMethods.totalWalletDeductions}</span>
+            <div className="bg-bg-2 rounded-xl border border-border shadow-lg p-6 flex flex-col justify-between">
+              <div>
+                <h3 className="text-sm uppercase font-bold text-text-2 tracking-widest mb-6 border-b border-border pb-3 flex items-center gap-2">
+                  <FileText className="w-4 h-4" /> Overall Collection & Business
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-text-2">Total Cash Collected</span>
+                    <span className="font-mono text-text">₹{report.paymentMethods.totalCash}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-text-2">Total Online (UPI/Card)</span>
+                    <span className="font-mono text-text">₹{report.paymentMethods.totalOnline}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-text-2">Wallet Payments / Deductions</span>
+                    <span className="font-mono text-neon-purple">₹{report.paymentMethods.totalWalletDeductions}</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm">
+                    <span className="text-text-2">New Credit Given</span>
+                    <span className="font-mono text-neon-orange">
+                      ₹{report.creditLogs?.filter(c => c.status === 'Pending').reduce((acc, c) => acc + c.creditAmount, 0) || 0}
+                    </span>
+                  </div>
+                  
+                  <div className="flex justify-between items-center text-sm bg-neon-blue/10 p-4 rounded-lg border border-neon-blue/30 mt-6">
+                    <span className="font-bold text-neon-blue uppercase tracking-widest text-xs">Overall End Total</span>
+                    <span className="font-mono font-bold text-xl text-neon-blue">
+                      ₹{(report.paymentMethods.totalCash + report.paymentMethods.totalOnline + report.paymentMethods.totalWalletDeductions + (report.creditLogs?.filter(c => c.status === 'Pending').reduce((acc, c) => acc + c.creditAmount, 0) || 0)).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               </div>
 
-              <h3 className="text-sm uppercase font-bold text-text-2 tracking-widest mt-8 mb-6 border-b border-border pb-3 flex items-center gap-2">
-                <FileText className="w-4 h-4" /> Operations Overview
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-bg-3 p-3 rounded-lg border border-border text-center">
-                  <div className="text-2xl font-bold text-text">{report.operations.totalSessions}</div>
-                  <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Sessions</div>
-                </div>
-                <div className="bg-bg-3 p-3 rounded-lg border border-border text-center">
-                  <div className="text-2xl font-bold text-text">{report.operations.totalFoodOrders}</div>
-                  <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Food Orders</div>
+              <div className="mt-8">
+                <h3 className="text-sm uppercase font-bold text-text-2 tracking-widest mb-6 border-b border-border pb-3 flex items-center gap-2">
+                  <FileText className="w-4 h-4" /> Operations Overview
+                </h3>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="bg-bg-3 p-3 rounded-lg border border-border text-center">
+                    <div className="text-2xl font-bold text-text">{report.operations.totalSessions}</div>
+                    <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Sessions</div>
+                  </div>
+                  <div className="bg-bg-3 p-3 rounded-lg border border-border text-center">
+                    <div className="text-2xl font-bold text-text">{report.operations.totalFoodOrders}</div>
+                    <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Food Orders</div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -425,7 +442,7 @@ export default function EodDashboardPage() {
                   No bills found for the selected date.
                 </div>
               ) : (
-                <table className="w-full text-left border-collapse text-xs">
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
                   <thead>
                     <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
                       <th className="py-3 px-4">Date/Time</th>
@@ -449,12 +466,93 @@ export default function EodDashboardPage() {
                         <td className="py-3 px-4 text-text font-bold">{bill.billId}</td>
                         <td className="py-3 px-4 text-neon-blue font-bold">{bill.operator}</td>
                         <td className="py-3 px-4 text-text-2 font-sans">{bill.customer}</td>
-                        <td className="py-3 px-4 text-center text-text-3 uppercase">{bill.paymentType}</td>
+                        <td className="py-3 px-4 text-center">
+                          {bill.paymentType?.toUpperCase() === 'CREDIT' ? (
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="text-text-3 font-bold uppercase text-[10px]">Credit</span>
+                              {bill.creditStatus?.toLowerCase() === 'cleared' ? (
+                                <>
+                                  <span className="text-neon-green text-[9px] bg-neon-green/10 px-1.5 py-0.5 rounded border border-neon-green/20 uppercase tracking-wider font-bold">Cleared</span>
+                                  <span className="text-text-3 text-[9px]">Total Paid: ₹{bill.totalRevenue.toFixed(2)}</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-neon-orange text-[9px] bg-neon-orange/10 px-1.5 py-0.5 rounded border border-neon-orange/20 uppercase tracking-wider font-bold">
+                                    ₹{(bill.creditAmount || 0).toFixed(2)} Pending
+                                  </span>
+                                  <span className="text-text-3 text-[9px]">Upfront: ₹{(bill.amountPaidInitially || 0).toFixed(2)}</span>
+                                </>
+                              )}
+                            </div>
+                          ) : (
+                            <span className="text-text-3 uppercase">{bill.paymentType}</span>
+                          )}
+                        </td>
                         <td className="py-3 px-4 text-right text-text">₹{bill.gamingRevenue.toFixed(2)}</td>
                         <td className="py-3 px-4 text-right text-text">₹{bill.foodRevenue.toFixed(2)}</td>
                         <td className="py-3 px-4 text-right text-neon-red">{bill.discount > 0 ? `-₹${bill.discount.toFixed(2)}` : '-'}</td>
                         <td className="py-3 px-4 text-right text-neon-green font-bold">₹{bill.totalRevenue.toFixed(2)}</td>
                         <td className="py-3 px-4 text-text-3 text-[10px] whitespace-pre-wrap">{bill.sessionNotes || '-'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+
+          {/* ── Credit Audit Logs ── */}
+          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg mt-8">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2">
+                <Clock className="w-4.5 h-4.5 text-accent" />
+                Credit Audit Logs ({targetDate})
+              </h2>
+            </div>
+
+            <div className="overflow-x-auto">
+              {!report.creditLogs || report.creditLogs.length === 0 ? (
+                <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
+                  No credit records found for the selected date.
+                </div>
+              ) : (
+                <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                  <thead>
+                    <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
+                      <th className="py-3 px-4">Date Created</th>
+                      <th className="py-3 px-4">Customer</th>
+                      <th className="py-3 px-4">PC</th>
+                      <th className="py-3 px-4 text-right">Original Bill</th>
+                      <th className="py-3 px-4 text-right">Initial Paid</th>
+                      <th className="py-3 px-4 text-right">Amount Due</th>
+                      <th className="py-3 px-4 text-center">Status</th>
+                      <th className="py-3 px-4">Date Cleared</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border/40 font-mono">
+                    {report.creditLogs.map(credit => (
+                      <tr key={credit.creditId} className="hover:bg-bg-3/40 transition-colors">
+                        <td className="py-3 px-4 text-text-2 flex items-center gap-1">
+                          {new Date(credit.createdAt).toLocaleString()}
+                        </td>
+                        <td className="py-3 px-4 text-neon-blue font-bold">
+                          {credit.customerName}
+                          <div className="text-[10px] text-text-3 font-sans font-normal">{credit.customerPhone}</div>
+                        </td>
+                        <td className="py-3 px-4 text-text-2">{credit.pcNumber}</td>
+                        <td className="py-3 px-4 text-right text-text">₹{credit.originalBillAmount.toFixed(2)}</td>
+                        <td className="py-3 px-4 text-right text-text">₹{credit.amountPaidInitially.toFixed(2)}</td>
+                        <td className="py-3 px-4 text-right text-neon-orange font-bold">₹{credit.creditAmount.toFixed(2)}</td>
+                        <td className="py-3 px-4 text-center">
+                          {credit.status.toLowerCase() === 'cleared' ? (
+                            <span className="text-neon-green font-bold uppercase tracking-wider text-[10px] bg-neon-green/10 px-2 py-1 rounded border border-neon-green/20">Cleared</span>
+                          ) : (
+                            <span className="text-neon-orange font-bold uppercase tracking-wider text-[10px] bg-neon-orange/10 px-2 py-1 rounded border border-neon-orange/20">Pending</span>
+                          )}
+                        </td>
+                        <td className="py-3 px-4 text-text-3">
+                          {credit.clearedAt ? new Date(credit.clearedAt).toLocaleString() : '-'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>

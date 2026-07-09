@@ -133,6 +133,7 @@ public class BillingService : IBillingService
                 .Include(b => b.Payments)
                 .Include(b => b.Pc)
                 .Include(b => b.Session)
+                .Include(b => b.Member)
                 .FirstOrDefaultAsync(b => b.Id == id && b.BranchId == branchId)
                 ?? throw new NotFoundException("Bill not found.");
 
@@ -156,8 +157,8 @@ public class BillingService : IBillingService
 
             // Calculate total paid vs expected
             decimal totalPayment = dto.CashAmount + dto.OnlineAmount + dto.WalletAmount;
-            if (totalPayment != bill.TotalAmount)
-                throw new AppException($"Payment amount mismatch. Expected: {bill.TotalAmount}, Provided: {totalPayment}");
+            if (totalPayment + dto.CreditAmount != bill.TotalAmount)
+                throw new AppException($"Payment amount mismatch. Expected: {bill.TotalAmount}, Provided: {totalPayment} + Credit: {dto.CreditAmount}");
 
             decimal changeReturned = 0;
             if (dto.CashAmount > 0)
@@ -222,6 +223,25 @@ public class BillingService : IBillingService
 
             await _unitOfWork.Repository<Payment>().AddAsync(payment);
 
+            if (dto.CreditAmount > 0)
+            {
+                var customerCredit = new CustomerCredit
+                {
+                    BranchId = branchId,
+                    OperatorId = operatorId,
+                    BillId = bill.Id,
+                    CustomerName = !string.IsNullOrWhiteSpace(dto.CustomerName) ? dto.CustomerName : (bill.CustomerName ?? bill.Member?.Username ?? "Walk-in"),
+                    CustomerPhone = dto.CustomerPhone ?? "N/A",
+                    PcNumber = bill.Pc?.PcNumber ?? "N/A",
+                    OriginalBillAmount = bill.TotalAmount,
+                    AmountPaidInitially = totalPayment,
+                    CreditAmount = dto.CreditAmount,
+                    Status = "pending",
+                    CreatedAt = DateTimeOffset.UtcNow
+                };
+                await _unitOfWork.Repository<CustomerCredit>().AddAsync(customerCredit);
+            }
+
             // Update Bill
             bill.PaymentType = dto.PaymentType;
             bill.CashAmount = dto.CashAmount;
@@ -231,10 +251,7 @@ public class BillingService : IBillingService
             bill.ChangeReturned = changeReturned;
             bill.ActualCashCollected = dto.CashAmount;
             bill.Status = BillStatus.Completed;
-            // For deferred bills, backdate CompletedAt to the session's end time (when the customer played)
-            bill.CompletedAt = bill.IsDeferred && bill.Session?.EndTime != null
-                ? bill.Session.EndTime.Value
-                : DateTimeOffset.UtcNow;
+            bill.CompletedAt = DateTimeOffset.UtcNow;
             bill.IsDeferred = false;
             bill.UpdatedAt = DateTimeOffset.UtcNow;
             
