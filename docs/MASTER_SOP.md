@@ -1,3 +1,1569 @@
+# APPLE ESPORTS ERP - MASTER SYSTEM DOCUMENTATION
+
+This is the single source of truth for the Apple Esports Gaming Software. It contains the Changelog, System Architecture, Standard Operating Procedures, and all associated Flowcharts.
+
+## Table of Contents
+1. [Recent Updates & Changelog](#1-recent-updates--changelog)
+2. [System Architecture & Tech Stack](#2-system-architecture--tech-stack)
+3. [Master Production SOP](#3-master-production-sop)
+4. [System Flowcharts & Diagrams](#4-system-flowcharts--diagrams)
+5. [Appendix: Raw Design Notes](#5-appendix-raw-design-notes)
+
+---
+
+<a name="1-recent-updates--changelog"></a>
+## RECENT UPDATES & BUG FIXES (June 2026)
+
+### 1. Food Order Placement Fix
+- **Issue**: PC overlay orders successfully saved the `FoodOrder` but omitted `FoodOrderItem` entries due to a missing object mapper in the backend logic.
+- **Fix**: The `PlaceFoodOrder` method in `PcOverlayHub.cs` was updated to accurately map incoming `FoodItemPayload` properties to their `FoodOrderItem` entity equivalents (`InventoryId`, `ItemName`, `Quantity`, `UnitPrice`, `TotalPrice`).
+
+### 2. Session Timer Sticking Fix
+- **Issue**: The countdown timer on the overlay screen sometimes failed to start if the UI mounted prior to a successful session data fetch.
+- **Fix**: Re-evaluated the dependency array of the real-time countdown `useEffect` hook in `OverlaySocketContext.jsx` to depend strictly on `sessionData.sessionId` and `sessionData.sessionStatus === 'active'` instead of a generic truthy check on the object.
+
+### 3. Operator Call Notification UI
+- **Issue**: The "Call Operator" feature resulted in a minor, easily missed toast notification rather than an actionable operator alert.
+- **Fix**: Upgraded the `OperatorCall` to use the primary `AnimatePresence` big modal UI card in `GlobalNotificationListener.jsx`. Added an explicit "Acknowledge" button to clear the alert. Implemented `speechSynthesis` to provide verbal warnings to operators.
+
+### 4. Dynamic Time Extension & Walk-in Billing
+- **Issue**: The operator dashboard calculated time extensions and walk-in bill estimates using a hardcoded base rate of `₹100/hr`, ignoring variable PC monitor rates (e.g., PS5 or 240Hz PCs).
+- **Fix**: Adjusted `GlobalNotificationListener.jsx` to perform API calls fetching the exact `ratePerHour` applied to the specific `pcId` (from `/api/public/session/pc/${pcId}` or `/api/public/pcs/${pcId}`) and multiplying dynamically for correct expected billing amounts in backend `SessionExtendDto`.
+
+
+---
+
+<a name="2-system-architecture--tech-stack"></a>
+## 1. System Architecture & Tech Stack
+
+Apple Esports ERP is designed as a centralized Management System operating on a Client-Server model, heavily emphasizing real-time state synchronization across physical locations (Branches).
+
+```mermaid
+graph TD
+    subgraph Frontend [Client Applications]
+        A[PC Overlay App / .EXE] -->|SignalR / HTTP| C(Backend API)
+        B[Operator Web Dashboard] -->|SignalR / HTTP| C
+        B2[Super Admin Portal] -->|SignalR / HTTP| C
+    end
+    
+    subgraph Backend [.NET 8 Core]
+        C --> D[Controllers / REST APIs]
+        C --> E[SignalR Hubs]
+        D --> F[Application Services]
+        E --> F
+        F --> G[Entity Framework Core]
+    end
+    
+    subgraph Database Layer
+        G --> H[(SQL Server DB)]
+    end
+```
+
+### 1.1 Tech Stack Detail
+- **Frontend Framework:** React.js 18 + Vite (for rapid Hot Module Replacement during development).
+- **Frontend State & Routing:** React Router v6, React Context API (`AuthContext`, `SocketContext`, `BranchContext`).
+- **Styling:** Custom CSS built on utility classes (Tailwind-style) with a strict focus on Glassmorphism, Neon lighting, and smooth animations via `framer-motion`.
+- **Backend Framework:** .NET 8 Web API.
+- **ORM:** Entity Framework Core using Code-First Migrations.
+- **Real-Time Engine:** Microsoft SignalR (WebSockets with Long-Polling fallbacks).
+- **Authentication:** JWT (JSON Web Tokens) with Role-Based Claims (User, Operator, Admin, Super Admin).
+
+---
+
+## 2. Database Schema & Entities
+
+The system uses a highly normalized relational database structure designed to handle multi-branch logic.
+
+### Core Entities
+- **`Branch`**: Represents a physical café location. Contains `Id`, `Name`, `Address`, `Status`. (All other operational entities map back to a Branch).
+- **`Pc`**: Represents physical hardware. Contains `Id`, `PcNumber`, `PcName`, `BranchId`, `State` (Idle, Active, Offline), `IpAddress`, `MacAddress`.
+- **`Operator` / `User` / `Member`**:
+  - `Operator`: Café staff. Bound to a specific `BranchId`. Uses JWT auth.
+  - `Member`: Registered customers with prepay wallets (`GamingBalance`, `FoodBalance`).
+- **`PricingProfile`**: Dynamic hourly rate configurations bound to specific branches.
+
+### Operational Entities
+- **`Session`**: The core billing unit. Created when a PC unlocks. Contains `PcId`, `OperatorId`, `MemberId`, `StartTime`, `EndTime`, `GamingAmount`, `FoodAmount`, `State` (Active, Completed).
+- **`FoodOrder` & `FoodOrderItem`**: Tracks F&B purchases tied directly to active `Sessions`.
+- **`Shift` & `CashRegister`**: Handles operator accountability. A Shift starts when an operator logs in, opening a Cash Register. All cash transactions map to the active register to allow End-of-Day (EOD) auditing.
+
+---
+
+## 3. API & SignalR Communication Layer
+
+### 3.1 RESTful API Endpoints (Controllers)
+- **`PublicController`**: Unauthenticated endpoints for kiosk operations.
+  - `GET /api/public/branches`: Lists all branches.
+  - `GET /api/public/branches/{id}/pcs`: Fetches all PCs for hardware binding.
+  - `POST /api/public/pcs/{pcId}/decline-walkin`: Rejects walk-in requests.
+- **`SessionsController`**: Protected by `[Authorize]`.
+  - `POST /api/sessions/start`: Creates a session, calculates cost, assigns shift, and signals PC unlock.
+  - `POST /api/sessions/{id}/stop`: Closes session and signals PC lock.
+- **`FoodOrdersController`**: Manages kitchen queues and bill additions.
+
+### 3.2 SignalR Hubs (Real-Time State)
+Because the system controls physical hardware, HTTP polling is too slow. SignalR maintains persistent, sub-millisecond bidirectional communication.
+- **`PcOverlayHub`**: The Hub that physical PCs connect to. Sends Heartbeats, Activity Events, and Walk-in Requests.
+- **`NotificationHub`**: Broadcasts alerts (like `WalkinSessionRequest`) to Operator Dashboards.
+- **`BillingHub`**: Broadcasts `BillingUpdated` when a session adds food or extends time, forcing the Operator dashboard to re-render the bill live.
+- **`PcStatusHub`**: Tracks PC online/offline status and transitions from Idle to Active.
+
+---
+
+## 4. Frontend & UI/UX Design System
+
+### 4.1 Visual Identity
+The system entirely rejects standard "bootstrap" designs. It aims for a **Premium Cyber-Esports Aesthetic**.
+- **Colors:** Deep obsidian backgrounds (`#0a0a0c`), slate borders (`#1f1f23`), and highly saturated Neon Accents (Red `#dc2626`, Green `#22c55e`).
+- **Glassmorphism:** Heavy use of `backdrop-blur-xl` and semi-transparent `rgba()` backgrounds to create depth over abstract blurred glowing orbs.
+- **Typography:** `font-heading` (sans-serif bold/wide for titles), `font-body` (for readability), `font-mono` (for numbers, bills, and IDs).
+
+### 4.2 Reusable Components
+- `PageHeader.jsx`: Standardized title and breadcrumb system for dashboards.
+- `ActiveBillsList.jsx`: Real-time scrolling grid of running sessions.
+- `useToast`: A custom context for displaying floating, auto-dismissing success/error notifications at the bottom right.
+
+### 4.3 Frontend Routing Hierarchy
+
+The React frontend utilizes `react-router-dom` v6 for strict route protection and role-based access. Below is the complete mapping of the application's routing architecture.
+
+#### Public & Authentication Routes (Unprotected)
+- `/` - **LandingGatewayPage:** The main entry portal for the entire system. Routes between User, Operator, Admin, and Super Admin.
+- `/login/operator` - Operator login portal.
+- `/login/admin` - Admin login portal.
+- `/login/superadmin` - Super Admin login portal.
+- `/unauthorized` - Fallback for denied role access.
+- `/setup-pc` - Hardware Binding page for installers to map a physical PC to a Branch/PC ID.
+
+#### Kiosk & PC Overlay Routes
+- `/user/select` - Walk-in vs Member selection (Web fallback).
+- `/user/member-login` - Member authentication screen.
+- `/user/limited` - Walk-in request screen.
+- `/user/member-portal` - Portal for logged-in members (Top-ups, stats).
+- `/pc-overlay/:pcId/*` - **UserOverlayApp:** The locked-down desktop overlay for dedicated PCs. Bypasses standard routing once initialized.
+
+#### Protected Application Shell (`/app/*`)
+All routes under `/app` are wrapped by `ProtectedRoute`, requiring valid JWT authentication and specific role claims (`OPERATOR`, `ADMIN`, `SUPER_ADMIN`).
+
+**Operations Dashboards:**
+- `/app/billing` - **BillingCounterPage:** Handles walk-in approvals, active sessions, and payments.
+- `/app/sessions` - **SessionsPage:** Historical and active session log.
+- `/app/reservations` - **ReservationsPage:** Managing advance PC bookings.
+- `/app/food-orders` - **FoodOrdersPage:** The Kitchen/Bar ticket management system.
+
+**Finance Dashboards:**
+- `/app/cash-register` - Live physical cash drawer management.
+- `/app/cash-desk` - All cash transactions.
+- `/app/online-desk` - Card/UPI/Digital transactions.
+- `/app/wallet-desk` - Member wallet top-ups.
+- `/app/eod` - **EodDashboardPage:** End of Day shift closure and discrepancy flagging.
+
+**Management & Admin Dashboards:**
+- `/app/members` - Member CRM (Create, ban, view history).
+- `/app/menu-editor` - Food & Beverage catalog editor.
+- `/app/dashboard` - **MainDashboardPage:** High-level metrics and heatmaps.
+- `/app/reports` - **ReportsPage:** (Admin/Super Admin only) Exportable financial data.
+- `/app/pc-status` - **PcStatusPage:** (Admin/Super Admin only) Hardware monitoring and forced overrides.
+- `/app/settings` - **SettingsPage:** (Admin/Super Admin only) Pricing profiles and branch settings.
+
+---
+
+## 5. Hardware Installation & Setup Guide
+
+When opening a new café or adding a new computer, the software must be "Hardware Bound" so the system knows exactly which PC is which.
+
+### Step-by-Step Installation:
+1. Run the `.exe` (or open the local URL on the physical machine). The `LandingGatewayPage` appears.
+2. Click **USER**. Since the machine is unconfigured, it routes to `/setup-pc`.
+3. **Select Branch:** The installer selects the physical café location from the dropdown (fetched securely via API).
+4. **Select PC:** The installer selects the specific PC ID (e.g., "PC-04") from the branch list.
+5. Click **Save Configuration**.
+6. **Background Action:** The system saves the exact Database GUID of that PC to `localStorage` (as `dedicatedPcId`). 
+7. The application instantly reloads and bypasses the gateway, locking the screen into the **PC Overlay** (`PcLockScreen.jsx`). This PC is now fully operational.
+
+---
+
+## 6. User Workflows (Walk-in & Member)
+
+The physical PC is locked, blocking access to Windows. The user sees the Apple Esports User Selection screen.
+
+### 6.1 The Walk-in Flow (Guest)
+1. User clicks **"Walk-in User"**.
+2. User enters their Name (e.g., "John") and selects a duration (e.g., "1 Hr").
+3. User clicks **"Request Session"**.
+4. The frontend invokes `requestWalkinSession` on the `PcOverlayHub`.
+5. The screen enters a "Waiting for Operator" pulsing animation.
+6. Once the Operator approves (see section 7), the backend pushes an `UnlockSession` command. The React app triggers the Electron shell to drop the lock screen, revealing Windows.
+
+### 6.2 The Member Flow (Prepaid)
+1. User clicks **"Member Login"**.
+2. User inputs Mobile/ID and Password.
+3. System authenticates via REST API and returns `MemberProfile` (including Wallet Balance).
+4. User selects a duration. System calculates `Expected Cost = (Duration / 60) * BaseRate`.
+5. If `WalletBalance >= Expected Cost`, the user clicks Start.
+6. The system deducts the wallet natively, bypasses Operator approval, and instantly unlocks the screen.
+
+---
+
+## 7. Operator Dashboard Manual
+
+The Operator accesses the system via a web browser at the reception desk.
+
+### 7.1 Managing Walk-in Requests
+- **Alert System:** When a Walk-in request fires from a PC, the Operator's `BillingCounterPage` intercepts the `Alert` on the `NotificationHub`.
+- **UI Popup:** A glowing alert box drops down containing the User's Name, Time, and PC Number.
+- **Approval:** Clicking **"Approve & Start"** calls `POST /api/sessions/start`. The backend links the session to the Operator's active shift, logs the expected cash amount, and unlocks the remote PC.
+- **Decline:** Clicking **"Decline"** clears the alert and sends a SignalR message telling the remote PC to revert to the main menu.
+
+### 7.2 Active Session & Billing Management
+- **Live Grid:** The left column displays all Active Sessions. This updates in real-time if a PC goes offline or time expires.
+- **Adding Items:** If a user orders a Coke from their PC overlay, the `FoodOrdersHub` updates the Dashboard. The item is attached to the session's bill.
+- **Checkout:** When the user finishes, the Operator clicks the PC, views the combined bill (Gaming Time + F&B), clicks **"Accept Payment"**, and finalizes the transaction. The session closes, and the PC re-locks.
+
+---
+
+## 8. Future Roadmap: Cloud, Security & Desktop Packaging
+
+To transition this software from development into a production-ready enterprise product, the following advanced architectural implementations are required:
+
+### 8.1 Desktop Packaging (Kiosk Mode)
+The React client must be wrapped into a strict Windows Executable.
+- **Technology:** Electron.js (Node backend) or Tauri (Rust backend).
+- **Windows API Hooks:** The executable must run at OS-level to intercept and disable critical Windows hotkeys (`Alt+Tab`, `Windows Key`, `Ctrl+Alt+Del`, `Task Manager`).
+- **Execution:** When the React UI receives the SignalR `UnlockSession` event, it communicates via IPC (Inter-Process Communication) to the Electron shell, telling it to release the keyboard hooks and minimize the window.
+
+### 8.2 Cloud Database & Server Hosting
+The .NET backend and SQL database must migrate from local machines to AWS or Azure to allow multi-branch syncing and global analytics.
+- **Security:** Database connection strings MUST be removed from `appsettings.json` and moved into Cloud Secrets (Azure Key Vault or AWS Secrets Manager).
+- **CORS & Rate Limiting:** The API must implement strict CORS policies, only accepting requests from the Electron App's known headers or the specific Operator Dashboard domain. Implement IP-based Throttling to prevent DDoS.
+
+### 8.3 SignalR Redis Backplane
+As the system scales, the backend API will run on multiple servers (Load Balancing).
+- **The Issue:** SignalR websockets are "sticky". If PC-01 connects to Server-A, and the Operator connects to Server-B, the Operator's approval command will never reach Server-A.
+- **The Solution:** Implement a **Redis Backplane**. Server-B pushes the message to Redis, which forwards it to Server-A, which forwards it to PC-01.
+
+### 8.4 Offline Edge Servers (High Availability)
+- **Risk:** If the café loses internet, it loses connection to the Cloud DB. PCs cannot unlock, and bills cannot be processed.
+- **Architecture:** Implement an "Edge Node" Server at each café counter. The local PCs connect to the Edge Node. The Edge Node handles all hardware locking and billing locally, and asynchronously syncs (event sourcing) with the Global Cloud Database whenever internet is restored. This guarantees 100% uptime for physical operations.
+
+---
+
+
+---
+
+<a name="3-master-production-sop"></a>
+# GAMING CAFÉ MANAGEMENT SYSTEM
+
+# MASTER PRODUCTION SOP (STANDARD OPERATING PROCEDURE)
+
+## Enterprise Gaming Café ERP & Operations Platform
+
+---
+
+# DOCUMENT PURPOSE
+
+This document defines the:
+
+* complete operational workflow
+* dashboard logic
+* role hierarchy
+* billing architecture
+* reservation engine
+* payment system
+* operator workflow
+* inventory system
+* security controls
+* synchronization logic
+* production standards
+
+for the Gaming Café Management System.
+
+This SOP acts as the:
+
+# MASTER REFERENCE DOCUMENT
+
+for:
+
+* development
+* operations
+* UI/UX
+* backend architecture
+* database design
+* deployment
+* future scaling
+
+---
+
+# 1. SYSTEM OVERVIEW
+
+The Gaming Café Management System is a:
+
+# CENTRALIZED MULTI-BRANCH REAL-TIME OPERATIONS PLATFORM
+
+The system is designed to manage:
+
+* gaming sessions
+* billing operations
+* reservations
+* food ordering
+* inventory management
+* cash handling
+* operator workflows
+* member management
+* live PC tracking
+* real-time synchronization
+
+across one or multiple gaming café branches.
+
+---
+
+# 2. SYSTEM OBJECTIVES
+
+The primary objectives are:
+
+| Objective                   | Purpose                             |
+| --------------------------- | ----------------------------------- |
+| Fast Operations             | Reduce operator delay               |
+| Accurate Billing            | Prevent payment mistakes            |
+| Real-Time Synchronization   | Maintain live dashboard consistency |
+| Reservation Protection      | Prevent booking conflicts           |
+| Cash Accountability         | Prevent drawer mismatch             |
+| Operator Governance         | Maintain operational control        |
+| Audit Tracking              | Ensure traceability                 |
+| Branch Isolation            | Secure multi-branch operations      |
+| Lightweight User Experience | Maintain gaming performance         |
+
+---
+
+# 3. SYSTEM ARCHITECTURE
+
+```text
+                    CENTRAL SERVER
+            (Main Database + APIs + Sync)
+
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+
+        ▼                ▼                ▼
+
+   Branch A         Branch B         Branch C
+
+        │                │                │
+
+   Operators        Operators        Operators
+   PCs              PCs              PCs
+   User Panels      User Panels      User Panels
+```
+
+---
+
+# 4. CORE SYSTEM COMPONENTS
+
+| Component               | Purpose                  |
+| ----------------------- | ------------------------ |
+| Central Database        | Stores all system data   |
+| Real-Time Socket Engine | Synchronization          |
+| Billing Engine          | Revenue handling         |
+| Session Engine          | Gaming session lifecycle |
+| Reservation Engine      | Future bookings          |
+| Inventory Engine        | Food stock tracking      |
+| Wallet Engine           | Member balance system    |
+| Audit Engine            | Activity tracking        |
+| Permission Engine       | Access control           |
+
+---
+
+# 5. ROLE HIERARCHY
+
+The system contains 3 main access layers.
+
+---
+
+## 5.1 SUPER ADMIN
+
+Highest authority level.
+
+### Access Includes:
+
+* all branches
+* all dashboards
+* all reports
+* all operators
+* all settings
+* all reservations
+* audit logs
+* permissions
+
+### Responsibilities:
+
+* system governance
+* operator management
+* dashboard permissions
+* revenue oversight
+* security enforcement
+
+---
+
+## 5.2 OPERATOR
+
+Branch-level operational role.
+
+### Access Includes:
+
+* billing counter
+* sessions
+* reservations
+* food orders
+* cash register
+* members
+* cash desk
+
+### Restrictions:
+
+* no settings access
+* no audit logs
+* no cross-branch visibility
+* no admin permissions
+
+---
+
+## 5.3 USER PANEL
+
+Lightweight gaming-side interface.
+
+### Features:
+
+* remaining time
+* food ordering
+* call operator
+* session extension request
+* current bill viewing
+
+### Restrictions:
+
+* cannot close sessions
+* cannot access billing
+* cannot access admin systems
+* cannot access other PCs
+
+---
+
+# 6. LOGIN SYSTEM
+
+---
+
+# 6.1 MASTER ENTRY SCREEN
+
+```text
+[ Super Admin Login ]
+[ Operator Login ]
+[ User Panel ]
+```
+
+---
+
+# 6.2 SUPER ADMIN LOGIN FLOW
+
+### Workflow:
+
+1. Enter email/password
+2. Backend validates:
+
+   * credentials
+   * permissions
+   * device
+   * account status
+3. Redirect to Admin Dashboard
+
+---
+
+# 6.3 OPERATOR LOGIN FLOW
+
+### Workflow:
+
+1. Select branch
+2. Select operator profile
+3. Enter PIN/password
+4. System starts shift
+5. Redirect to Operator Dashboard
+
+---
+
+# 6.4 BRANCH ISOLATION
+
+Operators can ONLY access:
+
+# THEIR ASSIGNED BRANCH
+
+Cross-branch visibility is blocked.
+
+---
+
+# 7. SESSION ENGINE
+
+The Session Engine controls:
+
+* gaming timers
+* session billing
+* PC states
+* user panel lifecycle
+* billing synchronization
+
+---
+
+# 7.1 SESSION STATES
+
+| State            | Meaning                        |
+| ---------------- | ------------------------------ |
+| Idle             | Available                      |
+| Active           | Session running                |
+| Reserved         | Future booking                 |
+| Awaiting Billing | Session ended, payment pending |
+| Offline          | PC unavailable                 |
+
+---
+
+# 7.2 SESSION START FLOW
+
+Operator:
+
+* selects PC
+* enters customer details
+* selects duration/package
+
+System:
+
+* creates session
+* starts timer
+* starts billing
+* activates user panel
+* updates all dashboards
+
+---
+
+# 7.3 SESSION END FLOW
+
+When session stops:
+
+* timer freezes
+* amount locks
+* PC enters Awaiting Billing
+* billing becomes editable
+* food ordering stops
+
+---
+
+# 8. RESERVATION SYSTEM
+
+Reservations are:
+
+# CENTRALIZED SYSTEM STATES
+
+---
+
+# 8.1 RESERVATION FLOW
+
+1. Operator creates reservation
+2. System marks PC as Reserved
+3. Reservation reflects everywhere
+
+---
+
+# 8.2 RESERVATION REFLECTION
+
+| Dashboard          | Reflection |
+| ------------------ | ---------- |
+| Billing Counter    | YES        |
+| Sessions Dashboard | YES        |
+| PC Status          | YES        |
+| Reservations Panel | YES        |
+
+---
+
+# 8.3 RESERVED PC PROTECTION
+
+Clicking reserved PC shows:
+
+```text
+⚠ RESERVED PC
+Reserved for Rahul
+Starts in 10 minutes
+
+[ Cancel ]
+[ Start Reserved Session ]
+```
+
+---
+
+# 8.4 RESERVATION EXPIRY
+
+If customer never arrives:
+
+* grace period applies
+* reservation expires automatically
+* PC becomes available
+
+---
+
+# 9. BILLING COUNTER DASHBOARD
+
+This is the:
+
+# PRIMARY OPERATIONAL DASHBOARD
+
+---
+
+# 9.1 BILLING COUNTER RESPONSIBILITIES
+
+* session management
+* live billing
+* food billing
+* split payment handling
+* change return calculation
+* reservation visibility
+* transaction synchronization
+
+---
+
+# 9.2 BILLING COUNTER MODULES
+
+| Module             | Purpose                |
+| ------------------ | ---------------------- |
+| PC Selector        | Station control        |
+| Session Strip      | Live session data      |
+| Current Bill       | Billing summary        |
+| Payment Section    | Payment processing     |
+| Food Ordering      | Add food items         |
+| Reservation Alerts | Reservation protection |
+
+---
+
+# 9.3 PAYMENT METHODS
+
+Supported:
+
+* cash
+* online/UPI
+* split payment
+* wallet payment
+
+---
+
+# 9.4 SPLIT PAYMENT LOGIC
+
+Example:
+
+| Method | Amount |
+| ------ | ------ |
+| Cash   | ₹100   |
+| Online | ₹400   |
+
+Validation:
+
+# Cash + Online MUST equal total bill
+
+---
+
+# 9.5 CHANGE RETURN SYSTEM
+
+Example:
+
+| Bill           | ₹280 |
+| -------------- | ---- |
+| Customer Gives | ₹500 |
+| Return Change  | ₹220 |
+
+System automatically calculates:
+
+* change
+* shortages
+* exact payment
+
+---
+
+# 9.6 DISCOUNT SYSTEM
+
+Discounts are:
+
+# SUPER ADMIN ONLY
+
+Operators cannot:
+
+* apply discounts
+* view coupon engine
+
+---
+
+# 10. CASH REGISTER DASHBOARD
+
+This dashboard manages:
+
+# PHYSICAL CASH DRAWER CONTROL
+
+---
+
+# 10.1 CASH REGISTER RESPONSIBILITIES
+
+* opening balance
+* cash tracking
+* drawer calculation
+* shift verification
+* mismatch detection
+
+---
+
+# 10.2 OPENING BALANCE FLOW
+
+Operator enters:
+
+* starting drawer cash
+
+System stores:
+
+* operator
+* branch
+* timestamp
+* amount
+
+---
+
+# 10.3 EXPECTED DRAWER CASH FORMULA
+
+```text
+Opening Balance
++ Cash Sales
++ Split Payment Cash Portion
+```
+
+---
+
+# 10.4 SHIFT CLOSING VERIFICATION
+
+Operator counts:
+
+* physical drawer cash
+
+System compares:
+
+* expected cash
+* actual counted cash
+
+Mismatch requires:
+
+# REASON ENTRY
+
+---
+
+# 11. CASH DESK DASHBOARD
+
+The Cash Desk is:
+
+# PAYMENT FLOW MONITORING SYSTEM
+
+Tracks:
+
+* payment methods
+* split payments
+* denomination verification
+* wallet usage
+* payment traceability
+
+---
+
+# 11.1 DENOMINATION COUNTER
+
+At shift end:
+Operator enters:
+
+* ₹500 notes
+* ₹200 notes
+* ₹100 notes
+  etc.
+
+System verifies:
+
+* counted total
+* expected total
+
+---
+
+# 12. FOOD ORDERS DASHBOARD
+
+Handles:
+
+* live food orders
+* preparation workflow
+* delivery tracking
+* food payment synchronization
+
+---
+
+# 12.1 FOOD ORDER FLOW
+
+1. Customer places order
+2. Order appears in dashboard
+3. Operator accepts order
+4. Food delivered
+5. Billing synchronized
+
+---
+
+# 12.2 FOOD BILLING RULE
+
+Gaming billing and food billing:
+
+# MUST REMAIN SEPARATED
+
+---
+
+# 13. MENU EDITOR DASHBOARD
+
+Acts as:
+
+# FOOD INVENTORY MANAGEMENT SYSTEM
+
+---
+
+# 13.1 FEATURES
+
+* menu item control
+* stock tracking
+* refill logging
+* low stock alerts
+* availability management
+
+---
+
+# 13.2 LOW STOCK ALERTS
+
+If stock falls below minimum:
+
+* operator alerted
+* Super Admin alerted
+
+---
+
+# 14. MEMBERS DASHBOARD
+
+Handles:
+
+* member registration
+* wallet balances
+* loyalty points
+* gaming & food history
+
+---
+
+# 14.1 WALLET SYSTEM
+
+Operators can:
+
+* add wallet balance
+* remove balance
+* recharge accounts
+
+Every wallet action MUST store:
+
+* payment type
+* operator
+* date/time
+* amount
+
+---
+
+# 14.2 GAMING & FOOD SEPARATION
+
+Member history stores:
+
+* gaming spending
+* food spending
+
+separately.
+
+---
+
+# 15. DASHBOARD PANEL
+
+Central operational overview.
+
+Displays:
+
+* revenue summary
+* active sessions
+* cash summary
+* recent transactions
+* reservation statistics
+
+---
+
+# 15.1 CALENDAR FILTER SYSTEM
+
+Operators and Admin can:
+
+* select previous dates
+* inspect old transactions
+* access historical reports
+
+---
+
+# 16. SESSIONS DASHBOARD
+
+Displays:
+
+* all active sessions
+* reservations
+* awaiting billing PCs
+* live timers
+
+---
+
+# 16.1 SESSION ALERTS
+
+Includes:
+
+* reservation popups
+* billing pending alerts
+* session expiry warnings
+
+---
+
+# 17. PC STATUS DASHBOARD
+
+Super Admin-only dashboard.
+
+Displays:
+
+* all PC states
+* live usage
+* reservation mapping
+* live revenue state
+
+---
+
+# 18. END OF DAY DASHBOARD
+
+Handles:
+
+* final revenue reports
+* cash verification
+* operator shift closure
+* payment analytics
+
+---
+
+# 18.1 EOD REPORT CONTENTS
+
+| Item                | Included |
+| ------------------- | -------- |
+| Gaming Revenue      | YES      |
+| Food Revenue        | YES      |
+| Cash Revenue        | YES      |
+| Online Revenue      | YES      |
+| Split Payments      | YES      |
+| Wallet Transactions | YES      |
+| Operator Logs       | YES      |
+| Timestamp Logs      | YES      |
+
+---
+
+# 19. SETTINGS DASHBOARD
+
+This is:
+
+# SUPER ADMIN CONTROL CENTER
+
+---
+
+# 19.1 SETTINGS RESPONSIBILITIES
+
+* operator creation/removal
+* dashboard permissions
+* security rules
+* branch settings
+* access revocation
+
+---
+
+# 19.2 DASHBOARD PERMISSION CONTROL
+
+Super Admin can:
+
+* grant dashboard access
+* revoke dashboard access
+* control feature visibility
+
+per operator.
+
+---
+
+# 20. REAL-TIME SYNCHRONIZATION
+
+Entire system operates using:
+
+# CENTRALIZED LIVE STATE ENGINE
+
+---
+
+# 20.1 LIVE SYNCHRONIZATION TARGETS
+
+| Dashboard       | Sync |
+| --------------- | ---- |
+| Billing Counter | YES  |
+| Cash Register   | YES  |
+| Sessions        | YES  |
+| Reservations    | YES  |
+| Food Orders     | YES  |
+| EOD             | YES  |
+
+---
+
+# 20.2 RECOMMENDED TECHNOLOGY
+
+* WebSockets
+* Socket.IO
+* Event-driven architecture
+
+---
+
+# 21. SECURITY MODEL
+
+---
+
+# 21.1 REQUIRED SECURITY FEATURES
+
+| Security Feature | Required |
+| ---------------- | -------- |
+| Password Hashing | YES      |
+| JWT Tokens       | YES      |
+| Role Validation  | YES      |
+| Audit Logs       | YES      |
+| API Validation   | YES      |
+| Device Tracking  | YES      |
+| Branch Isolation | YES      |
+| Forced Logout    | YES      |
+
+---
+
+# 21.2 CORE SECURITY PRINCIPLE
+
+# NEVER TRUST FRONTEND
+
+All permissions MUST be validated in backend.
+
+---
+
+# 22. AUDIT LOGGING SYSTEM
+
+Every critical action MUST store:
+
+| Field  | Example          |
+| ------ | ---------------- |
+| User   | Rahul            |
+| Action | Discount Applied |
+| Branch | Adajan           |
+| Date   | 12/07/2026       |
+| Time   | 7:40 PM          |
+
+---
+
+# 23. DATABASE ARCHITECTURE
+
+Recommended core tables:
+
+* users
+* operators
+* branches
+* sessions
+* reservations
+* bills
+* bill_items
+* food_orders
+* inventory
+* members
+* wallet_transactions
+* audit_logs
+* pc_states
+* cash_register
+* shifts
+
+---
+
+# 24. API ARCHITECTURE
+
+Recommended architecture:
+
+```text
+Frontend
+   ↓
+REST APIs
+   ↓
+Business Logic Layer
+   ↓
+Database
+```
+
+Recommended:
+
+* JWT authentication
+* role middleware
+* branch middleware
+* audit middleware
+
+---
+
+# 25. FRONTEND ARCHITECTURE
+
+Recommended:
+
+* Electron.js desktop app
+* React frontend
+* Socket.IO live sync
+
+---
+
+# 26. USER PANEL PERFORMANCE RULES
+
+User panel MUST:
+
+* consume low RAM
+* consume low CPU
+* remain lightweight
+* avoid heavy animations
+
+because:
+
+# GAMING PERFORMANCE IS PRIORITY
+
+---
+
+# 27. OFFLINE & BACKUP STRATEGY
+
+Highly recommended:
+
+* local caching
+* automatic sync recovery
+* daily backups
+* offline transaction queue
+
+---
+
+# 28. PRODUCTION RULES
+
+---
+
+# NEVER ALLOW
+
+* direct database edits
+* deleted transaction history
+* hidden cash modifications
+* reservation bypass without logs
+* dashboard permission bypass
+
+---
+
+# ALWAYS REQUIRE
+
+* audit logging
+* timestamp tracking
+* role validation
+* backend verification
+* synchronization consistency
+
+---
+
+# 29. FUTURE SCALABILITY FEATURES
+
+Recommended future modules:
+
+| Feature                    | Priority  |
+| -------------------------- | --------- |
+| GST Engine                 | Future    |
+| Tournament System          | Future    |
+| Steam Launcher Integration | Advanced  |
+| Hardware Control Layer     | Advanced  |
+| Mobile App                 | Future    |
+| LAN Discovery              | Advanced  |
+| Auto Backup Cloud Sync     | Important |
+
+---
+
+# 30. FINAL SYSTEM PRINCIPLE
+
+This system is NOT:
+
+* simple billing software
+* simple timer software
+* basic cyber café app
+
+This system is:
+
+* enterprise gaming café ERP
+* real-time operations engine
+* multi-branch management platform
+* centralized session ecosystem
+* audit-safe financial system
+* operational governance platform
+
+This SOP defines the complete production architecture and operational standards of the Gaming Café Management System.
+
+---
+
+<a name="4-system-flowcharts--diagrams"></a>
+## 5. System Flowcharts & Diagrams
+
+```text id="z14p3j"
+┌──────────────────────────┐
+│ Customer wants booking  │
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│ Operator creates         │
+│ reservation for PC-05    │
+│ (1:00 PM)                │
+└────────────┬─────────────┘
+             │
+             ▼
+┌────────────────────────────────────┐
+│ SYSTEM STATE = RESERVED            │
+│                                    │
+│ PC-05 Reserved for Rahul           │
+│ Starts in 10 min                   │
+└────────────┬───────────────────────┘
+             │
+             ▼
+ ┌──────────────────────────────────┐
+ │ REFLECTED EVERYWHERE             │
+ └──────────────────────────────────┘
+
+   Billing Counter
+   ┌─────────────────────┐
+   │ PC-05               │
+   │ Reserved for Rahul  │
+   │ Starts in 10 min    │
+   └─────────────────────┘
+
+   Session Dashboard
+   ┌─────────────────────┐
+   │ Upcoming Session    │
+   │ Rahul → PC-05       │
+   │ 1:00 PM             │
+   └─────────────────────┘
+
+   PC Status Dashboard
+   ┌─────────────────────┐
+   │ PC-05 = PURPLE      │
+   │ Reserved State      │
+   └─────────────────────┘
+```
+
+```text id="8w17ol"
+┌─────────────────────────────┐
+│ Operator clicks PC-05       │
+└────────────┬────────────────┘
+             │
+             ▼
+┌──────────────────────────────────────┐
+│ POPUP APPEARS                        │
+│                                      │
+│ ⚠ RESERVED PC                        │
+│                                      │
+│ PC-05 reserved for Rahul             │
+│ Starts at 1:00 PM                    │
+│                                      │
+│ [Cancel] [Override] [Start Session]  │
+└──────────────────────────────────────┘
+```
+
+```text id="84sqzv"
+1:00 PM reached
+        │
+        ▼
+┌─────────────────────────────┐
+│ Operator clicks             │
+│ "Start Reserved Session"    │
+└────────────┬────────────────┘
+             │
+             ▼
+┌─────────────────────────────┐
+│ RESERVED → ACTIVE SESSION   │
+│                             │
+│ Timer starts                │
+│ Billing starts              │
+│ PC becomes BUSY             │
+└─────────────────────────────┘
+```
+
+```text id="jl3xgc"
+┌─────────────────────────────┐
+│ Grace Period Ends           │
+│ (Example: 15 min)           │
+└────────────┬────────────────┘
+             │
+             ▼
+┌──────────────────────────────────┐
+│ RESERVATION EXPIRED              │
+│                                  │
+│ [Release PC]                     │
+│ [Extend Reservation]             │
+└──────────────────────────────────┘
+```
+
+```text id="ev1uq6"
+Reservation is NOT just a dashboard feature.
+
+Reservation = Central System State
+
+So every module reflects:
+- reservation info
+- countdown
+- protection logic
+- popup warnings
+- session transition
+```
+
+```text id="9u3vzo"
+Visual Reserved State
+          +
+Popup Protection
+          +
+Permission Override
+          +
+Auto Expiry
+          +
+Real-Time Sync
+```
+
+```text
+                    CENTRAL SERVER
+            (Main Database + APIs + Sync)
+
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │ 
+        ▼                ▼                ▼ 	     
+
+   Branch A         Branch B         Branch C
+   (Adajan)         (Citylight)     (Katargam)
+
+        │                │                │
+
+   Operators        Operators        Operators
+   PCs              PCs              PCs
+   User Panels      User Panels      User Panels
+```
+
+```text
+┌─────────────────────────┐
+│    GAMING SOFTWARE      │
+│                         │
+│ [ Super Admin Login ]   │
+│                         │
+│ [ Operator Login ]      │
+│                         │
+│ [ User Panel ]          │
+└─────────────────────────┘
+```
+
+```text
+[ Super Admin Login ]
+```
+
+```text
+Email
+Password
+
+[ Login ]
+```
+
+```text
+Redirect → Main Admin Dashboard
+```
+
+```text
+Next app open →
+direct dashboard access
+```
+
+```text
+[ Operator Login ]
+```
+
+```text
+Select Branch
+
+[ Adajan ]
+[ Citylight ]
+[ Katargam ]
+[ Vesu ]
+```
+
+```text
+Adajan
+```
+
+```text
+Citylight ❌
+Katargam ❌
+Vesu ❌
+```
+
+```text
+Operator → Assigned Branch
+```
+
+```text
+Operator Rahul
+Assigned Branch = Adajan
+```
+
+```text
+ADAJAN OPERATORS
+
+[ Rahul ]
+[ Meet ]
+```
+
+```text
+PIN / Password
+```
+
+```text
+Operator: Rahul
+Branch: Adajan
+Login Time: 10:00 AM
+Device: Counter-PC-01
+```
+
+```text
+SHIFT = ACTIVE
+```
+
+```text
+Operator Dashboard
+```
+
+```text
+PC-03 → ACTIVE SESSION
+```
+
+```text
+User Side Panel Opens
+```
+
+```text
+Checks available PCs
+```
+
+```text
+PC-03 = AVAILABLE
+```
+
+```text
+PC-03 → ACTIVE
+```
+
+```text
+Session Record
+```
+
+```text
+Timer
+Billing
+User Panel
+```
+
+```text
+PC-05
+Reserved for Rahul
+1:00 PM
+```
+
+```text
+⚠ RESERVED PC
+
+PC-05 reserved for Rahul
+Starts in 10 minutes
+
+[ Cancel ]
+[ Override ]
+[ Start Reserved Session ]
+```
+
+```text
+10 AM → 8 PM
+```
+
+```text
+Operator Logout
+```
+
+```text
+Logout Time
+Shift Summary
+Revenue
+Actions
+```
+
+```text
+Gaming Charges = ₹100
+Food Charges   = ₹20
+
+Total          = ₹120
+```
+
+```text
+Cash  = ₹20
+UPI   = ₹100
+```
+
+```text
+PC-03 ACTIVE
+```
+
+```text
+ACTIVE
+```
+
+```text
+Access denied
+```
+
+```text
+SUPER ADMIN
+    │
+    ├── Branch Control
+    ├── Operators
+    ├── Reports
+    ├── Revenue
+    └── System Settings
+
+OPERATOR
+    │
+    ├── Sessions
+    ├── Billing
+    ├── Reservations
+    ├── Food Orders
+    ├── User Requests
+    └── Shift Operations
+
+USER PANEL
+    │
+    ├── Food Orders
+    ├── Time Requests
+    ├── Remaining Time
+    └── Call Operator
+```
+
+---
+
+<a name="5-appendix-raw-design-notes"></a>
+## 5. Appendix: Raw Design Notes
+<details>
+<summary>Click here to expand the historical chat logs and raw notes</summary>
+
+```text
 ▼
 
 ## RECENT UPDATES & BUG FIXES (June 2026)
@@ -6450,957 +8016,5 @@ operational authority system
 This dashboard controls the complete administrative backbone and permission architecture of the gaming café ecosystem.
 
 
-# GAMING CAFÉ MANAGEMENT SYSTEM
-
-# MASTER PRODUCTION SOP (STANDARD OPERATING PROCEDURE)
-
-## Enterprise Gaming Café ERP & Operations Platform
-
----
-
-# DOCUMENT PURPOSE
-
-This document defines the:
-
-* complete operational workflow
-* dashboard logic
-* role hierarchy
-* billing architecture
-* reservation engine
-* payment system
-* operator workflow
-* inventory system
-* security controls
-* synchronization logic
-* production standards
-
-for the Gaming Café Management System.
-
-This SOP acts as the:
-
-# MASTER REFERENCE DOCUMENT
-
-for:
-
-* development
-* operations
-* UI/UX
-* backend architecture
-* database design
-* deployment
-* future scaling
-
----
-
-# 1. SYSTEM OVERVIEW
-
-The Gaming Café Management System is a:
-
-# CENTRALIZED MULTI-BRANCH REAL-TIME OPERATIONS PLATFORM
-
-The system is designed to manage:
-
-* gaming sessions
-* billing operations
-* reservations
-* food ordering
-* inventory management
-* cash handling
-* operator workflows
-* member management
-* live PC tracking
-* real-time synchronization
-
-across one or multiple gaming café branches.
-
----
-
-# 2. SYSTEM OBJECTIVES
-
-The primary objectives are:
-
-| Objective                   | Purpose                             |
-| --------------------------- | ----------------------------------- |
-| Fast Operations             | Reduce operator delay               |
-| Accurate Billing            | Prevent payment mistakes            |
-| Real-Time Synchronization   | Maintain live dashboard consistency |
-| Reservation Protection      | Prevent booking conflicts           |
-| Cash Accountability         | Prevent drawer mismatch             |
-| Operator Governance         | Maintain operational control        |
-| Audit Tracking              | Ensure traceability                 |
-| Branch Isolation            | Secure multi-branch operations      |
-| Lightweight User Experience | Maintain gaming performance         |
-
----
-
-# 3. SYSTEM ARCHITECTURE
-
-```text
-                    CENTRAL SERVER
-            (Main Database + APIs + Sync)
-
-                         │
-        ┌────────────────┼────────────────┐
-        │                │                │
-
-        ▼                ▼                ▼
-
-   Branch A         Branch B         Branch C
-
-        │                │                │
-
-   Operators        Operators        Operators
-   PCs              PCs              PCs
-   User Panels      User Panels      User Panels
 ```
-
----
-
-# 4. CORE SYSTEM COMPONENTS
-
-| Component               | Purpose                  |
-| ----------------------- | ------------------------ |
-| Central Database        | Stores all system data   |
-| Real-Time Socket Engine | Synchronization          |
-| Billing Engine          | Revenue handling         |
-| Session Engine          | Gaming session lifecycle |
-| Reservation Engine      | Future bookings          |
-| Inventory Engine        | Food stock tracking      |
-| Wallet Engine           | Member balance system    |
-| Audit Engine            | Activity tracking        |
-| Permission Engine       | Access control           |
-
----
-
-# 5. ROLE HIERARCHY
-
-The system contains 3 main access layers.
-
----
-
-## 5.1 SUPER ADMIN
-
-Highest authority level.
-
-### Access Includes:
-
-* all branches
-* all dashboards
-* all reports
-* all operators
-* all settings
-* all reservations
-* audit logs
-* permissions
-
-### Responsibilities:
-
-* system governance
-* operator management
-* dashboard permissions
-* revenue oversight
-* security enforcement
-
----
-
-## 5.2 OPERATOR
-
-Branch-level operational role.
-
-### Access Includes:
-
-* billing counter
-* sessions
-* reservations
-* food orders
-* cash register
-* members
-* cash desk
-
-### Restrictions:
-
-* no settings access
-* no audit logs
-* no cross-branch visibility
-* no admin permissions
-
----
-
-## 5.3 USER PANEL
-
-Lightweight gaming-side interface.
-
-### Features:
-
-* remaining time
-* food ordering
-* call operator
-* session extension request
-* current bill viewing
-
-### Restrictions:
-
-* cannot close sessions
-* cannot access billing
-* cannot access admin systems
-* cannot access other PCs
-
----
-
-# 6. LOGIN SYSTEM
-
----
-
-# 6.1 MASTER ENTRY SCREEN
-
-```text
-[ Super Admin Login ]
-[ Operator Login ]
-[ User Panel ]
-```
-
----
-
-# 6.2 SUPER ADMIN LOGIN FLOW
-
-### Workflow:
-
-1. Enter email/password
-2. Backend validates:
-
-   * credentials
-   * permissions
-   * device
-   * account status
-3. Redirect to Admin Dashboard
-
----
-
-# 6.3 OPERATOR LOGIN FLOW
-
-### Workflow:
-
-1. Select branch
-2. Select operator profile
-3. Enter PIN/password
-4. System starts shift
-5. Redirect to Operator Dashboard
-
----
-
-# 6.4 BRANCH ISOLATION
-
-Operators can ONLY access:
-
-# THEIR ASSIGNED BRANCH
-
-Cross-branch visibility is blocked.
-
----
-
-# 7. SESSION ENGINE
-
-The Session Engine controls:
-
-* gaming timers
-* session billing
-* PC states
-* user panel lifecycle
-* billing synchronization
-
----
-
-# 7.1 SESSION STATES
-
-| State            | Meaning                        |
-| ---------------- | ------------------------------ |
-| Idle             | Available                      |
-| Active           | Session running                |
-| Reserved         | Future booking                 |
-| Awaiting Billing | Session ended, payment pending |
-| Offline          | PC unavailable                 |
-
----
-
-# 7.2 SESSION START FLOW
-
-Operator:
-
-* selects PC
-* enters customer details
-* selects duration/package
-
-System:
-
-* creates session
-* starts timer
-* starts billing
-* activates user panel
-* updates all dashboards
-
----
-
-# 7.3 SESSION END FLOW
-
-When session stops:
-
-* timer freezes
-* amount locks
-* PC enters Awaiting Billing
-* billing becomes editable
-* food ordering stops
-
----
-
-# 8. RESERVATION SYSTEM
-
-Reservations are:
-
-# CENTRALIZED SYSTEM STATES
-
----
-
-# 8.1 RESERVATION FLOW
-
-1. Operator creates reservation
-2. System marks PC as Reserved
-3. Reservation reflects everywhere
-
----
-
-# 8.2 RESERVATION REFLECTION
-
-| Dashboard          | Reflection |
-| ------------------ | ---------- |
-| Billing Counter    | YES        |
-| Sessions Dashboard | YES        |
-| PC Status          | YES        |
-| Reservations Panel | YES        |
-
----
-
-# 8.3 RESERVED PC PROTECTION
-
-Clicking reserved PC shows:
-
-```text
-⚠ RESERVED PC
-Reserved for Rahul
-Starts in 10 minutes
-
-[ Cancel ]
-[ Start Reserved Session ]
-```
-
----
-
-# 8.4 RESERVATION EXPIRY
-
-If customer never arrives:
-
-* grace period applies
-* reservation expires automatically
-* PC becomes available
-
----
-
-# 9. BILLING COUNTER DASHBOARD
-
-This is the:
-
-# PRIMARY OPERATIONAL DASHBOARD
-
----
-
-# 9.1 BILLING COUNTER RESPONSIBILITIES
-
-* session management
-* live billing
-* food billing
-* split payment handling
-* change return calculation
-* reservation visibility
-* transaction synchronization
-
----
-
-# 9.2 BILLING COUNTER MODULES
-
-| Module             | Purpose                |
-| ------------------ | ---------------------- |
-| PC Selector        | Station control        |
-| Session Strip      | Live session data      |
-| Current Bill       | Billing summary        |
-| Payment Section    | Payment processing     |
-| Food Ordering      | Add food items         |
-| Reservation Alerts | Reservation protection |
-
----
-
-# 9.3 PAYMENT METHODS
-
-Supported:
-
-* cash
-* online/UPI
-* split payment
-* wallet payment
-
----
-
-# 9.4 SPLIT PAYMENT LOGIC
-
-Example:
-
-| Method | Amount |
-| ------ | ------ |
-| Cash   | ₹100   |
-| Online | ₹400   |
-
-Validation:
-
-# Cash + Online MUST equal total bill
-
----
-
-# 9.5 CHANGE RETURN SYSTEM
-
-Example:
-
-| Bill           | ₹280 |
-| -------------- | ---- |
-| Customer Gives | ₹500 |
-| Return Change  | ₹220 |
-
-System automatically calculates:
-
-* change
-* shortages
-* exact payment
-
----
-
-# 9.6 DISCOUNT SYSTEM
-
-Discounts are:
-
-# SUPER ADMIN ONLY
-
-Operators cannot:
-
-* apply discounts
-* view coupon engine
-
----
-
-# 10. CASH REGISTER DASHBOARD
-
-This dashboard manages:
-
-# PHYSICAL CASH DRAWER CONTROL
-
----
-
-# 10.1 CASH REGISTER RESPONSIBILITIES
-
-* opening balance
-* cash tracking
-* drawer calculation
-* shift verification
-* mismatch detection
-
----
-
-# 10.2 OPENING BALANCE FLOW
-
-Operator enters:
-
-* starting drawer cash
-
-System stores:
-
-* operator
-* branch
-* timestamp
-* amount
-
----
-
-# 10.3 EXPECTED DRAWER CASH FORMULA
-
-```text
-Opening Balance
-+ Cash Sales
-+ Split Payment Cash Portion
-```
-
----
-
-# 10.4 SHIFT CLOSING VERIFICATION
-
-Operator counts:
-
-* physical drawer cash
-
-System compares:
-
-* expected cash
-* actual counted cash
-
-Mismatch requires:
-
-# REASON ENTRY
-
----
-
-# 11. CASH DESK DASHBOARD
-
-The Cash Desk is:
-
-# PAYMENT FLOW MONITORING SYSTEM
-
-Tracks:
-
-* payment methods
-* split payments
-* denomination verification
-* wallet usage
-* payment traceability
-
----
-
-# 11.1 DENOMINATION COUNTER
-
-At shift end:
-Operator enters:
-
-* ₹500 notes
-* ₹200 notes
-* ₹100 notes
-  etc.
-
-System verifies:
-
-* counted total
-* expected total
-
----
-
-# 12. FOOD ORDERS DASHBOARD
-
-Handles:
-
-* live food orders
-* preparation workflow
-* delivery tracking
-* food payment synchronization
-
----
-
-# 12.1 FOOD ORDER FLOW
-
-1. Customer places order
-2. Order appears in dashboard
-3. Operator accepts order
-4. Food delivered
-5. Billing synchronized
-
----
-
-# 12.2 FOOD BILLING RULE
-
-Gaming billing and food billing:
-
-# MUST REMAIN SEPARATED
-
----
-
-# 13. MENU EDITOR DASHBOARD
-
-Acts as:
-
-# FOOD INVENTORY MANAGEMENT SYSTEM
-
----
-
-# 13.1 FEATURES
-
-* menu item control
-* stock tracking
-* refill logging
-* low stock alerts
-* availability management
-
----
-
-# 13.2 LOW STOCK ALERTS
-
-If stock falls below minimum:
-
-* operator alerted
-* Super Admin alerted
-
----
-
-# 14. MEMBERS DASHBOARD
-
-Handles:
-
-* member registration
-* wallet balances
-* loyalty points
-* gaming & food history
-
----
-
-# 14.1 WALLET SYSTEM
-
-Operators can:
-
-* add wallet balance
-* remove balance
-* recharge accounts
-
-Every wallet action MUST store:
-
-* payment type
-* operator
-* date/time
-* amount
-
----
-
-# 14.2 GAMING & FOOD SEPARATION
-
-Member history stores:
-
-* gaming spending
-* food spending
-
-separately.
-
----
-
-# 15. DASHBOARD PANEL
-
-Central operational overview.
-
-Displays:
-
-* revenue summary
-* active sessions
-* cash summary
-* recent transactions
-* reservation statistics
-
----
-
-# 15.1 CALENDAR FILTER SYSTEM
-
-Operators and Admin can:
-
-* select previous dates
-* inspect old transactions
-* access historical reports
-
----
-
-# 16. SESSIONS DASHBOARD
-
-Displays:
-
-* all active sessions
-* reservations
-* awaiting billing PCs
-* live timers
-
----
-
-# 16.1 SESSION ALERTS
-
-Includes:
-
-* reservation popups
-* billing pending alerts
-* session expiry warnings
-
----
-
-# 17. PC STATUS DASHBOARD
-
-Super Admin-only dashboard.
-
-Displays:
-
-* all PC states
-* live usage
-* reservation mapping
-* live revenue state
-
----
-
-# 18. END OF DAY DASHBOARD
-
-Handles:
-
-* final revenue reports
-* cash verification
-* operator shift closure
-* payment analytics
-
----
-
-# 18.1 EOD REPORT CONTENTS
-
-| Item                | Included |
-| ------------------- | -------- |
-| Gaming Revenue      | YES      |
-| Food Revenue        | YES      |
-| Cash Revenue        | YES      |
-| Online Revenue      | YES      |
-| Split Payments      | YES      |
-| Wallet Transactions | YES      |
-| Operator Logs       | YES      |
-| Timestamp Logs      | YES      |
-
----
-
-# 19. SETTINGS DASHBOARD
-
-This is:
-
-# SUPER ADMIN CONTROL CENTER
-
----
-
-# 19.1 SETTINGS RESPONSIBILITIES
-
-* operator creation/removal
-* dashboard permissions
-* security rules
-* branch settings
-* access revocation
-
----
-
-# 19.2 DASHBOARD PERMISSION CONTROL
-
-Super Admin can:
-
-* grant dashboard access
-* revoke dashboard access
-* control feature visibility
-
-per operator.
-
----
-
-# 20. REAL-TIME SYNCHRONIZATION
-
-Entire system operates using:
-
-# CENTRALIZED LIVE STATE ENGINE
-
----
-
-# 20.1 LIVE SYNCHRONIZATION TARGETS
-
-| Dashboard       | Sync |
-| --------------- | ---- |
-| Billing Counter | YES  |
-| Cash Register   | YES  |
-| Sessions        | YES  |
-| Reservations    | YES  |
-| Food Orders     | YES  |
-| EOD             | YES  |
-
----
-
-# 20.2 RECOMMENDED TECHNOLOGY
-
-* WebSockets
-* Socket.IO
-* Event-driven architecture
-
----
-
-# 21. SECURITY MODEL
-
----
-
-# 21.1 REQUIRED SECURITY FEATURES
-
-| Security Feature | Required |
-| ---------------- | -------- |
-| Password Hashing | YES      |
-| JWT Tokens       | YES      |
-| Role Validation  | YES      |
-| Audit Logs       | YES      |
-| API Validation   | YES      |
-| Device Tracking  | YES      |
-| Branch Isolation | YES      |
-| Forced Logout    | YES      |
-
----
-
-# 21.2 CORE SECURITY PRINCIPLE
-
-# NEVER TRUST FRONTEND
-
-All permissions MUST be validated in backend.
-
----
-
-# 22. AUDIT LOGGING SYSTEM
-
-Every critical action MUST store:
-
-| Field  | Example          |
-| ------ | ---------------- |
-| User   | Rahul            |
-| Action | Discount Applied |
-| Branch | Adajan           |
-| Date   | 12/07/2026       |
-| Time   | 7:40 PM          |
-
----
-
-# 23. DATABASE ARCHITECTURE
-
-Recommended core tables:
-
-* users
-* operators
-* branches
-* sessions
-* reservations
-* bills
-* bill_items
-* food_orders
-* inventory
-* members
-* wallet_transactions
-* audit_logs
-* pc_states
-* cash_register
-* shifts
-
----
-
-# 24. API ARCHITECTURE
-
-Recommended architecture:
-
-```text
-Frontend
-   ↓
-REST APIs
-   ↓
-Business Logic Layer
-   ↓
-Database
-```
-
-Recommended:
-
-* JWT authentication
-* role middleware
-* branch middleware
-* audit middleware
-
----
-
-# 25. FRONTEND ARCHITECTURE
-
-Recommended:
-
-* Electron.js desktop app
-* React frontend
-* Socket.IO live sync
-
----
-
-# 26. USER PANEL PERFORMANCE RULES
-
-User panel MUST:
-
-* consume low RAM
-* consume low CPU
-* remain lightweight
-* avoid heavy animations
-
-because:
-
-# GAMING PERFORMANCE IS PRIORITY
-
----
-
-# 27. OFFLINE & BACKUP STRATEGY
-
-Highly recommended:
-
-* local caching
-* automatic sync recovery
-* daily backups
-* offline transaction queue
-
----
-
-# 28. PRODUCTION RULES
-
----
-
-# NEVER ALLOW
-
-* direct database edits
-* deleted transaction history
-* hidden cash modifications
-* reservation bypass without logs
-* dashboard permission bypass
-
----
-
-# ALWAYS REQUIRE
-
-* audit logging
-* timestamp tracking
-* role validation
-* backend verification
-* synchronization consistency
-
----
-
-# 29. FUTURE SCALABILITY FEATURES
-
-Recommended future modules:
-
-| Feature                    | Priority  |
-| -------------------------- | --------- |
-| GST Engine                 | Future    |
-| Tournament System          | Future    |
-| Steam Launcher Integration | Advanced  |
-| Hardware Control Layer     | Advanced  |
-| Mobile App                 | Future    |
-| LAN Discovery              | Advanced  |
-| Auto Backup Cloud Sync     | Important |
-
----
-
-# 30. FINAL SYSTEM PRINCIPLE
-
-This system is NOT:
-
-* simple billing software
-* simple timer software
-* basic cyber café app
-
-This system is:
-
-* enterprise gaming café ERP
-* real-time operations engine
-* multi-branch management platform
-* centralized session ecosystem
-* audit-safe financial system
-* operational governance platform
-
-This SOP defines the complete production architecture and operational standards of the Gaming Café Management System.
+</details>
