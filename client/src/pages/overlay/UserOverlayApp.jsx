@@ -48,22 +48,23 @@ function OverlayContent({ isMinimized, setIsMinimized }) {
     );
   }
 
-  // Full overlay mode (400x600 floating widget)
+  // Full overlay mode (Right Side Panel)
   return (
     <>
-      <div className="fixed bottom-4 right-4 w-[400px] h-[600px] flex flex-col bg-bg-2/95 backdrop-blur-xl border border-border/60 rounded-xl shadow-2xl shadow-black/80 z-50 overflow-hidden font-body text-text">
+      <div className="fixed top-0 right-0 w-[380px] h-screen flex flex-col bg-bg-2/95 backdrop-blur-xl border-l border-border/60 shadow-2xl shadow-black/80 z-50 overflow-hidden font-body text-text">
       
       {/* Header Strip */}
-      <div className="h-10 bg-black/40 border-b border-border/50 flex items-center justify-between px-4 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-neon-green animate-pulse shadow-[0_0_5px_#22d3a6]" />
-          <span className="font-heading font-bold text-sm tracking-widest uppercase text-accent">Apple Esports</span>
+      <div className="h-14 bg-black/40 border-b border-border/50 flex items-center justify-between px-5 shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="w-2.5 h-2.5 rounded-full bg-neon-green animate-pulse shadow-[0_0_8px_#22d3a6]" />
+          <span className="font-heading font-bold tracking-widest uppercase text-accent">Apple Esports</span>
         </div>
         <button 
           onClick={() => setIsMinimized(true)}
-          className="text-text-3 hover:text-white transition-colors"
+          className="text-text-3 hover:text-accent transition-colors p-1.5 hover:bg-accent/10 rounded-md"
+          title="Minimize Overlay"
         >
-          <Minimize2 className="w-4 h-4" />
+          <Minimize2 className="w-5 h-5" />
         </button>
       </div>
 

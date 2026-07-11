@@ -40,24 +40,19 @@ const AdminPcCard = ({ pc }) => {
 
   let borderClass = 'border-pc-idle/30 hover:border-pc-idle/50';
   let bgClass = 'bg-pc-idle/5';
-  let timeColor = 'text-pc-idle';
   
   if (isActive) {
     borderClass = 'border-pc-active/50';
     bgClass = 'bg-pc-active/10';
-    timeColor = 'text-pc-active';
   } else if (isAwaiting) {
     borderClass = 'border-neon-orange/50';
     bgClass = 'bg-neon-orange/10';
-    timeColor = 'text-neon-orange';
   } else if (isReserved) {
     borderClass = 'border-pc-reserved/50';
     bgClass = 'bg-pc-reserved/10';
-    timeColor = 'text-pc-reserved';
   } else if (isMaintenance) {
     borderClass = 'border-pc-offline/30';
     bgClass = 'bg-bg-2/60 opacity-75';
-    timeColor = 'text-pc-offline';
   }
 
   // Calculate live charge
@@ -72,30 +67,73 @@ const AdminPcCard = ({ pc }) => {
   }
 
   const showCharge = (isActive || isAwaiting) && liveCharge > 0;
-  const username = pc.customerName || pc.customerType || (isActive ? 'Walk-in' : '—');
   
-  let timeStr = '0h 0m';
-  if (isActive || isAwaiting) {
-    timeStr = elapsedText;
-  } else if (isReserved && pc.nextReservationTime) {
-    timeStr = new Date(pc.nextReservationTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  } else if (isMaintenance) {
-    timeStr = 'Maintenance';
-  } else if (!isIdle) {
-    timeStr = pc.state;
-  }
-
   return (
-    <div className={`rounded-xl border p-3 text-center transition-colors ${borderClass} ${bgClass}`}>
-      <div className="font-heading font-bold text-sm text-text tracking-wide">{pc.name}</div>
-      <div className="text-[11px] text-text-2 mt-1 truncate px-1">
-        {(isActive || isAwaiting || isReserved) ? username : '—'}
+    <div className={`rounded-xl border p-4 flex flex-col gap-3 transition-colors ${borderClass} ${bgClass}`}>
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className="font-heading font-bold text-sm tracking-wide text-text">{pc.name}</span>
+          {/* Agent Connectivity Indicator */}
+          {pc.isAgentOnline ? (
+            <span className={`w-2 h-2 rounded-full ${pc.connectionMode === 'Cloud' ? 'bg-neon-orange' : 'bg-pc-active'}`} title={`Agent Online (${pc.connectionMode})`} />
+          ) : (
+            <span className="w-2 h-2 rounded-full bg-pc-offline animate-pulse" title="Agent Offline" />
+          )}
+        </div>
+        
+        {isActive && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-active/50 text-pc-active rounded uppercase">ACTIVE</span>}
+        {isAwaiting && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-neon-orange/50 text-neon-orange rounded uppercase">AWAITING BILL</span>}
+        {isReserved && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-reserved/50 text-pc-reserved rounded uppercase">RESERVED</span>}
+        {isIdle && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-border text-text-3 rounded uppercase">FREE</span>}
+        {isMaintenance && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-offline/50 text-pc-offline rounded uppercase">MAINTENANCE</span>}
       </div>
-      <div className={`font-mono font-medium text-xs mt-1.5 ${timeColor}`}>
-        {timeStr}
-      </div>
-      <div className="text-[10px] text-text-3 mt-1 font-mono">
-        {showCharge ? `₹${liveCharge}` : '—'}
+
+      {/* Details Area */}
+      <div className="flex flex-col gap-1.5 text-xs">
+        {(isActive || isAwaiting) ? (
+          <>
+            <div className="flex justify-between items-center">
+              <span className="text-text-3 font-mono">User:</span>
+              <span className={`font-semibold ${pc.customerType === 'Member' ? 'text-neon-blue' : 'text-neon-orange'}`}>
+                {pc.customerName || (pc.customerType === 'Member' ? 'Member' : 'Walk-in')}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-text-3 font-mono">Time:</span>
+              <span className={`font-mono font-bold ${isActive ? 'text-pc-active' : 'text-neon-orange'}`}>
+                {elapsedText}
+              </span>
+            </div>
+            {showCharge && (
+              <div className="flex justify-between items-center">
+                <span className="text-text-3 font-mono">Accrued:</span>
+                <span className="font-mono font-bold text-text">
+                  ₹{liveCharge}
+                </span>
+              </div>
+            )}
+          </>
+        ) : isReserved ? (
+          <>
+            <div className="flex justify-between items-center">
+              <span className="text-text-3 font-mono">Reserved By:</span>
+              <span className="font-semibold text-pc-reserved">
+                {pc.customerName || '—'}
+              </span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-text-3 font-mono">Time:</span>
+              <span className="font-mono font-bold text-pc-reserved">
+                {pc.nextReservationTime ? new Date(pc.nextReservationTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+              </span>
+            </div>
+          </>
+        ) : (
+          <div className="flex flex-col items-center justify-center py-2 text-text-3 opacity-50">
+            <span className="font-mono">Ready for Session</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -146,15 +184,9 @@ export default function PcStatusPage() {
   // SignalR realtime PC state updates
   useEffect(() => {
     if (!connected || !activeBranch?.id) return;
-    const unsub = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (payload) => {
-      const updatedPc = payload.data || payload.Data || payload;
-      setPcs(current => {
-        const idx = current.findIndex(p => p.id === updatedPc.id);
-        if (idx === -1) return current;
-        const next = [...current];
-        next[idx] = { ...next[idx], ...updatedPc };
-        return next;
-      });
+    const unsub = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', () => {
+      console.log('[PcStatusPage] PcStatusChanged received. Refetching PCs...');
+      fetchPcs();
     });
     return () => unsub();
   }, [connected, subscribe, SIGNALR_HUBS.PC_STATUS, activeBranch?.id]);

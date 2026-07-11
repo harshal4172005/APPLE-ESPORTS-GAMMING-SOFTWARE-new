@@ -170,14 +170,8 @@ export default function SessionsPage() {
   useEffect(() => {
     if (!connected || !targetBranchId) return;
     const unsubPcStatus = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (payload) => {
-      const updatedPc = payload.data || payload.Data || payload;
-      setPcs(current => {
-        const idx = current.findIndex(p => p.id === updatedPc.id);
-        if (idx === -1) return current;
-        const next = [...current];
-        next[idx] = { ...next[idx], ...updatedPc };
-        return next;
-      });
+      console.log('[SessionsPage] PcStatusChanged received. Refetching PCs...');
+      fetchPcs();
     });
 
     // Immediate delivery via SignalR (polling above provides the fallback)

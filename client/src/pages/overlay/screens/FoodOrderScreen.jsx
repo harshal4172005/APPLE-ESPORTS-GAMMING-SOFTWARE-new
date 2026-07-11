@@ -63,6 +63,15 @@ export default function FoodOrderScreen() {
 
   const handleCheckout = async () => {
     if (cart.length === 0) return;
+    
+    if (sessionData?.memberLinked && sessionData?.foodBalance != null) {
+      const remainingFoodBalance = sessionData.foodBalance - (sessionData.foodCharges || 0);
+      if (cartTotal > remainingFoodBalance) {
+        setOrderError(`Insufficient Food Balance. You only have ₹${remainingFoodBalance.toFixed(2)} left. Please top up.`);
+        return;
+      }
+    }
+
     setIsSubmitting(true);
     
     const orderItems = cart.map(item => ({

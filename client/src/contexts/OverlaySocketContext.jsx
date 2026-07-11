@@ -105,6 +105,8 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
           memberId: d.memberId,
           memberLinked: !!d.memberId,
           walletBalance: d.walletBalance,
+          gamingBalance: d.gamingBalance,
+          foodBalance: d.foodBalance,
         });
       } else {
         // No active session found
@@ -458,16 +460,15 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
     if (!token) return { success: false, error: 'Not logged in' };
 
     try {
-      const response = await fetch(`http://localhost:5032/api/public/sessions/${sessionId}/member-checkout`, {
-        method: 'POST',
+      const response = await axios.post(`/api/public/sessions/${sessionId}/member-checkout`, {}, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
-      return await response.json();
+      return response.data;
     } catch (error) {
       console.error('Member checkout error:', error);
-      return { success: false, error: error.message };
+      return { success: false, error: error.response?.data?.error || error.message };
     }
   };
 

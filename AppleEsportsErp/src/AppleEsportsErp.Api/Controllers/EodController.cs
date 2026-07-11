@@ -113,7 +113,7 @@ public class EodController : ControllerBase
                 PaymentType = isCredit ? "Credit" : (b.PaymentType?.ToString() ?? "Unknown"),
                 AmountPaidInitially = credit != null ? credit.AmountPaidInitially : actualPaid,
                 CreditAmount = credit != null ? credit.CreditAmount : (isCredit ? Math.Max(0, b.TotalAmount - actualPaid) : 0),
-                CreditStatus = credit != null ? credit.Status : (isCredit ? "pending" : null), // Fallback to pending if it's a credit bill without a log
+                CreditStatus = isCredit ? "pending" : null,
                 SessionNotes = b.Session?.Notes,
                 SessionStartTime = b.Session != null ? b.Session.StartTime : (DateTimeOffset?)null,
                 SessionEndTime = b.Session != null ? b.Session.EndTime : (DateTimeOffset?)null,
@@ -129,9 +129,41 @@ public class EodController : ControllerBase
 
         var credits = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.CustomerCredit>()
             .Query()
+            .Include(c => c.Bill)
+            .Include(c => c.ClearedByOperator)
             .Where(c => c.BranchId == targetBranchId 
                      && ((c.CreatedAt >= startUtc && c.CreatedAt <= endUtc) || (c.ClearedAt >= startUtc && c.ClearedAt <= endUtc)))
             .ToListAsync();
+
+        var clearedPastCredits = credits
+            .Where(c => c.Status != null && c.Status.ToLower() == "cleared" && c.ClearedAt >= startUtc && c.ClearedAt <= endUtc)
+            .Select(c => new {
+                BillId = $"SETTLED-{(c.Bill != null ? c.Bill.BillNumber : "CREDIT")}",
+                Date = c.ClearedAt,
+                Operator = c.ClearedByOperator != null ? c.ClearedByOperator.FullName : "Unknown",
+                Customer = string.IsNullOrEmpty(c.CustomerName) ? "Walk-in" : c.CustomerName,
+                GamingRevenue = 0m,
+                FoodRevenue = 0m,
+                Discount = 0m,
+                TotalRevenue = c.CreditAmount,
+                PaymentType = "CREDIT SETTLED",
+                AmountPaidInitially = c.AmountPaidInitially,
+                CreditAmount = c.CreditAmount,
+                CreditStatus = "cleared",
+                SessionNotes = "Credit clearance payment for past session",
+                SessionStartTime = (DateTimeOffset?)null,
+                SessionEndTime = (DateTimeOffset?)null,
+                SessionDurationMinutes = 0d,
+                PcId = (Guid?)null,
+                PcName = c.PcNumber ?? "N/A"
+            })
+            .Cast<object>()
+            .ToList();
+
+        var allBillsList = allBills.Cast<object>().ToList();
+        var combinedBills = allBillsList.Concat(clearedPastCredits)
+            .OrderByDescending(b => ((dynamic)b).Date)
+            .ToList();
 
         var allCredits = credits.Select(c => new {
             CreditId = c.Id,
@@ -152,7 +184,7 @@ public class EodController : ControllerBase
             Daily = dailyReport,
             Monthly = monthlyReport,
             Discounts = discountAudit,
-            AllBills = allBills,
+            AllBills = combinedBills,
             AllCredits = allCredits
         }));
     }

@@ -21,6 +21,8 @@ export default function MemberPortalPage() {
   const [isPcsLoading, setIsPcsLoading] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
 
+  const [activeSession, setActiveSession] = useState(null);
+
   // Read member profile from localStorage (set during login)
   const storedProfile = JSON.parse(localStorage.getItem('memberProfile') || 'null');
   const memberToken = localStorage.getItem('memberToken');
@@ -32,7 +34,23 @@ export default function MemberPortalPage() {
     }
     setProfile(storedProfile);
     fetchBranches();
+    fetchActiveSession();
   }, []);
+
+  const fetchActiveSession = async () => {
+    try {
+      const res = await api.get('/public/sessions/active', {
+        headers: { Authorization: `Bearer ${memberToken}` }
+      });
+      if (res.data.success && res.data.data) {
+        setActiveSession(res.data.data);
+      } else {
+        setActiveSession(null);
+      }
+    } catch (err) {
+      console.error('Failed to load active session', err);
+    }
+  };
 
   const fetchBranches = async () => {
     try {
@@ -96,39 +114,71 @@ export default function MemberPortalPage() {
     }
   };
 
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
+
+  const handleEndActiveSession = async () => {
+    if (!activeSession) return;
+    setIsCheckingOut(true);
+    try {
+      const res = await api.post(`/public/sessions/${activeSession.sessionId}/member-checkout`, {}, {
+        headers: { Authorization: `Bearer ${memberToken}` }
+      });
+      if (res.data.success) {
+        toast.success('Session ended successfully. Amount deducted from wallet.');
+        setActiveSession(null);
+        // Refresh profile to get updated wallet balance
+        const profRes = await api.get('/auth/me'); // Assuming there's a me endpoint, otherwise we can just reload the page or fetch profile again.
+        if (profRes.data?.success) {
+          localStorage.setItem('memberProfile', JSON.stringify(profRes.data.data));
+          setProfile(profRes.data.data);
+        }
+      } else {
+        toast.error(res.data.error || 'Failed to end session');
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to end session');
+    } finally {
+      setIsCheckingOut(false);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('memberToken');
     localStorage.removeItem('memberProfile');
-    navigate('/');
+    navigate('/user/member-login');
   };
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-bg flex items-center justify-center text-accent animate-pulse font-heading text-2xl tracking-wider uppercase">
-        Loading Portal...
+      <div className="min-h-screen bg-bg text-text font-body flex items-center justify-center">
+        <div className="w-16 h-16 border-4 border-accent/20 border-t-accent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-bg relative overflow-x-hidden">
-      <div className="absolute inset-0 z-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-accent/10 via-bg to-bg pointer-events-none" />
+    <div className="min-h-screen bg-bg text-text font-body flex flex-col overflow-hidden relative">
+      <div className="absolute inset-0 bg-[url('/grid-pattern.svg')] bg-repeat opacity-5 pointer-events-none" />
+      <div className="absolute top-[-20%] left-[-10%] w-[50%] h-[50%] bg-accent/20 blur-[120px] rounded-full pointer-events-none" />
+      <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-neon-blue/10 blur-[120px] rounded-full pointer-events-none" />
 
-      {/* Header */}
-      <header className="relative z-10 bg-bg-2/80 backdrop-blur-xl border-b border-border/60 px-8 py-4 flex items-center justify-between shadow-lg">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-full bg-accent/20 flex items-center justify-center border border-accent/50 shadow-[0_0_10px_rgba(220,38,38,0.3)]">
-            <User className="w-6 h-6 text-accent" />
+      <header className="relative z-10 w-full px-8 py-4 bg-bg-2/80 backdrop-blur-md border-b border-border/50 flex items-center justify-between shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent to-accent-dark flex items-center justify-center shadow-[0_0_15px_rgba(255,51,102,0.4)]">
+            <User className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h1 className="font-heading text-2xl font-bold text-text tracking-wide uppercase">
-              {profile?.fullName || 'Member'}
+            <h1 className="font-heading text-lg font-bold tracking-wide uppercase text-text">
+              Welcome, <span className="text-accent">{profile?.fullName}</span>
             </h1>
-            <p className="text-text-2 font-mono text-sm">{profile?.memberNumber || 'MEM-0000'}</p>
+            <p className="text-xs text-text-3 font-body">Member Portal</p>
           </div>
         </div>
-        <button onClick={handleLogout} className="btn-danger flex items-center gap-2">
-          <LogOut className="w-4 h-4" />
+        <button 
+          onClick={handleLogout}
+          className="flex items-center gap-2 text-text-3 hover:text-neon-red transition-colors group"
+        >
+          <LogOut className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
           <span className="font-heading tracking-wide uppercase font-semibold">Logout</span>
         </button>
       </header>
@@ -176,69 +226,95 @@ export default function MemberPortalPage() {
           </div>
         </div>
 
-        {/* Right: Branch → PC selection */}
+        {/* Right: Branch → PC selection or Active Session */}
         <div className="lg:col-span-2 card bg-bg-2/80 backdrop-blur-xl border-border/60 shadow-xl shadow-black/50 p-6 flex flex-col">
-
-          {/* Step indicator */}
-          <div className="flex items-center gap-3 mb-6">
-            <StepDot active={step === 'branch'} done={step === 'pc'} label="Select Branch" n={1} />
-            <div className="flex-1 h-px bg-border" />
-            <StepDot active={step === 'pc'} done={false} label="Select PC" n={2} />
-          </div>
-
-          {/* STEP 1: Branch selection */}
-          {step === 'branch' && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1">
-              <h2 className="font-heading text-2xl font-bold text-text tracking-wide uppercase mb-2">Choose Branch</h2>
-              <p className="text-text-2 font-body mb-6">Select the branch you're visiting today.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {branches.map(branch => (
-                  <motion.div
-                    key={branch.id}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => handleSelectBranch(branch)}
-                    className="p-5 rounded-xl border border-border bg-bg-3 hover:border-accent hover:bg-accent/5 cursor-pointer transition-all flex items-center gap-4"
-                  >
-                    <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center border border-accent/30">
-                      <MapPin className="w-5 h-5 text-accent" />
-                    </div>
-                    <div>
-                      <p className="font-heading font-bold text-text tracking-wide">{branch.name}</p>
-                      {branch.address && <p className="text-text-3 text-xs font-body mt-0.5">{branch.address}</p>}
-                    </div>
-                  </motion.div>
-                ))}
-              </div>
-            </motion.div>
-          )}
-
-          {/* STEP 2: PC selection */}
-          {step === 'pc' && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="font-heading text-2xl font-bold text-text tracking-wide uppercase">Select PC</h2>
-                  <p className="text-text-2 font-body text-sm mt-1">
-                    Branch: <span className="text-accent font-semibold">{selectedBranch?.name}</span>
-                  </p>
-                </div>
+          {activeSession ? (
+            <div className="flex-1 flex flex-col items-center justify-center text-center p-8">
+              <MonitorPlay className="w-16 h-16 text-accent mb-4 animate-pulse" />
+              <h2 className="font-heading text-2xl font-bold text-text mb-2 tracking-wide uppercase">Active Session</h2>
+              <p className="text-text-2 font-body mb-8">
+                You currently have an active session on <span className="text-accent font-bold text-lg">{activeSession.pcName}</span>.
+              </p>
+              <div className="flex flex-col sm:flex-row gap-4 w-full justify-center">
                 <button
-                  onClick={() => { setStep('branch'); setSelectedPc(null); }}
-                  className="text-text-3 hover:text-text text-sm font-body underline"
+                  onClick={() => navigate(`/pc-overlay/${activeSession.pcId}`)}
+                  className="px-8 py-3 rounded-xl bg-bg-3 border border-border text-text hover:bg-bg-3/80 transition-colors font-heading font-bold uppercase tracking-wider text-sm flex items-center justify-center gap-2"
                 >
-                  Change branch
+                  <MonitorPlay className="w-4 h-4" />
+                  Return to PC Overlay
+                </button>
+                <button
+                  onClick={handleEndActiveSession}
+                  disabled={isCheckingOut}
+                  className="px-8 py-3 rounded-xl bg-neon-red/10 border border-neon-red/30 text-neon-red hover:bg-neon-red/20 transition-colors font-heading font-bold uppercase tracking-wider text-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isCheckingOut ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+                  Logout of PC & Pay
                 </button>
               </div>
+            </div>
+          ) : (
+            <>
+              {/* Step indicator */}
+              <div className="flex items-center gap-3 mb-6">
+                <StepDot active={step === 'branch'} done={step === 'pc'} label="Select Branch" n={1} />
+                <div className="flex-1 h-px bg-border" />
+                <StepDot active={step === 'pc'} done={false} label="Select PC" n={2} />
+              </div>
 
-              {isPcsLoading ? (
-                <div className="flex-1 flex items-center justify-center">
-                  <Loader2 className="w-8 h-8 text-accent animate-spin" />
-                </div>
-              ) : (
-                <>
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-6 overflow-y-auto pr-1 flex-1 max-h-[400px] scrollbar-thin">
-                    {idlePcs.map(pc => (
+              {/* STEP 1: Branch selection */}
+              {step === 'branch' && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1">
+                  <h2 className="font-heading text-2xl font-bold text-text tracking-wide uppercase mb-2">Choose Branch</h2>
+                  <p className="text-text-2 font-body mb-6">Select the branch you're visiting today.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    {branches.map(branch => (
+                      <motion.div
+                        key={branch.id}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.97 }}
+                        onClick={() => handleSelectBranch(branch)}
+                        className="p-5 rounded-xl border border-border bg-bg-3 hover:border-accent hover:bg-accent/5 cursor-pointer transition-all flex items-center gap-4"
+                      >
+                        <div className="w-10 h-10 bg-accent/10 rounded-lg flex items-center justify-center border border-accent/30">
+                          <MapPin className="w-5 h-5 text-accent" />
+                        </div>
+                        <div>
+                          <p className="font-heading font-bold text-text tracking-wide">{branch.name}</p>
+                          {branch.address && <p className="text-text-3 text-xs font-body mt-0.5">{branch.address}</p>}
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </motion.div>
+              )}
+
+              {/* STEP 2: PC selection */}
+              {step === 'pc' && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex-1 flex flex-col">
+                  <div className="flex items-center justify-between mb-4">
+                    <div>
+                      <h2 className="font-heading text-2xl font-bold text-text tracking-wide uppercase">Select PC</h2>
+                      <p className="text-text-2 font-body text-sm mt-1">
+                        Branch: <span className="text-accent font-semibold">{selectedBranch?.name}</span>
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => { setStep('branch'); setSelectedPc(null); }}
+                      className="text-text-3 hover:text-text text-sm font-body underline"
+                    >
+                      Change branch
+                    </button>
+                  </div>
+
+                  {isPcsLoading ? (
+                    <div className="flex-1 flex items-center justify-center">
+                      <Loader2 className="w-8 h-8 text-accent animate-spin" />
+                    </div>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-6 overflow-y-auto pr-1 flex-1 max-h-[400px] scrollbar-thin">
+                        {idlePcs.map(pc => (
                       <motion.div
                         key={pc.id}
                         whileHover={{ scale: 1.05 }}
@@ -294,7 +370,9 @@ export default function MemberPortalPage() {
                   </AnimatePresence>
                 </>
               )}
-            </motion.div>
+                </motion.div>
+              )}
+            </>
           )}
         </div>
       </main>

@@ -15,38 +15,39 @@ export default function SessionInfoScreen() {
     return () => clearInterval(interval);
   }, []);
 
-  const liveBill = React.useMemo(() => {
-    if (!sessionData) return 0;
+  const { liveGamingCharge, liveTotalBill } = React.useMemo(() => {
+    if (!sessionData) return { liveGamingCharge: 0, liveTotalBill: 0 };
     const isPayAsYouGo = !sessionData.plannedDurationMin || sessionData.plannedDurationMin === 0;
     if (isPayAsYouGo) {
       const elapsedSeconds = Math.max(0, Math.floor((now - new Date(sessionData.sessionStart).getTime()) / 1000));
       const elapsedMin = elapsedSeconds / 60;
       const ratePerHour = sessionData.ratePerHour || 100;
       const hours = Math.max(elapsedMin / 60, 1 / 60);
-      const liveGamingCharge = Number((hours * ratePerHour).toFixed(2));
-      return (sessionData.foodCharges || 0) + liveGamingCharge;
+      const gaming = Number((hours * ratePerHour).toFixed(2));
+      return { liveGamingCharge: gaming, liveTotalBill: (sessionData.foodCharges || 0) + gaming };
     }
-    return sessionData.totalBill || 0;
+    return { liveGamingCharge: sessionData.gamingCharges || 0, liveTotalBill: sessionData.totalBill || 0 };
   }, [sessionData, now]);
 
   useEffect(() => {
-    if (sessionData?.memberLinked && sessionData?.walletBalance != null) {
-      if (liveBill >= sessionData.walletBalance && !isCheckingOut && !checkoutLoading) {
+    if (sessionData?.memberLinked && sessionData?.gamingBalance != null) {
+      // Auto-close ONLY if gaming balance is exhausted
+      if (liveGamingCharge >= sessionData.gamingBalance && !isCheckingOut && !checkoutLoading) {
         setIsCheckingOut(true);
         setCheckoutLoading(true);
-        setCheckoutError("You have no balance left. Please recharge!");
+        setCheckoutError("Gaming Balance exhausted! Session ended.");
         localStorage.setItem('walletEmptyAlert', 'true');
         
         memberCheckout(sessionData.sessionId).then(res => {
           if (!res?.success) {
-            setCheckoutError(`You have no balance left. Please recharge! (${res?.error || 'Failed to checkout'})`);
+            setCheckoutError(`Gaming Balance exhausted! (${res?.error || 'Failed to checkout'})`);
             setCheckoutLoading(false);
             setTimeout(() => window.location.reload(), 3000);
           }
         });
       }
     }
-  }, [liveBill, sessionData, isCheckingOut, checkoutLoading, memberCheckout]);
+  }, [liveGamingCharge, sessionData, isCheckingOut, checkoutLoading, memberCheckout]);
 
   const formatTime = (seconds) => {
     if (seconds <= 0) return '00:00:00';
@@ -143,17 +144,42 @@ export default function SessionInfoScreen() {
           {sessionData.memberLinked && !isCheckingOut && (
             <button 
               onClick={() => setIsCheckingOut(true)}
-              className="bg-neon-red/10 hover:bg-neon-red/20 border border-neon-red/30 p-3 rounded-xl transition-colors shadow-inner flex items-center gap-2 group"
+              className="bg-neon-red/10 hover:bg-neon-red/20 border border-neon-red/30 p-2 sm:p-3 rounded-xl transition-colors shadow-inner flex items-center gap-2 group"
             >
               <LogOut className="w-5 h-5 text-neon-red group-hover:scale-110 transition-transform" />
               <span className="text-neon-red font-heading uppercase text-sm font-bold tracking-widest hidden sm:inline-block">Logout</span>
             </button>
           )}
-          <div className="bg-bg-3 p-3 rounded-xl border border-border shadow-inner">
-            <User className="w-6 h-6 text-accent" />
-          </div>
+          {!sessionData.memberLinked && (
+            <div className="bg-bg-3 p-3 rounded-xl border border-border shadow-inner flex items-center justify-center">
+              <User className="w-5 h-5 text-accent" />
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Member Profile Block (Full Width) */}
+      {sessionData.memberLinked && (
+        <div className="bg-bg-3 border border-border p-4 rounded-xl shadow-inner flex flex-col gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <div className="bg-accent/10 p-2 rounded-lg">
+              <User className="w-6 h-6 text-accent" />
+            </div>
+            <span className="text-text font-heading uppercase text-lg font-bold tracking-widest">{sessionData.customerName}</span>
+          </div>
+          <div className="h-px w-full bg-border"></div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col bg-bg-2 p-3 rounded-lg border border-border/50">
+              <span className="text-text-3 text-[11px] uppercase tracking-wider font-bold mb-1">Gaming Balance</span>
+              <span className="text-neon-green font-mono font-bold text-lg">₹{Math.max(0, (sessionData.gamingBalance || 0) - liveGamingCharge).toFixed(2)}</span>
+            </div>
+            <div className="flex flex-col bg-bg-2 p-3 rounded-lg border border-border/50">
+              <span className="text-text-3 text-[11px] uppercase tracking-wider font-bold mb-1">Food Balance</span>
+              <span className="text-neon-orange font-mono font-bold text-lg">₹{Math.max(0, (sessionData.foodBalance || 0) - (sessionData.foodCharges || 0)).toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {isCheckingOut ? (
         <div className="flex-1 flex flex-col items-center justify-center animate-in fade-in zoom-in duration-300">
@@ -171,7 +197,7 @@ export default function SessionInfoScreen() {
             <div className="space-y-4 mb-8">
               <div className="flex justify-between items-center p-3 rounded-lg bg-bg-2 border border-border">
                 <span className="text-text-2 font-body">Gaming Charges</span>
-                <span className="text-text font-mono font-bold">₹{(sessionData.gamingCharges || liveBill - (sessionData.foodCharges || 0)).toFixed(2)}</span>
+                <span className="text-text font-mono font-bold">₹{(liveGamingCharge).toFixed(2)}</span>
               </div>
               <div className="flex justify-between items-center p-3 rounded-lg bg-bg-2 border border-border">
                 <span className="text-text-2 font-body">Food Orders</span>
@@ -179,7 +205,7 @@ export default function SessionInfoScreen() {
               </div>
               <div className="flex justify-between items-center p-4 rounded-xl bg-accent/5 border border-accent/20 mt-4">
                 <span className="text-accent font-heading font-bold uppercase tracking-wider">Grand Total</span>
-                <span className="text-accent font-mono text-2xl font-bold">₹{liveBill.toFixed(2)}</span>
+                <span className="text-accent font-mono text-2xl font-bold">₹{liveTotalBill.toFixed(2)}</span>
               </div>
             </div>
 
@@ -240,7 +266,7 @@ export default function SessionInfoScreen() {
             <IndianRupee className="w-4 h-4 text-text-2" />
           </div>
           <div className="font-mono text-2xl font-bold text-text">
-            ₹{liveBill.toFixed(2)}
+            ₹{liveTotalBill.toFixed(2)}
           </div>
         </div>
 

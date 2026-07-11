@@ -138,12 +138,16 @@ public class PublicController : ControllerBase
         }
 
         decimal? walletBalance = null;
+        decimal? gamingBalance = null;
+        decimal? foodBalance = null;
         if (session.MemberId.HasValue)
         {
             var member = await _db.Members.FirstOrDefaultAsync(m => m.Id == session.MemberId.Value);
             if (member != null)
             {
                 walletBalance = member.GamingBalance + member.FoodBalance;
+                gamingBalance = member.GamingBalance;
+                foodBalance = member.FoodBalance;
             }
         }
 
@@ -167,7 +171,9 @@ public class PublicController : ControllerBase
             totalBill = session.GamingAmount + foodCharges,
             sessionStatus = session.State.ToString().ToLowerInvariant(),
             memberId = session.MemberId?.ToString(),
-            walletBalance = walletBalance
+            walletBalance = walletBalance,
+            gamingBalance = gamingBalance,
+            foodBalance = foodBalance
         };
 
         return Ok(ApiResponse<object>.Ok(result));
@@ -357,6 +363,24 @@ public class PublicController : ControllerBase
         return Ok(ApiResponse<SessionDto>.Ok(result));
     }
 
+    [HttpGet("sessions/active")]
+    [Authorize]
+    public async Task<IActionResult> GetActiveMemberSession()
+    {
+        var memberIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (string.IsNullOrEmpty(memberIdStr) || !Guid.TryParse(memberIdStr, out var memberId))
+            return Unauthorized(new { success = false, error = "Invalid Member token." });
+
+        var session = await _db.Sessions
+            .Include(s => s.Pc)
+            .FirstOrDefaultAsync(s => s.MemberId == memberId && s.State == AppleEsportsErp.Domain.Enums.SessionState.Active);
+
+        if (session == null)
+            return Ok(new { success = true, data = (object)null });
+
+        return Ok(new { success = true, data = new { sessionId = session.Id, pcId = session.PcId, pcName = session.Pc?.PcName ?? session.Pc?.PcNumber, startTime = session.StartTime } });
+    }
+
     [HttpPost("sessions/{sessionId:guid}/member-checkout")]
     [Authorize] // Requires valid MemberToken
     public async Task<IActionResult> MemberCheckout(
@@ -419,7 +443,11 @@ public class PublicController : ControllerBase
         var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.Id == sessionResult.PcId);
         if (pc != null)
         {
-            await pcStatusHub.Clients.All.SendAsync("PcStatusUpdated", new { id = pc.Id, state = pc.State.ToString() });
+            var hubNotifier = HttpContext.RequestServices.GetService<AppleEsportsErp.Application.Interfaces.IHubNotificationService>();
+            if (hubNotifier != null)
+            {
+                await hubNotifier.BroadcastPcStatusChangeAsync(branchId, pc.Id);
+            }
         }
 
         // Notify overlay so it goes to idle screen
@@ -451,6 +479,22 @@ public class PublicController : ControllerBase
             
             // Notify operator dashboard that it was approved
             await billingHub.Clients.Group($"branch:{pending.BranchId}").SendAsync("WalletApprovalApproved", new { billId });
+            
+            // Broadcast PC Idle status using standard hub notification service
+            if (bill.PcId.HasValue)
+            {
+                var hubNotifier = HttpContext.RequestServices.GetService<AppleEsportsErp.Application.Interfaces.IHubNotificationService>();
+                if (hubNotifier != null)
+                {
+                    await hubNotifier.BroadcastPcStatusChangeAsync(pending.BranchId, bill.PcId.Value);
+                }
+
+                var overlayHub = HttpContext.RequestServices.GetService<Microsoft.AspNetCore.SignalR.IHubContext<AppleEsportsErp.Api.Hubs.PcOverlayHub>>();
+                if (overlayHub != null)
+                {
+                    await overlayHub.Clients.Group($"pc:{bill.PcId.Value}").SendAsync("PcStatusChanged", new { State = "Idle" });
+                }
+            }
             
             return Ok(new { success = true, data = bill });
         }
