@@ -492,9 +492,7 @@ export default function ReservationsPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
-                  {branchPlans
-                    .filter(plan => form.reservationType === 'member' || !plan.isPostpaid)
-                    .map(plan => {
+                  {branchPlans.map(plan => {
                     const isSelected = form.durationMin === plan.duration && form.selectedTier === plan.tier;
                     return (
                       <button
