@@ -217,47 +217,17 @@ public class PublicController : ControllerBase
         Domain.Entities.Pc? pc = null;
         if (Guid.TryParse(pcId, out var pcGuid))
         {
-            pc = await _db.Pcs.FirstOrDefaultAsync(p => p.Id == pcGuid);
+            pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.Id == pcGuid);
         }
         else
         {
-            pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == pcId || p.PcName == pcId);
+            pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.PcNumber == pcId || p.PcName == pcId);
         }
 
         if (pc == null)
             return Ok(new { success = false, error = "PC not found" });
 
-        var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
-        decimal defaultBaseRate = 100m;
-        Dictionary<string, decimal> hzPricing = new();
-        if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(globalConfig.ConfigValue);
-                if (doc.RootElement.TryGetProperty("pricing", out var pricing))
-                {
-                    if (pricing.TryGetProperty("baseRate", out var br))
-                        defaultBaseRate = br.GetDecimal();
-                        
-                    if (pricing.TryGetProperty("hzPricing", out var hzObj))
-                    {
-                        foreach (var prop in hzObj.EnumerateObject())
-                        {
-                            if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
-                                hzPricing[prop.Name] = prop.Value.GetDecimal();
-                        }
-                    }
-                }
-            }
-            catch { /* fallback */ }
-        }
-
-        decimal ratePerHour = defaultBaseRate;
-        if (!string.IsNullOrEmpty(pc.MonitorHz) && hzPricing.TryGetValue(pc.MonitorHz, out var hrRate))
-        {
-            ratePerHour = hrRate;
-        }
+        decimal ratePerHour = GetRateForBranchAndTier(pc.Branch?.Name ?? "", pc.MonitorHz ?? "");
 
         var plans = new List<object>();
         string planName = string.IsNullOrEmpty(pc.MonitorHz) ? "Standard" : $"{pc.MonitorHz}Hz Tier";
@@ -265,9 +235,43 @@ public class PublicController : ControllerBase
         plans.Add(new { id = Guid.NewGuid(), name = $"1 Hour ({planName})", duration = 60, price = ratePerHour, isPostpaid = false });
         plans.Add(new { id = Guid.NewGuid(), name = $"2 Hours ({planName})", duration = 120, price = ratePerHour * 2, isPostpaid = false });
         plans.Add(new { id = Guid.NewGuid(), name = $"3 Hours ({planName})", duration = 180, price = ratePerHour * 3, isPostpaid = false });
-        plans.Add(new { id = Guid.NewGuid(), name = $"Postpaid ({planName})", duration = 0, price = 0, isPostpaid = true });
+        plans.Add(new { id = Guid.NewGuid(), name = $"Postpaid ({planName})", duration = 0, price = 0m, isPostpaid = true });
 
         return Ok(ApiResponse<object>.Ok(plans));
+    }
+
+    private decimal GetRateForBranchAndTier(string branchName, string monitorHz)
+    {
+        branchName = branchName?.Trim().ToLowerInvariant() ?? "";
+        monitorHz = monitorHz?.Trim().ToLowerInvariant() ?? "";
+
+        if (branchName.Contains("adajan"))
+        {
+            if (monitorHz == "240hz") return 60m;
+            return 60m;
+        }
+        if (branchName.Contains("citylight"))
+        {
+            if (monitorHz == "144hz") return 50m;
+            if (monitorHz == "240hz") return 60m;
+            return 50m;
+        }
+        if (branchName.Contains("katargam"))
+        {
+            if (monitorHz == "165hz") return 60m;
+            if (monitorHz == "240hz") return 70m;
+            if (monitorHz == "360hz") return 80m;
+            return 60m;
+        }
+        if (branchName.Contains("varachha"))
+        {
+            if (monitorHz == "240hz") return 80m;
+            if (monitorHz == "400hz") return 90m;
+            if (monitorHz == "4k oled") return 100m;
+            return 80m;
+        }
+        
+        return 100m; 
     }
 
     [HttpGet("branches/{branchId}/plans")]
@@ -280,33 +284,6 @@ public class PublicController : ControllerBase
         if (branch == null)
             return Ok(new { success = false, error = "Branch not found" });
 
-        var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
-        decimal defaultBaseRate = 100m;
-        Dictionary<string, decimal> hzPricing = new();
-        if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
-        {
-            try
-            {
-                using var doc = System.Text.Json.JsonDocument.Parse(globalConfig.ConfigValue);
-                if (doc.RootElement.TryGetProperty("pricing", out var pricing))
-                {
-                    if (pricing.TryGetProperty("baseRate", out var br))
-                        defaultBaseRate = br.GetDecimal();
-                        
-                    if (pricing.TryGetProperty("hzPricing", out var hzObj))
-                    {
-                        foreach (var prop in hzObj.EnumerateObject())
-                        {
-                            if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
-                                hzPricing[prop.Name] = prop.Value.GetDecimal();
-                        }
-                    }
-                }
-            }
-            catch { /* fallback */ }
-        }
-
-        // Determine unique tiers in the branch
         var uniqueTiers = branch.Pcs
             .Where(p => p.IsActive && !p.IsDeleted)
             .Select(p => string.IsNullOrWhiteSpace(p.MonitorHz) ? "Standard" : p.MonitorHz)
@@ -322,18 +299,14 @@ public class PublicController : ControllerBase
 
         foreach (var tier in uniqueTiers)
         {
-            decimal ratePerHour = defaultBaseRate;
+            decimal ratePerHour = GetRateForBranchAndTier(branch.Name, tier);
             string planNameTier = tier == "Standard" ? "Standard Tier" : $"{tier}Hz Tier";
             string monitorHzVal = tier == "Standard" ? "" : tier;
 
-            if (tier != "Standard" && hzPricing.TryGetValue(tier, out var hrRate))
-            {
-                ratePerHour = hrRate;
-            }
-
-            plans.Add(new { id = Guid.NewGuid(), name = $"1 Hour ({planNameTier})", duration = 60, price = ratePerHour, tier = monitorHzVal, tierLabel = planNameTier });
-            plans.Add(new { id = Guid.NewGuid(), name = $"2 Hours ({planNameTier})", duration = 120, price = ratePerHour * 2, tier = monitorHzVal, tierLabel = planNameTier });
-            plans.Add(new { id = Guid.NewGuid(), name = $"3 Hours ({planNameTier})", duration = 180, price = ratePerHour * 3, tier = monitorHzVal, tierLabel = planNameTier });
+            plans.Add(new { id = Guid.NewGuid(), name = $"1 Hour ({planNameTier})", duration = 60, price = ratePerHour, tier = monitorHzVal, tierLabel = planNameTier, isPostpaid = false });
+            plans.Add(new { id = Guid.NewGuid(), name = $"2 Hours ({planNameTier})", duration = 120, price = ratePerHour * 2, tier = monitorHzVal, tierLabel = planNameTier, isPostpaid = false });
+            plans.Add(new { id = Guid.NewGuid(), name = $"3 Hours ({planNameTier})", duration = 180, price = ratePerHour * 3, tier = monitorHzVal, tierLabel = planNameTier, isPostpaid = false });
+            plans.Add(new { id = Guid.NewGuid(), name = $"Postpaid ({planNameTier})", duration = 0, price = 0m, tier = monitorHzVal, tierLabel = planNameTier, isPostpaid = true });
         }
 
         return Ok(ApiResponse<object>.Ok(plans));

@@ -492,7 +492,9 @@ export default function ReservationsPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
-                  {branchPlans.map(plan => {
+                  {branchPlans
+                    .filter(plan => form.reservationType === 'member' || !plan.isPostpaid)
+                    .map(plan => {
                     const isSelected = form.durationMin === plan.duration && form.selectedTier === plan.tier;
                     return (
                       <button
@@ -514,6 +516,7 @@ export default function ReservationsPage() {
                       >
                         <span className="font-mono font-bold text-[10px] text-center">{plan.name}</span>
                         {plan.price > 0 && <span className="text-[10px] text-accent">₹{plan.price}</span>}
+                        {plan.isPostpaid && <span className="text-[9px] text-accent">Pay as you go</span>}
                       </button>
                     );
                   })}
