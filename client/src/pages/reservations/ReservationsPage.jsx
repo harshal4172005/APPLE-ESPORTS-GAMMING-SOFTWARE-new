@@ -464,59 +464,76 @@ export default function ReservationsPage() {
               </div>
             </div>
 
-            {/* Duration and Advance Deposit */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-text-3" /> Select Plan
-                </label>
-                <select
-                  value={form.durationMin + '|' + form.selectedTier}
-                  onChange={e => {
-                    const [dur, tier] = e.target.value.split('|');
-                    const plan = branchPlans.find(p => p.duration === Number(dur) && p.tier === tier);
-                    setForm(f => ({ 
-                      ...f, 
-                      durationMin: Number(dur), 
-                      selectedTier: tier,
-                      advanceDeposit: plan ? plan.price : f.advanceDeposit
-                    }));
-                  }}
-                  className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none"
-                >
-                  {branchPlans.length > 0 ? (
-                    Array.from(new Set(branchPlans.map(p => p.tierLabel))).map(tierLabel => (
-                      <optgroup key={tierLabel} label={tierLabel}>
-                        {branchPlans.filter(p => p.tierLabel === tierLabel).map(plan => (
-                          <option key={plan.id} value={`${plan.duration}|${plan.tier}`}>
-                            {plan.name} - ₹{plan.price}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))
-                  ) : (
-                    // Fallback if plans haven't loaded
-                    [30, 60, 120, 180, 240, 360, 480].map(d => (
-                      <option key={d} value={`${d}|`}>
+            {/* Select Plan */}
+            <div className="space-y-2">
+              <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
+                <Clock className="w-3 h-3 text-text-3" /> Select Plan
+              </label>
+              
+              {branchPlans.length === 0 ? (
+                <div className="grid grid-cols-2 gap-2">
+                  {/* Fallback if plans haven't loaded */}
+                  {[30, 60, 120, 180, 240, 360, 480].map(d => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setForm(f => ({ ...f, durationMin: d, selectedTier: '' }))}
+                      className={`p-2 rounded border transition-all flex flex-col items-center justify-center gap-1 ${
+                        form.durationMin === d && !form.selectedTier
+                          ? 'bg-neon-purple/20 border-neon-purple text-text shadow-[0_0_10px_rgba(168,85,247,0.2)]' 
+                          : 'bg-bg-3 border-border hover:border-text-3 text-text-2'
+                      }`}
+                    >
+                      <span className="font-mono font-bold text-[10px] text-center">
                         {d < 60 ? `${d} Mins` : d % 60 === 0 ? `${d / 60} Hour${d / 60 > 1 ? 's' : ''}` : `${Math.floor(d / 60)}h ${d % 60}m`}
-                      </option>
-                    ))
-                  )}
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
-                  <IndianRupee className="w-3 h-3 text-text-3" /> Deposit (₹)
-                </label>
-                <input
-                  type="number"
-                  placeholder="0.00"
-                  min="0"
-                  value={form.advanceDeposit || ''}
-                  onChange={e => setForm(f => ({ ...f, advanceDeposit: parseFloat(e.target.value) || 0 }))}
-                  className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none"
-                />
-              </div>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                  {branchPlans.map(plan => {
+                    const isSelected = form.durationMin === plan.duration && form.selectedTier === plan.tier;
+                    return (
+                      <button
+                        key={plan.id}
+                        type="button"
+                        onClick={() => {
+                          setForm(f => ({
+                            ...f,
+                            durationMin: plan.duration,
+                            selectedTier: plan.tier,
+                            advanceDeposit: plan.price
+                          }));
+                        }}
+                        className={`p-2 rounded border transition-all flex flex-col items-center justify-center gap-1 ${
+                          isSelected 
+                            ? 'bg-neon-purple/20 border-neon-purple text-text shadow-[0_0_10px_rgba(168,85,247,0.2)]' 
+                            : 'bg-bg-3 border-border hover:border-text-3 text-text-2'
+                        }`}
+                      >
+                        <span className="font-mono font-bold text-[10px] text-center">{plan.name}</span>
+                        {plan.price > 0 && <span className="text-[10px] text-accent">₹{plan.price}</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Advance Deposit */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
+                <IndianRupee className="w-3 h-3 text-text-3" /> Deposit (₹)
+              </label>
+              <input
+                type="number"
+                placeholder="0.00"
+                min="0"
+                value={form.advanceDeposit || ''}
+                onChange={e => setForm(f => ({ ...f, advanceDeposit: parseFloat(e.target.value) || 0 }))}
+                className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none"
+              />
             </div>
 
             {/* Grace Period */}
