@@ -495,8 +495,8 @@ export default function ReservationsPage() {
                       </optgroup>
                     ))
                   ) : (
-                    // Fallback to configured durations if plans haven't loaded
-                    configuredDurations.map(d => (
+                    // Fallback if plans haven't loaded
+                    [30, 60, 120, 180, 240, 360, 480].map(d => (
                       <option key={d} value={`${d}|`}>
                         {d < 60 ? `${d} Mins` : d % 60 === 0 ? `${d / 60} Hour${d / 60 > 1 ? 's' : ''}` : `${Math.floor(d / 60)}h ${d % 60}m`}
                       </option>
