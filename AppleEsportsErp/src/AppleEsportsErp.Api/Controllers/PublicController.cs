@@ -318,17 +318,6 @@ public class PublicController : ControllerBase
             uniqueTiers.Add("Standard");
         }
 
-        // Parse branch durations
-        List<int> durations = new List<int> { 30, 60, 120, 180, 240, 360, 480 };
-        if (!string.IsNullOrEmpty(branch.ConfiguredReservationDurations))
-        {
-            var parsed = branch.ConfiguredReservationDurations.Split(',')
-                .Select(d => int.TryParse(d.Trim(), out var val) ? val : 0)
-                .Where(v => v > 0)
-                .ToList();
-            if (parsed.Any()) durations = parsed;
-        }
-
         var plans = new List<object>();
 
         foreach (var tier in uniqueTiers)
@@ -342,20 +331,9 @@ public class PublicController : ControllerBase
                 ratePerHour = hrRate;
             }
 
-            foreach (var d in durations)
-            {
-                decimal price = ratePerHour * (d / 60m);
-                string dLabel = d < 60 ? $"{d} Mins" : d % 60 == 0 ? $"{d / 60} Hour{(d / 60 > 1 ? "s" : "")}" : $"{d / 60}h {d % 60}m";
-                
-                plans.Add(new {
-                    id = Guid.NewGuid(),
-                    name = $"{dLabel} ({planNameTier})",
-                    duration = d,
-                    price = price,
-                    tier = monitorHzVal,
-                    tierLabel = planNameTier
-                });
-            }
+            plans.Add(new { id = Guid.NewGuid(), name = $"1 Hour ({planNameTier})", duration = 60, price = ratePerHour, tier = monitorHzVal, tierLabel = planNameTier });
+            plans.Add(new { id = Guid.NewGuid(), name = $"2 Hours ({planNameTier})", duration = 120, price = ratePerHour * 2, tier = monitorHzVal, tierLabel = planNameTier });
+            plans.Add(new { id = Guid.NewGuid(), name = $"3 Hours ({planNameTier})", duration = 180, price = ratePerHour * 3, tier = monitorHzVal, tierLabel = planNameTier });
         }
 
         return Ok(ApiResponse<object>.Ok(plans));
