@@ -22,7 +22,11 @@ public class MembersController : ControllerBase
         _memberService = memberService;
     }
 
-    private Guid GetBranchId() => Guid.Parse(HttpContext.Items["BranchId"]!.ToString()!);
+    private Guid GetBranchId() 
+    {
+        var val = HttpContext.Items["BranchId"]?.ToString();
+        return string.IsNullOrEmpty(val) ? Guid.Empty : Guid.Parse(val);
+    }
 
     [HttpGet]
     public async Task<IActionResult> GetMembers([FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)

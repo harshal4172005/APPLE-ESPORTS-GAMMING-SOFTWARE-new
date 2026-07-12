@@ -705,9 +705,14 @@ function MemberRow({ member, selected, onClick }) {
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-bold text-text text-sm truncate leading-tight">{member.fullName}</p>
-          <div className="text-[10px] text-text-3 font-mono mt-0.5 truncate">
-            {member.memberNumber} · {member.mobileNumber}
+          <div className="text-[10px] text-text-3 font-mono mt-0.5 flex flex-wrap items-center gap-1">
+            <span>{member.memberNumber} · {member.mobileNumber}</span>
             {member.username && <span className="text-neon-blue"> · @{member.username}</span>}
+            {member.homeBranchName && (
+              <span className="bg-neon-blue/20 text-neon-blue border border-neon-blue/40 rounded px-1.5 py-0.5 ml-auto shrink-0 truncate max-w-[120px] text-[10px] uppercase tracking-wider font-bold">
+                HOME: {member.homeBranchName}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 mt-1">
             <span className="inline-flex items-center gap-0.5 font-mono text-[11px] font-bold text-neon-blue">
@@ -745,7 +750,7 @@ export default function MembersPage() {
   const searchTimer = useRef(null);
 
   const fetchMembers = useCallback(async (pg = 1, q = search) => {
-    if (isSuperAdmin && !targetBranchId) { setIsLoading(false); return; }
+    // Global fetch allowed for members
     setIsLoading(true);
     try {
       const res = await getMembers(targetBranchId, q || undefined, pg, 100);

@@ -474,7 +474,8 @@ public class BranchesController : ControllerBase
             OpeningTime = b.OpeningTime.ToString("HH:mm"),
             ClosingTime = b.ClosingTime.ToString("HH:mm"),
             Status = b.Status.ToString(),
-            CreatedAt = b.CreatedAt
+            CreatedAt = b.CreatedAt,
+            ConfiguredReservationDurations = b.ConfiguredReservationDurations
         });
 
         return Ok(AppleEsportsErp.Application.DTOs.Common.ApiResponse<object>.Ok(dtos));
@@ -492,7 +493,8 @@ public class BranchesController : ControllerBase
             ClosingTime = TimeOnly.Parse(dto.ClosingTime),
             Status = AppleEsportsErp.Domain.Enums.BranchStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
+            UpdatedAt = DateTimeOffset.UtcNow,
+            ConfiguredReservationDurations = dto.ConfiguredReservationDurations
         };
 
         await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.Branch>().AddAsync(branch);
@@ -511,6 +513,7 @@ public class BranchesController : ControllerBase
         branch.Address = dto.Address;
         branch.OpeningTime = TimeOnly.Parse(dto.OpeningTime);
         branch.ClosingTime = TimeOnly.Parse(dto.ClosingTime);
+        branch.ConfiguredReservationDurations = dto.ConfiguredReservationDurations;
         branch.UpdatedAt = DateTimeOffset.UtcNow;
 
         _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.Branch>().Update(branch);

@@ -275,6 +275,7 @@ public class BillingService : IBillingService
                     BranchId = branchId,
                     OperatorId = operatorId,
                     PcNumber = bill.Pc?.PcNumber,
+                    CustomerName = !string.IsNullOrWhiteSpace(dto.CustomerName) ? dto.CustomerName : (bill.CustomerName ?? bill.Member?.Username ?? "Walk-in"),
                     TransactionType = "billing",
                     CashAmount = dto.CashAmount,
                     GamingAmount = payment.GamingPortion * (dto.CashAmount / totalPayment), // Prorate cash to gaming

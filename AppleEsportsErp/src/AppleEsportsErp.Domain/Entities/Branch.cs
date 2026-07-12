@@ -13,6 +13,8 @@ public class Branch
     public BranchStatus Status { get; set; } = BranchStatus.Active;
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+    
+    public string? ConfiguredReservationDurations { get; set; }
 
     // Navigation
     public ICollection<Operator> Operators { get; set; } = new List<Operator>();

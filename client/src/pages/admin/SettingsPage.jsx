@@ -135,7 +135,8 @@ export default function SettingsPage() {
       name: formData.get('name'),
       address: formData.get('address'),
       openingTime: formData.get('openingTime'),
-      closingTime: formData.get('closingTime')
+      closingTime: formData.get('closingTime'),
+      configuredReservationDurations: formData.get('configuredReservationDurations')
     };
 
     try {
@@ -677,6 +678,17 @@ export default function SettingsPage() {
                 className="form-control" 
               />
             </div>
+          </div>
+          
+          <div className="form-group">
+            <label>Configured Reservation Durations (Mins)</label>
+            <input 
+              name="configuredReservationDurations" 
+              defaultValue={branchDrawer.data?.configuredReservationDurations || '30, 60, 120, 180, 240, 360, 480'} 
+              className="form-control" 
+              placeholder="e.g. 30, 60, 120, 180"
+            />
+            <span className="text-[10px] text-text-3 mt-1 block">Enter minutes separated by commas.</span>
           </div>
           
           <div className="drawer-footer pt-4">

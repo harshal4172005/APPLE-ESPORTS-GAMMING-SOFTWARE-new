@@ -30,6 +30,7 @@ public class MemberService : IMemberService
     public async Task<PaginatedResult<MemberDto>> GetMembersAsync(Guid branchId, string? search, int page = 1, int pageSize = 50)
     {
         var query = _unitOfWork.Repository<Member>().Query()
+            .Include(m => m.HomeBranch)
             .Where(m => m.Status != MemberStatus.Suspended);
 
         if (!string.IsNullOrWhiteSpace(search))
@@ -54,7 +55,9 @@ public class MemberService : IMemberService
 
     public async Task<MemberDto> GetMemberByIdAsync(Guid id)
     {
-        var member = await _unitOfWork.Repository<Member>().GetByIdAsync(id)
+        var member = await _unitOfWork.Repository<Member>().Query()
+            .Include(m => m.HomeBranch)
+            .FirstOrDefaultAsync(m => m.Id == id)
             ?? throw new NotFoundException("Member not found.");
 
         return MapToDto(member);
@@ -63,6 +66,7 @@ public class MemberService : IMemberService
     public async Task<MemberDto> GetMemberByMobileAsync(string mobileNumber)
     {
         var member = await _unitOfWork.Repository<Member>().Query()
+            .Include(m => m.HomeBranch)
             .FirstOrDefaultAsync(m => m.MobileNumber == mobileNumber)
             ?? throw new NotFoundException($"Member with mobile {mobileNumber} not found.");
 
@@ -369,7 +373,8 @@ public class MemberService : IMemberService
             FoodPoints = m.FoodPoints,
             TotalPoints = m.TotalPoints,
             JoinDate = m.JoinDate,
-            LastVisit = m.LastVisit
+            LastVisit = m.LastVisit,
+            HomeBranchName = m.HomeBranch?.Name
         };
     }
 }

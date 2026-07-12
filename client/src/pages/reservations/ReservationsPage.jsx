@@ -47,9 +47,21 @@ export default function ReservationsPage() {
     durationMin: 60,
     advanceDeposit: 0,
     gracePeriodMin: 15,
-    notes: ''
+    notes: '',
+    selectedTier: ''
   });
   const [submittingForm, setSubmittingForm] = useState(false);
+  const [branchPlans, setBranchPlans] = useState([]);
+
+  useEffect(() => {
+    if (targetBranchId) {
+      api.get(`/public/branches/${targetBranchId}/plans`).then(res => {
+        if (res.data?.success !== false) {
+          setBranchPlans(res.data?.data || []);
+        }
+      }).catch(err => console.error('Failed to load branch plans', err));
+    }
+  }, [targetBranchId]);
 
   // Modal/Reason states
   const [cancelData, setCancelData] = useState(null); // { id, customerName }
@@ -171,6 +183,12 @@ export default function ReservationsPage() {
 
   const eligiblePcs = pcs.filter(pc => {
     if (pc.state === 'Maintenance' || pc.state === 'Offline') return false;
+
+    // Filter by tier if a plan with a specific tier is selected
+    if (form.selectedTier !== undefined && form.selectedTier !== '') {
+      const pcTier = pc.monitorHz || '';
+      if (pcTier !== form.selectedTier) return false;
+    }
 
     // 1. Check against active sessions
     const activeSession = sessions.find(s => s.pcId === pc.id && s.status === 'Active');
@@ -383,7 +401,7 @@ export default function ReservationsPage() {
                           <span className="text-xs font-semibold text-text">{m.fullName}</span>
                           <span className="text-[10px] text-text-3 font-mono ml-2">{m.phone}</span>
                         </div>
-                        <span className="text-[9px] font-mono text-neon-purple/70">₹{m.walletBalance?.toFixed(0) || 0}</span>
+                        <span className="text-[9px] font-mono text-neon-purple/70">₹{m.gamingBalance?.toFixed(0) || 0}</span>
                       </button>
                     ))}
                   </div>
@@ -398,7 +416,7 @@ export default function ReservationsPage() {
                   <div className="flex items-center gap-2 mt-1.5 bg-neon-purple/10 border border-neon-purple/30 rounded px-2.5 py-1.5">
                     <CheckCircle className="w-3.5 h-3.5 text-neon-purple" />
                     <span className="text-[10px] font-semibold text-neon-purple">{selectedMember.fullName}</span>
-                    <span className="text-[9px] text-text-3 font-mono">• Wallet: ₹{selectedMember.walletBalance?.toFixed(0) || 0}</span>
+                    <span className="text-[9px] text-text-3 font-mono">• Wallet: ₹{selectedMember.gamingBalance?.toFixed(0) || 0}</span>
                   </div>
                 )}
               </div>
@@ -450,20 +468,40 @@ export default function ReservationsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
-                  <Clock className="w-3 h-3 text-text-3" /> Duration
+                  <Clock className="w-3 h-3 text-text-3" /> Select Plan
                 </label>
                 <select
-                  value={form.durationMin}
-                  onChange={e => setForm(f => ({ ...f, durationMin: Number(e.target.value) }))}
+                  value={form.durationMin + '|' + form.selectedTier}
+                  onChange={e => {
+                    const [dur, tier] = e.target.value.split('|');
+                    const plan = branchPlans.find(p => p.duration === Number(dur) && p.tier === tier);
+                    setForm(f => ({ 
+                      ...f, 
+                      durationMin: Number(dur), 
+                      selectedTier: tier,
+                      advanceDeposit: plan ? plan.price : f.advanceDeposit
+                    }));
+                  }}
                   className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none"
                 >
-                  <option value={30}>30 Mins</option>
-                  <option value={60}>1 Hour</option>
-                  <option value={120}>2 Hours</option>
-                  <option value={180}>3 Hours</option>
-                  <option value={240}>4 Hours</option>
-                  <option value={360}>6 Hours</option>
-                  <option value={480}>8 Hours</option>
+                  {branchPlans.length > 0 ? (
+                    Array.from(new Set(branchPlans.map(p => p.tierLabel))).map(tierLabel => (
+                      <optgroup key={tierLabel} label={tierLabel}>
+                        {branchPlans.filter(p => p.tierLabel === tierLabel).map(plan => (
+                          <option key={plan.id} value={`${plan.duration}|${plan.tier}`}>
+                            {plan.name} - ₹{plan.price}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))
+                  ) : (
+                    // Fallback to configured durations if plans haven't loaded
+                    configuredDurations.map(d => (
+                      <option key={d} value={`${d}|`}>
+                        {d < 60 ? `${d} Mins` : d % 60 === 0 ? `${d / 60} Hour${d / 60 > 1 ? 's' : ''}` : `${Math.floor(d / 60)}h ${d % 60}m`}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
               <div className="space-y-1">

@@ -33,6 +33,7 @@ public class CashTransactionDto
     public decimal GamingAmount { get; set; }
     public decimal FoodAmount { get; set; }
     public string TransactionType { get; set; } = null!;
+    public string? CustomerName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 }
 

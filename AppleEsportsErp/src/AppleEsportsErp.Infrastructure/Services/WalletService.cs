@@ -80,6 +80,7 @@ public class WalletService : IWalletService
                 CashAmount = walletTx.CashAmount,
                 GamingAmount = 0,
                 FoodAmount = 0,
+                CustomerName = member.Username,
                 CreatedAt = DateTimeOffset.UtcNow
             };
             await _unitOfWork.Repository<CashTransaction>().AddAsync(cashTx);

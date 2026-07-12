@@ -22,6 +22,8 @@ public class MemberDto
 
     public DateTimeOffset JoinDate { get; set; }
     public DateTimeOffset? LastVisit { get; set; }
+    
+    public string? HomeBranchName { get; set; }
 }
 
 public class RegisterMemberDto

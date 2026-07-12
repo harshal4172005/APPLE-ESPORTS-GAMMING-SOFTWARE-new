@@ -93,6 +93,7 @@ public class CashRegisterService : ICashRegisterService
                 CashAmount = dto.Amount,
                 GamingAmount = 0,
                 FoodAmount = 0,
+                CustomerName = "Operator Adjustment",
                 TransactionType = dto.TransactionType,
                 CreatedAt = DateTimeOffset.UtcNow
             };
@@ -152,6 +153,7 @@ public class CashRegisterService : ICashRegisterService
                 Id = tx.Id,
                 BillId = tx.BillId,
                 PcNumber = tx.PcNumber,
+                CustomerName = tx.CustomerName,
                 CashAmount = tx.CashAmount,
                 GamingAmount = tx.GamingAmount,
                 FoodAmount = tx.FoodAmount,

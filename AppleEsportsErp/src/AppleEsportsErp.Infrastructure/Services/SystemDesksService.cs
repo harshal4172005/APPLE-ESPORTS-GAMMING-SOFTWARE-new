@@ -32,10 +32,12 @@ public class SystemDesksService : ISystemDesksService
         var bills = await _unitOfWork.Repository<Bill>().Query()
             .Where(b => b.ShiftId == shiftId || (b.OperatorId == shift.OperatorId && b.CreatedAt >= shift.LoginTime && b.CreatedAt <= endTime))
             .Include(b => b.Payments)
+            .Include(b => b.Member)
             .ToListAsync();
 
         var walletTxs = await _unitOfWork.Repository<WalletTransaction>().Query()
             .Where(w => w.BranchId == branchId && w.OperatorId == shift.OperatorId && w.CreatedAt >= shift.LoginTime && w.CreatedAt <= endTime)
+            .Include(w => w.Member)
             .ToListAsync();
 
         var dto = new OnlineDeskSummaryDto
@@ -54,7 +56,7 @@ public class SystemDesksService : ISystemDesksService
                     {
                         Id = payment.Id,
                         Timestamp = payment.CreatedAt,
-                        Description = $"Bill Payment #{bill.BillNumber}",
+                        Description = $"Bill Payment #{bill.BillNumber} ({bill.CustomerName ?? bill.Member?.Username ?? "Walk-in"})",
                         Amount = payment.OnlineAmount,
                         PaymentMethod = "Online"
                     });
@@ -71,7 +73,7 @@ public class SystemDesksService : ISystemDesksService
                 {
                     Id = tx.Id,
                     Timestamp = tx.CreatedAt,
-                    Description = $"Wallet {tx.Action} - {tx.TargetWallet}",
+                    Description = $"Wallet {tx.Action} - {tx.TargetWallet} ({tx.Member?.Username ?? "Member"})",
                     Amount = tx.OnlineAmount,
                     PaymentMethod = "Online"
                 });
@@ -95,12 +97,13 @@ public class SystemDesksService : ISystemDesksService
 
         var walletTxs = await _unitOfWork.Repository<WalletTransaction>().Query()
             .Where(w => w.BranchId == branchId && w.OperatorId == shift.OperatorId && w.CreatedAt >= shift.LoginTime && w.CreatedAt <= endTime)
+            .Include(w => w.Member)
             .ToListAsync();
 
-        // Also track bill payments made VIA wallet
         var bills = await _unitOfWork.Repository<Bill>().Query()
             .Where(b => b.ShiftId == shiftId || (b.OperatorId == shift.OperatorId && b.CreatedAt >= shift.LoginTime && b.CreatedAt <= endTime))
             .Include(b => b.Payments)
+            .Include(b => b.Member)
             .ToListAsync();
 
         var dto = new WalletDeskSummaryDto
@@ -123,7 +126,7 @@ public class SystemDesksService : ISystemDesksService
             {
                 Id = tx.Id,
                 Timestamp = tx.CreatedAt,
-                Description = $"Wallet {tx.Action} - {tx.TargetWallet} " + (string.IsNullOrEmpty(tx.Reason) ? "" : $"({tx.Reason})"),
+                Description = $"Wallet {tx.Action} - {tx.TargetWallet} ({tx.Member?.Username ?? "Member"}) " + (string.IsNullOrEmpty(tx.Reason) ? "" : $"({tx.Reason})"),
                 Amount = tx.Amount,
                 Action = tx.Action.ToString()
             });
@@ -140,7 +143,7 @@ public class SystemDesksService : ISystemDesksService
                     {
                         Id = payment.Id,
                         Timestamp = payment.CreatedAt,
-                        Description = $"Bill Payment via Wallet #{bill.BillNumber}",
+                        Description = $"Bill Payment via Wallet #{bill.BillNumber} ({bill.CustomerName ?? bill.Member?.Username ?? "Walk-in"})",
                         Amount = payment.WalletAmount,
                         Action = "Deduction"
                     });

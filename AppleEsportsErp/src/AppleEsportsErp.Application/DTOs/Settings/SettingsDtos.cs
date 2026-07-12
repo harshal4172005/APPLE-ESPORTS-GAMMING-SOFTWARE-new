@@ -8,6 +8,7 @@ public class CreateBranchDto
     public string? Address { get; set; }
     public string OpeningTime { get; set; } = "10:00";
     public string ClosingTime { get; set; } = "02:00";
+    public string? ConfiguredReservationDurations { get; set; }
 }
 
 public class UpdateBranchDto
@@ -16,6 +17,7 @@ public class UpdateBranchDto
     public string? Address { get; set; }
     public string OpeningTime { get; set; } = null!;
     public string ClosingTime { get; set; } = null!;
+    public string? ConfiguredReservationDurations { get; set; }
 }
 
 public class BranchDto
@@ -27,6 +29,7 @@ public class BranchDto
     public string ClosingTime { get; set; } = "02:00";
     public string Status { get; set; } = null!;
     public DateTimeOffset CreatedAt { get; set; }
+    public string? ConfiguredReservationDurations { get; set; }
 }
 
 public class CreateOperatorDto

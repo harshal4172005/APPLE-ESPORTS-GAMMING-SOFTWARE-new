@@ -51,6 +51,11 @@ const TransactionFeed = memo(({ transactions }) => {
                       </span>
                     )}
                   </div>
+                  {tx.customerName && (
+                    <div className="text-xs text-text-2 font-bold mt-0.5">
+                      {tx.customerName}
+                    </div>
+                  )}
                   <div className="text-[10px] text-text-3 font-mono mt-0.5">
                     {formatTime(tx.createdAt)}
                   </div>

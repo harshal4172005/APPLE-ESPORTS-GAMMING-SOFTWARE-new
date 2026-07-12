@@ -12,6 +12,7 @@ public class CashTransaction
     public decimal CashAmount { get; set; }
     public decimal GamingAmount { get; set; }
     public decimal FoodAmount { get; set; }
+    public string? CustomerName { get; set; }
     public string TransactionType { get; set; } = "billing"; // billing, wallet_recharge, refund
     public DateTimeOffset CreatedAt { get; set; }
 

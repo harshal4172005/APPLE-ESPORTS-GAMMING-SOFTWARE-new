@@ -270,6 +270,97 @@ public class PublicController : ControllerBase
         return Ok(ApiResponse<object>.Ok(plans));
     }
 
+    [HttpGet("branches/{branchId}/plans")]
+    public async Task<IActionResult> GetBranchPlans(Guid branchId)
+    {
+        var branch = await _db.Branches
+            .Include(b => b.Pcs)
+            .FirstOrDefaultAsync(b => b.Id == branchId);
+
+        if (branch == null)
+            return Ok(new { success = false, error = "Branch not found" });
+
+        var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
+        decimal defaultBaseRate = 100m;
+        Dictionary<string, decimal> hzPricing = new();
+        if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
+        {
+            try
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(globalConfig.ConfigValue);
+                if (doc.RootElement.TryGetProperty("pricing", out var pricing))
+                {
+                    if (pricing.TryGetProperty("baseRate", out var br))
+                        defaultBaseRate = br.GetDecimal();
+                        
+                    if (pricing.TryGetProperty("hzPricing", out var hzObj))
+                    {
+                        foreach (var prop in hzObj.EnumerateObject())
+                        {
+                            if (prop.Value.ValueKind == System.Text.Json.JsonValueKind.Number)
+                                hzPricing[prop.Name] = prop.Value.GetDecimal();
+                        }
+                    }
+                }
+            }
+            catch { /* fallback */ }
+        }
+
+        // Determine unique tiers in the branch
+        var uniqueTiers = branch.Pcs
+            .Where(p => p.IsActive && !p.IsDeleted)
+            .Select(p => string.IsNullOrWhiteSpace(p.MonitorHz) ? "Standard" : p.MonitorHz)
+            .Distinct()
+            .ToList();
+
+        if (!uniqueTiers.Any())
+        {
+            uniqueTiers.Add("Standard");
+        }
+
+        // Parse branch durations
+        List<int> durations = new List<int> { 30, 60, 120, 180, 240, 360, 480 };
+        if (!string.IsNullOrEmpty(branch.ConfiguredReservationDurations))
+        {
+            var parsed = branch.ConfiguredReservationDurations.Split(',')
+                .Select(d => int.TryParse(d.Trim(), out var val) ? val : 0)
+                .Where(v => v > 0)
+                .ToList();
+            if (parsed.Any()) durations = parsed;
+        }
+
+        var plans = new List<object>();
+
+        foreach (var tier in uniqueTiers)
+        {
+            decimal ratePerHour = defaultBaseRate;
+            string planNameTier = tier == "Standard" ? "Standard Tier" : $"{tier}Hz Tier";
+            string monitorHzVal = tier == "Standard" ? "" : tier;
+
+            if (tier != "Standard" && hzPricing.TryGetValue(tier, out var hrRate))
+            {
+                ratePerHour = hrRate;
+            }
+
+            foreach (var d in durations)
+            {
+                decimal price = ratePerHour * (d / 60m);
+                string dLabel = d < 60 ? $"{d} Mins" : d % 60 == 0 ? $"{d / 60} Hour{(d / 60 > 1 ? "s" : "")}" : $"{d / 60}h {d % 60}m";
+                
+                plans.Add(new {
+                    id = Guid.NewGuid(),
+                    name = $"{dLabel} ({planNameTier})",
+                    duration = d,
+                    price = price,
+                    tier = monitorHzVal,
+                    tierLabel = planNameTier
+                });
+            }
+        }
+
+        return Ok(ApiResponse<object>.Ok(plans));
+    }
+
     /// <summary>Returns all currently pending walk-in requests. Operator polls this as a SignalR fallback.</summary>
     [HttpGet("walkin-pending")]
     [Authorize]

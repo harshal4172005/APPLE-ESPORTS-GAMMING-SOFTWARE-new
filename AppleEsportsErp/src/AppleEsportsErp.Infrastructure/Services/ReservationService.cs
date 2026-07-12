@@ -31,7 +31,7 @@ public class ReservationService : IReservationService
 
         var query = _unitOfWork.Repository<Reservation>().Query()
             .Include(r => r.Pc)
-            .Where(r => r.BranchId == branchId && (r.State == ReservationState.Pending || r.State == ReservationState.Active))
+            .Where(r => r.BranchId == branchId && r.State == ReservationState.Pending)
             .OrderBy(r => r.ReservationTime);
 
         var total = await query.CountAsync();
@@ -230,8 +230,8 @@ public class ReservationService : IReservationService
 
             var now = DateTimeOffset.UtcNow;
             
-            // 1. Transition Reservation state to Active
-            reservation.State = ReservationState.Active;
+            // 1. Transition Reservation state to Completed since the session is taking over
+            reservation.State = ReservationState.Completed;
             reservation.StartedAt = now;
             _unitOfWork.Repository<Reservation>().Update(reservation);
 
