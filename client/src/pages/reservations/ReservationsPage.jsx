@@ -44,24 +44,34 @@ export default function ReservationsPage() {
     pcId: '',
     date: new Date().toISOString().split('T')[0],
     time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
-    durationMin: 60,
+    durationMin: null,
     advanceDeposit: 0,
     gracePeriodMin: 15,
     notes: '',
     selectedTier: ''
   });
   const [submittingForm, setSubmittingForm] = useState(false);
-  const [branchPlans, setBranchPlans] = useState([]);
+
+  // Per-PC plans (fetched when PC is selected)
+  const [pcPlans, setPcPlans] = useState([]);
+  const [pcPlansLoading, setPcPlansLoading] = useState(false);
 
   useEffect(() => {
-    if (targetBranchId) {
-      api.get(`/public/branches/${targetBranchId}/plans`).then(res => {
-        if (res.data?.success !== false) {
-          setBranchPlans(res.data?.data || []);
-        }
-      }).catch(err => console.error('Failed to load branch plans', err));
+    if (!form.pcId) {
+      setPcPlans([]);
+      return;
     }
-  }, [targetBranchId]);
+    setPcPlansLoading(true);
+    api.get(`/public/pcs/${form.pcId}/plans`)
+      .then(res => {
+        if (res.data?.success !== false) setPcPlans(res.data?.data || []);
+        else setPcPlans([]);
+      })
+      .catch(() => setPcPlans([]))
+      .finally(() => setPcPlansLoading(false));
+    // Reset plan selection when PC changes
+    setForm(f => ({ ...f, durationMin: null, advanceDeposit: 0, selectedTier: '' }));
+  }, [form.pcId]);
 
   // Modal/Reason states
   const [cancelData, setCancelData] = useState(null); // { id, customerName }
@@ -176,26 +186,19 @@ export default function ReservationsPage() {
     };
   }, [connected, subscribe, SIGNALR_HUBS, targetBranchId, fetchReservationsList, fetchPcsAndSessions]);
 
-  // Filter dropdown PCs dynamically based on overlaps
+  // Eligible PCs for the selected time slot (no tier filter — PC is chosen first)
   const requestedStart = new Date(`${form.date}T${form.time}`);
-  const requestedDurationMs = form.durationMin * 60000;
+  const requestedDurationMs = (form.durationMin || 60) * 60000;
   const requestedEnd = new Date(requestedStart.getTime() + requestedDurationMs);
 
   const eligiblePcs = pcs.filter(pc => {
     if (pc.state === 'Maintenance' || pc.state === 'Offline') return false;
 
-    // Filter by tier if a plan with a specific tier is selected
-    if (form.selectedTier !== undefined && form.selectedTier !== '') {
-      const pcTier = pc.monitorHz || '';
-      if (pcTier !== form.selectedTier) return false;
-    }
-
     // 1. Check against active sessions
     const activeSession = sessions.find(s => s.pcId === pc.id && s.status === 'Active');
     if (activeSession) {
-      // If session exists, we assume its endTime must be before our requested start time.
       const sessionEnd = new Date(activeSession.endTime);
-      if (sessionEnd > requestedStart) return false; // Overlaps!
+      if (sessionEnd > requestedStart) return false;
     }
 
     // 2. Check against pending reservations
@@ -203,8 +206,6 @@ export default function ReservationsPage() {
     if (pendingRes) {
       const resStart = new Date(pendingRes.reservationTime);
       const resEnd = new Date(resStart.getTime() + (pendingRes.durationMin || 60) * 60000);
-      
-      // If strictly overlapping
       if (requestedStart < resEnd && requestedEnd > resStart) return false;
     }
 
@@ -229,7 +230,6 @@ export default function ReservationsPage() {
 
     setSubmittingForm(true);
     try {
-      // Build ISO offset timestamp from date and time strings
       const localDateTimeString = `${form.date}T${form.time}`;
       const reservationTime = new Date(localDateTimeString).toISOString();
 
@@ -238,21 +238,23 @@ export default function ReservationsPage() {
         customerName: form.customerName.trim(),
         memberId: selectedMember?.id || null,
         reservationTime: reservationTime,
-        durationMin: Number(form.durationMin),
-        advanceDeposit: Number(form.advanceDeposit),
+        durationMin: isMemberBooking ? null : Number(form.durationMin),
+        advanceDeposit: isMemberBooking ? 0 : Number(form.advanceDeposit),
         gracePeriodMin: Number(form.gracePeriodMin),
         notes: form.notes.trim()
       });
 
       toast.success('Reservation created successfully!');
-      // Reset form (keep date/time default)
       setForm(prev => ({
         ...prev,
         customerName: '',
         pcId: '',
         notes: '',
-        advanceDeposit: 0
+        advanceDeposit: 0,
+        durationMin: null,
+        selectedTier: ''
       }));
+      setPcPlans([]);
       setSelectedMember(null);
       setMemberSearch('');
       setIsMemberBooking(false);
@@ -464,78 +466,127 @@ export default function ReservationsPage() {
               </div>
             </div>
 
-            {/* Select Plan */}
-            <div className="space-y-2">
-              <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
-                <Clock className="w-3 h-3 text-text-3" /> Select Plan
+            {/* PC selector — STEP 1 (moved to top) */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider block">
+                ① Select PC *
               </label>
-              
-              {branchPlans.length === 0 ? (
-                <div className="grid grid-cols-2 gap-2">
-                  {/* Fallback if plans haven't loaded */}
-                  {[30, 60, 120, 180, 240, 360, 480].map(d => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => setForm(f => ({ ...f, durationMin: d, selectedTier: '' }))}
-                      className={`p-2 rounded border transition-all flex flex-col items-center justify-center gap-1 ${
-                        form.durationMin === d && !form.selectedTier
-                          ? 'bg-neon-purple/20 border-neon-purple text-text shadow-[0_0_10px_rgba(168,85,247,0.2)]' 
-                          : 'bg-bg-3 border-border hover:border-text-3 text-text-2'
-                      }`}
-                    >
-                      <span className="font-mono font-bold text-[10px] text-center">
-                        {d < 60 ? `${d} Mins` : d % 60 === 0 ? `${d / 60} Hour${d / 60 > 1 ? 's' : ''}` : `${Math.floor(d / 60)}h ${d % 60}m`}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
-                  {branchPlans.map(plan => {
-                    const isSelected = form.durationMin === plan.duration && form.selectedTier === plan.tier;
-                    return (
-                      <button
-                        key={plan.id}
-                        type="button"
-                        onClick={() => {
-                          setForm(f => ({
-                            ...f,
-                            durationMin: plan.duration,
-                            selectedTier: plan.tier,
-                            advanceDeposit: plan.price
-                          }));
-                        }}
-                        className={`p-2 rounded border transition-all flex flex-col items-center justify-center gap-1 ${
-                          isSelected 
-                            ? 'bg-neon-purple/20 border-neon-purple text-text shadow-[0_0_10px_rgba(168,85,247,0.2)]' 
-                            : 'bg-bg-3 border-border hover:border-text-3 text-text-2'
-                        }`}
-                      >
-                        <span className="font-mono font-bold text-[10px] text-center">{plan.name}</span>
-                        {plan.price > 0 && <span className="text-[10px] text-accent">₹{plan.price}</span>}
-                        {plan.isPostpaid && <span className="text-[9px] text-accent">Pay as you go</span>}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+              <select
+                value={form.pcId}
+                onChange={e => setForm(f => ({ ...f, pcId: e.target.value }))}
+                className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none transition-colors"
+                required
+              >
+                <option value="">-- Select Available Station --</option>
+                {eligiblePcs.map(p => {
+                  const isConfigured = p.monitorHz && p.monitorHz.trim() !== '';
+                  return (
+                    <option key={p.id} value={p.id}>
+                      {p.name}{p.zone ? ` · ${p.zone}` : ''} | {isConfigured ? `${p.monitorHz}` : '⚠ Not Configured'}
+                    </option>
+                  );
+                })}
+              </select>
+              <p className="text-[9px] text-text-3 font-mono mt-1">
+                {eligiblePcs.length} stations available for selected time slot
+              </p>
             </div>
 
-            {/* Advance Deposit */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
-                <IndianRupee className="w-3 h-3 text-text-3" /> Deposit (₹)
-              </label>
-              <input
-                type="number"
-                placeholder="0.00"
-                min="0"
-                value={form.advanceDeposit || ''}
-                onChange={e => setForm(f => ({ ...f, advanceDeposit: parseFloat(e.target.value) || 0 }))}
-                className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none"
-              />
-            </div>
+            {/* STEP 2: Plan Selection — shown only when PC selected and NOT member booking */}
+            {!isMemberBooking && (
+              <div className="space-y-2">
+                <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
+                  <Clock className="w-3 h-3 text-text-3" /> ② Select Plan
+                </label>
+
+                {!form.pcId ? (
+                  <div className="rounded border border-border bg-bg-3/40 p-3 text-center text-[10px] text-text-3 font-mono">
+                    ← Select a PC above to see available plans
+                  </div>
+                ) : pcPlansLoading ? (
+                  <div className="flex items-center justify-center p-4">
+                    <div className="w-4 h-4 border border-neon-purple border-t-transparent rounded-full animate-spin" />
+                    <span className="ml-2 text-[10px] text-text-3 font-mono">Loading plans...</span>
+                  </div>
+                ) : (() => {
+                  const selectedPc = pcs.find(p => p.id === form.pcId);
+                  const isConfigured = selectedPc?.monitorHz && selectedPc.monitorHz.trim() !== '';
+
+                  if (!isConfigured) {
+                    // Not Configured PC — only show Postpaid
+                    return (
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2 rounded border border-orange-500/40 bg-orange-500/10 px-3 py-2">
+                          <span className="text-orange-400 text-xs">⚠</span>
+                          <span className="text-[10px] text-orange-300 font-mono">This PC has no Hz configured. EXE setup not completed. Only Postpaid available.</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setForm(f => ({ ...f, durationMin: 0, advanceDeposit: 0, selectedTier: '' }))}
+                          className={`w-full p-2 rounded border transition-all flex flex-col items-center justify-center gap-1 ${
+                            form.durationMin === 0 ? 'bg-neon-purple/20 border-neon-purple text-text shadow-[0_0_10px_rgba(168,85,247,0.2)]' : 'bg-bg-3 border-border hover:border-text-3 text-text-2'
+                          }`}
+                        >
+                          <span className="font-mono font-bold text-[10px]">Postpaid</span>
+                          <span className="text-[9px] text-accent">Pay as you go</span>
+                        </button>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
+                      {pcPlans.map(plan => {
+                        const isSelected = form.durationMin === plan.duration && !plan.isPostpaid
+                          ? true
+                          : plan.isPostpaid && form.durationMin === 0;
+                        return (
+                          <button
+                            key={plan.id}
+                            type="button"
+                            onClick={() => setForm(f => ({ ...f, durationMin: plan.isPostpaid ? 0 : plan.duration, advanceDeposit: plan.price, selectedTier: '' }))}
+                            className={`p-2 rounded border transition-all flex flex-col items-center justify-center gap-1 ${
+                              isSelected
+                                ? 'bg-neon-purple/20 border-neon-purple text-text shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                                : 'bg-bg-3 border-border hover:border-text-3 text-text-2'
+                            }`}
+                          >
+                            <span className="font-mono font-bold text-[10px] text-center">{plan.name}</span>
+                            {plan.price > 0 && <span className="text-[10px] text-accent">₹{plan.price}</span>}
+                            {plan.isPostpaid && <span className="text-[9px] text-accent">Pay as you go</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            {/* Member booking note */}
+            {isMemberBooking && form.pcId && (
+              <div className="flex items-center gap-2 rounded border border-neon-purple/30 bg-neon-purple/10 px-3 py-2">
+                <CheckCircle className="w-3.5 h-3.5 text-neon-purple flex-shrink-0" />
+                <span className="text-[10px] text-neon-purple font-mono">Member session — plan is selected when member logs in on the PC</span>
+              </div>
+            )}
+
+            {/* Advance Deposit — only for non-member bookings */}
+            {!isMemberBooking && (
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
+                  <IndianRupee className="w-3 h-3 text-text-3" /> Deposit (₹)
+                </label>
+                <input
+                  type="number"
+                  placeholder="0.00"
+                  min="0"
+                  value={form.advanceDeposit || ''}
+                  onChange={e => setForm(f => ({ ...f, advanceDeposit: parseFloat(e.target.value) || 0 }))}
+                  className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none"
+                />
+              </div>
+            )}
 
             {/* Grace Period */}
             <div className="space-y-1">
@@ -564,29 +615,6 @@ export default function ReservationsPage() {
                 onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
                 className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none resize-none"
               />
-            </div>
-
-            {/* PC Selector Moved to Bottom */}
-            <div className="space-y-1 pt-2 border-t border-border/50">
-              <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider block">
-                PC Number *
-              </label>
-              <select
-                value={form.pcId}
-                onChange={e => setForm(f => ({ ...f, pcId: e.target.value }))}
-                className="w-full bg-bg-3 border border-border rounded px-3 py-2 text-xs text-text focus:border-neon-purple focus:outline-none transition-colors"
-                required
-              >
-                <option value="">-- Select Available Station --</option>
-                {eligiblePcs.map(p => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} {p.zone ? `- ${p.zone}` : ''}
-                  </option>
-                ))}
-              </select>
-              <p className="text-[9px] text-text-3 font-mono mt-1">
-                Showing {eligiblePcs.length} vacant PCs for the selected time block.
-              </p>
             </div>
 
             <button

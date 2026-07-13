@@ -247,31 +247,29 @@ public class PublicController : ControllerBase
 
         if (branchName.Contains("adajan"))
         {
-            if (monitorHz == "240hz") return 60m;
-            return 60m;
+            return 60m; // 240Hz only
         }
         if (branchName.Contains("citylight"))
         {
             if (monitorHz == "144hz") return 50m;
             if (monitorHz == "240hz") return 60m;
-            return 50m;
+            return 50m; // default
         }
         if (branchName.Contains("katargam"))
         {
             if (monitorHz == "165hz") return 60m;
             if (monitorHz == "240hz") return 70m;
             if (monitorHz == "360hz") return 80m;
-            return 60m;
+            return 60m; // default
         }
         if (branchName.Contains("varachha"))
         {
             if (monitorHz == "240hz") return 80m;
             if (monitorHz == "400hz") return 90m;
-            if (monitorHz == "4k oled") return 100m;
-            return 80m;
+            return 80m; // default
         }
-        
-        return 100m; 
+
+        return 100m; // fallback
     }
 
     [HttpGet("branches/{branchId}/plans")]
@@ -334,7 +332,9 @@ public class PublicController : ControllerBase
     [Authorize] // Requires valid MemberToken
     public async Task<IActionResult> StartMemberSession(
         [FromBody] SessionStartDto dto,
-        [FromServices] ISessionService sessionService)
+        [FromServices] ISessionService sessionService,
+        [FromServices] IHubContext<PcStatusHub> pcStatusHub,
+        [FromServices] IHubContext<SessionHub> sessionHub)
     {
         // Get the MemberId from the JWT Token
         var memberIdStr = User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -344,11 +344,96 @@ public class PublicController : ControllerBase
         dto.MemberId = memberId;
 
         // Retrieve PC to find out which Branch this session belongs to
-        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.Id == dto.PcId);
+        var pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.Id == dto.PcId);
         if (pc == null)
             return BadRequest(new { success = false, error = "PC not found." });
 
         var branchId = pc.BranchId;
+
+        // ── AUTO-START FROM RESERVATION (SOP §22) ──
+        // If a pending reservation exists for this (memberId, pcId) within the time window,
+        // auto-start the session from it — no operator approval needed.
+        var now = DateTimeOffset.UtcNow;
+        var pendingReservation = await _db.Reservations
+            .Where(r => r.MemberId == memberId
+                     && r.PcId == dto.PcId
+                     && r.State == ReservationState.Pending
+                     && r.ReservationTime.AddMinutes(-30) <= now
+                     && r.ReservationTime.AddMinutes(r.GracePeriodMin) >= now)
+            .OrderBy(r => Math.Abs((r.ReservationTime - now).TotalMinutes))
+            .FirstOrDefaultAsync();
+
+        if (pendingReservation != null)
+        {
+            // Retrieve or create System Operator and Shift
+            var sysUsername2 = $"system_admin_{branchId:N}";
+            var sysOp2 = await _db.Operators.FirstOrDefaultAsync(o => o.BranchId == branchId && o.Username == sysUsername2);
+            if (sysOp2 == null)
+            {
+                sysOp2 = new Operator { Id = Guid.NewGuid(), BranchId = branchId, FullName = "System Administrator", Username = sysUsername2, PasswordHash = "LOCKED", Status = OperatorStatus.Active, CreatedAt = now, UpdatedAt = now };
+                _db.Operators.Add(sysOp2);
+                await _db.SaveChangesAsync();
+            }
+            var sysShift2 = await _db.Shifts.FirstOrDefaultAsync(s => s.BranchId == branchId && s.Status == ShiftStatus.Active && s.OperatorId == sysOp2.Id);
+            if (sysShift2 == null)
+            {
+                sysShift2 = new Shift { Id = Guid.NewGuid(), BranchId = branchId, OperatorId = sysOp2.Id, LoginTime = now, CreatedAt = now, Status = ShiftStatus.Active };
+                _db.Shifts.Add(sysShift2);
+                _db.CashRegisters.Add(new CashRegister { Id = Guid.NewGuid(), BranchId = branchId, OperatorId = sysOp2.Id, ShiftId = sysShift2.Id, OpeningBalance = 0, ExpectedDrawerCash = 0, TotalCashSales = 0, TotalSplitCash = 0, Status = CashRegisterStatus.Open, OpenedAt = now });
+                await _db.SaveChangesAsync();
+            }
+
+            // Build session from reservation
+            var durationMin = pendingReservation.DurationMin ?? 60;
+            var ratePerHour = GetRateForBranchAndTier(pc.Branch?.Name ?? "", pc.MonitorHz ?? "");
+            var expectedAmount = pendingReservation.DurationMin.HasValue ? (durationMin / 60m) * ratePerHour : 0m; // 0 for member-only (postpaid)
+
+            var session = new Session
+            {
+                Id = Guid.NewGuid(), PcId = pc.Id, BranchId = branchId,
+                OperatorId = sysOp2.Id, ShiftId = sysShift2.Id,
+                CustomerName = pendingReservation.CustomerName, MemberId = memberId,
+                StartTime = now, EndTime = pendingReservation.DurationMin.HasValue ? now.AddMinutes(durationMin) : (DateTimeOffset?)null,
+                PlannedDurationMin = pendingReservation.DurationMin,
+                TotalAmount = expectedAmount, GamingAmount = expectedAmount,
+                GamingType = "Member Reservation Auto-Start",
+                State = SessionState.Active, Notes = pendingReservation.Notes,
+                CreatedAt = now, UpdatedAt = now
+            };
+            _db.Sessions.Add(session);
+
+            var totalDue = Math.Max(0m, expectedAmount - pendingReservation.AdvanceDeposit);
+            var bill = new Bill
+            {
+                Id = Guid.NewGuid(),
+                BillNumber = $"BILL-{now:yyyyMMdd}-{Guid.NewGuid().ToString()[..4].ToUpper()}",
+                SessionId = session.Id, PcId = pc.Id, BranchId = branchId,
+                OperatorId = sysOp2.Id, ShiftId = sysShift2.Id,
+                CustomerName = pendingReservation.CustomerName, MemberId = memberId,
+                GamingAmount = expectedAmount, FoodAmount = 0, Subtotal = expectedAmount, TotalAmount = totalDue,
+                Status = BillStatus.Pending, CreatedAt = now, UpdatedAt = now,
+                DiscountReason = pendingReservation.AdvanceDeposit > 0 ? $"Advance deposit ₹{pendingReservation.AdvanceDeposit} applied" : null
+            };
+            _db.Bills.Add(bill);
+
+            pendingReservation.State = ReservationState.Completed;
+            pendingReservation.StartedAt = now;
+            _db.Reservations.Update(pendingReservation);
+
+            pc.State = PcState.Active;
+            pc.CurrentSessionId = session.Id;
+            pc.CurrentReservationId = pendingReservation.Id;
+            _db.Pcs.Update(pc);
+
+            await _db.SaveChangesAsync();
+
+            // Broadcast updates
+            await pcStatusHub.Clients.Group($"branch:{branchId}").SendAsync("PcStatusChanged", new { pcId = pc.Id, state = "Active" });
+            await sessionHub.Clients.Group($"branch:{branchId}").SendAsync("SessionUpdated", new { sessionId = session.Id });
+
+            return Ok(ApiResponse<object>.Ok(new { sessionId = session.Id, pcId = pc.Id, pcName = pc.PcName ?? pc.PcNumber, startTime = session.StartTime, fromReservation = true }));
+        }
+        // ── END AUTO-START FROM RESERVATION ──
 
         // Retrieve or create System Operator and Shift for this branch
         var sysUsername = $"system_admin_{branchId:N}";
