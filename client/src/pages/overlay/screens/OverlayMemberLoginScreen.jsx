@@ -20,7 +20,7 @@ export default function OverlayMemberLoginScreen() {
     setIsLoading(true);
     try {
       const res = await axios.post('/api/members/login', {
-        username: identifier,
+        identifier: identifier,
         password,
       });
 

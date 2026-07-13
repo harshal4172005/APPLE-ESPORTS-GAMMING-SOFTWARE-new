@@ -31,6 +31,9 @@ public class BranchIsolationAttribute : ActionFilterAttribute
             return;
         }
 
+        // Members are not branch-scoped — skip isolation
+        if (role == "Member") return;
+
         // Operator — enforce their assigned branch
         var assignedBranch = user.FindFirstValue("branchId");
         if (string.IsNullOrEmpty(assignedBranch))

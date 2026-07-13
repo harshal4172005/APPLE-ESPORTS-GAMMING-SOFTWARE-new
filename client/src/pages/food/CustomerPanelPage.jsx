@@ -18,6 +18,7 @@ import {
   LogOut
 } from 'lucide-react';
 import api from '../../config/api';
+import axios from 'axios';
 import { useSocket } from '../../contexts/SocketContext';
 
 export default function CustomerPanelPage() {
@@ -156,7 +157,7 @@ export default function CustomerPanelPage() {
     e.preventDefault();
     setAuthError('');
     try {
-      const res = await api.post('/members/login', { username, password });
+      const res = await axios.post('/api/members/login', { identifier: username, password });
       const memberData = res.data?.data;
       if (memberData) {
         localStorage.setItem('accessToken', memberData.token);

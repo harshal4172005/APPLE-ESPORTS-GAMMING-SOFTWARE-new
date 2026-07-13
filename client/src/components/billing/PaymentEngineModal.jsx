@@ -164,7 +164,7 @@ export default function PaymentEngineModal({ bill, onClose, onPaymentSuccess }) 
     setWalletAuthError(null);
     setWalletAuthLoading(true);
     try {
-      await memberLogin({ username: walletAuthUsername.trim(), password: walletAuthPassword });
+      await memberLogin({ identifier: walletAuthUsername.trim(), password: walletAuthPassword });
       setWalletVerified(true);
     } catch {
       setWalletAuthError('Invalid username or password. Please try again.');

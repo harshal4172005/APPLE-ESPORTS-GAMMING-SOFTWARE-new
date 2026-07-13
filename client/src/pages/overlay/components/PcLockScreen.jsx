@@ -82,7 +82,8 @@ export default function PcLockScreen() {
     setIsLoggingIn(true);
     setLoginError('');
     try {
-      const res = await api.post('/members/login', {
+      // Use raw axios to prevent stale localStorage tokens from triggering BranchIsolation filter
+      const res = await axios.post('/api/members/login', {
         identifier: identifier,
         password: password,
       });
