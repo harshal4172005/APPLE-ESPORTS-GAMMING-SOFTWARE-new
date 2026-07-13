@@ -12,6 +12,7 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
+  const [adminSwitchUser, setAdminSwitchUser] = useState(null); // SOP §22: Admin Quick-Switch
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
@@ -28,10 +29,21 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
-  // ── Initialize auth state from localStorage ──
+  // ── Initialize auth state from localStorage and sessionStorage ──
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
     const token = localStorage.getItem('accessToken');
+    
+    // Check for Admin Quick-Switch
+    const storedAdminUser = sessionStorage.getItem('adminSwitchUser');
+    if (storedAdminUser) {
+      try {
+        setAdminSwitchUser(JSON.parse(storedAdminUser));
+      } catch (e) {
+        sessionStorage.removeItem('adminSwitchUser');
+        sessionStorage.removeItem('adminSwitchToken');
+      }
+    }
 
     if (storedUser && storedUser !== 'undefined' && token) {
       try {
@@ -41,6 +53,7 @@ export function AuthProvider({ children }) {
         localStorage.removeItem('user');
       }
       // Verify token is still valid by fetching current user
+      // Note: if admin switch is active, api.js will send adminSwitchToken
       fetchCurrentUser().finally(() => setLoading(false));
     } else {
       setLoading(false);
@@ -87,6 +100,48 @@ export function AuthProvider({ children }) {
     }
   }, []);
 
+  // ── Admin Quick-Switch In (SOP §22) ──
+  const adminSwitchIn = useCallback(async (adminId, accessPin) => {
+    try {
+      setError(null);
+      const response = await api.post('/auth/admin-switch/in', { adminId, accessPin });
+      const { user: adminData, accessToken } = response.data.data;
+
+      sessionStorage.setItem('adminSwitchToken', accessToken);
+      sessionStorage.setItem('adminSwitchUser', JSON.stringify(adminData));
+      
+      setAdminSwitchUser(adminData);
+      return adminData;
+    } catch (err) {
+      const message = err.response?.data?.error || 'Admin switch failed';
+      setError(message);
+      throw new Error(message);
+    }
+  }, []);
+
+  const fetchAvailableAdminsForSwitch = useCallback(async () => {
+    try {
+      const res = await api.get('/auth/admin-switch/available');
+      return res.data.data || [];
+    } catch (err) {
+      console.error('Failed to fetch available admins for switch:', err);
+      return [];
+    }
+  }, []);
+
+  // ── Exit Admin Mode (SOP §22) ──
+  const exitAdminSwitch = useCallback(async () => {
+    try {
+      await api.post('/auth/admin-switch/out').catch(() => {});
+    } finally {
+      sessionStorage.removeItem('adminSwitchToken');
+      sessionStorage.removeItem('adminSwitchUser');
+      setAdminSwitchUser(null);
+      // Re-fetch operator user data just in case
+      await fetchCurrentUser();
+    }
+  }, [fetchCurrentUser]);
+
   // ── Logout (SOP §10: shift closure for operators) ──
   const logout = useCallback(async () => {
     // Capture role to determine where to redirect after logout
@@ -120,26 +175,36 @@ export function AuthProvider({ children }) {
   }, [user]);
 
   // ── Role checks ──
-  const userRole = user?.role || user?.Role;
+  const activeUser = adminSwitchUser || user;
+  const userRole = activeUser?.role || activeUser?.Role;
   const isSuperAdmin = userRole === ROLES.SUPER_ADMIN || (typeof userRole === 'string' && userRole.toLowerCase().includes('admin'));
   const isOperator = userRole === ROLES.OPERATOR || (typeof userRole === 'string' && userRole.toLowerCase().includes('operator'));
-  const isAuthenticated = !!user;
+  const isAuthenticated = !!activeUser;
 
   // ── Dashboard permission check (SOP §19.2) ──
   const hasDashboardAccess = useCallback((dashboardKey) => {
-    if (!user) return false;
-    const role = user.role || user.Role;
+    const checkUser = adminSwitchUser || user;
+    if (!checkUser) return false;
+    const role = checkUser.role || checkUser.Role;
     if (role === ROLES.SUPER_ADMIN) return true;
     
-    // For Admin, they have access to all branches, but we still check their dashboard UI permissions.
-    // However, they always have access to the main dashboard.
-    if (dashboardKey === 'main_dashboard' && role === ROLES.ADMIN) return true;
+    // Operator dashboards that Admins should implicitly have access to
+    const operatorDashboards = [
+      'billing_counter', 'sessions', 'reservations', 'food_orders', 
+      'cash_register', 'cash_desk', 'online_desk', 'wallet_desk', 'credits', 'eod'
+    ];
 
-    return user.dashboardPermissions?.[dashboardKey] === true;
-  }, [user]);
+    if (role === ROLES.ADMIN) {
+      if (dashboardKey === 'main_dashboard' || operatorDashboards.includes(dashboardKey)) return true;
+    }
+
+    return checkUser.dashboardPermissions?.[dashboardKey] === true;
+  }, [user, adminSwitchUser]);
 
   const value = {
-    user,
+    user: adminSwitchUser || user,
+    baseUser: user, // Keep track of the original operator
+    adminSwitchUser,
     loading,
     error,
     isAuthenticated,
@@ -148,6 +213,9 @@ export function AuthProvider({ children }) {
     loginAdmin,
     loginOperator,
     logout,
+    adminSwitchIn,
+    exitAdminSwitch,
+    fetchAvailableAdminsForSwitch,
     hasDashboardAccess,
     fetchCurrentUser,
     setError,

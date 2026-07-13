@@ -1016,6 +1016,7 @@ function AdminRoleForm({ initialData, onSave }) {
   const [isGlobalAdmin, setIsGlobalAdmin] = useState(initialData?.isGlobalAdmin || false);
   const [canAccessSettings, setCanAccessSettings] = useState(false);
   const [canGiveDiscount, setCanGiveDiscount] = useState(false);
+  const [accessPin, setAccessPin] = useState('');
 
   useEffect(() => {
     setIsGlobalAdmin(initialData?.isGlobalAdmin || false);
@@ -1033,12 +1034,13 @@ function AdminRoleForm({ initialData, onSave }) {
     }
   }, [initialData]);
 
-  const handleSubmit = (e) => {
+    const handleSubmit = (e) => {
     e.preventDefault();
     onSave({
       isGlobalAdmin,
       canAccessSettings,
-      canGiveDiscount
+      canGiveDiscount,
+      accessPin
     });
   };
 
@@ -1087,6 +1089,20 @@ function AdminRoleForm({ initialData, onSave }) {
               <p className="text-text-2 text-[10px] mt-0.5">Allow operator to issue discounts on billing items.</p>
             </div>
           </label>
+
+          <div className="pt-3 mt-3 border-t border-border">
+            <label className="block font-semibold text-text mb-1">Admin Switch PIN {initialData?.hasAccessPin && <span className="text-accent text-[9px] uppercase ml-2 px-1 py-0.5 bg-accent/20 rounded">(Has PIN)</span>}</label>
+            <p className="text-text-2 text-[10px] mb-2 leading-tight">Enter a 4-6 digit PIN. This PIN allows the Global Admin to temporarily take over another operator's session at the front desk without logging them out.</p>
+            <input 
+              type="password" 
+              maxLength="6"
+              value={accessPin}
+              onChange={(e) => setAccessPin(e.target.value.replace(/[^0-9]/g, ''))}
+              className="form-control tracking-[0.5em] text-center font-mono w-full max-w-[200px]" 
+              placeholder={initialData?.hasAccessPin ? "•••••• (Leave blank to keep)" : "e.g. 1234"}
+              required={!initialData?.hasAccessPin}
+            />
+          </div>
         </div>
       )}
 

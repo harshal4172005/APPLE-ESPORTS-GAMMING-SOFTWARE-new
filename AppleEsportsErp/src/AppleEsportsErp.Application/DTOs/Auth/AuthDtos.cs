@@ -147,3 +147,18 @@ public class CheckSetupResponseDto
     public bool NeedsOperatorSetup { get; set; }
     public bool NeedsAdminSetup { get; set; }
 }
+
+public class AdminSwitchInDto
+{
+    public Guid AdminId { get; set; }
+    public string AccessPin { get; set; } = null!;
+    public Guid ShiftId { get; set; }
+}
+
+public class AvailableAdminDto
+{
+    public Guid Id { get; set; }
+    public string FullName { get; set; } = null!;
+    public string Type { get; set; } = null!; // "Admin" or "Operator"
+    public int PinLength { get; set; }
+}

@@ -636,6 +636,7 @@ public class OperatorsController : ControllerBase
             Status = o.Status.ToString(),
             DashboardPermissions = o.DashboardPermissions ?? "{}",
             IsGlobalAdmin = o.IsGlobalAdmin,
+            HasAccessPin = !string.IsNullOrEmpty(o.AccessPin),
             CreatedAt = o.CreatedAt
         });
 
@@ -911,6 +912,7 @@ public class OperatorsController : ControllerBase
             currentPerms["settings"] = dto.CanAccessSettings;
             currentPerms["discount"] = dto.CanGiveDiscount;
             op.DashboardPermissions = System.Text.Json.JsonSerializer.Serialize(currentPerms);
+            op.AccessPin = dto.AccessPin;
         }
         else
         {
@@ -941,6 +943,8 @@ public class OperatorsController : ControllerBase
             {
                 await authService.ForceLogoutAsync(adminId, op.Id);
             }
+
+            op.AccessPin = null;
         }
 
         op.IsGlobalAdmin = dto.IsGlobalAdmin;

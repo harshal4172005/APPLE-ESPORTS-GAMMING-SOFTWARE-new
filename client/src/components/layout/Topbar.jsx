@@ -10,16 +10,18 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import { useSocket } from '../../contexts/SocketContext';
 import { ROLES } from '../../config/constants';
+import AdminSwitchModal from '../auth/AdminSwitchModal';
 
 export default function Topbar({ onToggleSidebar, sidebarOpen, onLogoutClick }) {
   const navigate = useNavigate();
-  const { user, logout, isSuperAdmin } = useAuth();
+  const { user, baseUser, adminSwitchUser, logout, isSuperAdmin, exitAdminSwitch } = useAuth();
   const { branches, activeBranch, switchBranch } = useBranch();
   const { connected } = useSocket();
   const [clock, setClock] = useState('');
   const [date, setDate] = useState('');
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showBranchMenu, setShowBranchMenu] = useState(false);
+  const [showAdminSwitchModal, setShowAdminSwitchModal] = useState(false);
 
   // ── Live Clock ──
   useEffect(() => {
@@ -63,7 +65,30 @@ export default function Topbar({ onToggleSidebar, sidebarOpen, onLogoutClick }) 
     }
   }, [logout, onLogoutClick]);
 
+  const handleExitAdminSwitch = useCallback(async () => {
+    await exitAdminSwitch();
+    navigate('/app/billing');
+    setShowUserMenu(false);
+  }, [exitAdminSwitch, navigate]);
+
   return (
+    <>
+    {/* Admin Mode Banner */}
+    {adminSwitchUser && (
+      <div className="bg-neon-red text-white text-[11px] font-bold tracking-widest py-1.5 px-4 flex items-center justify-center gap-4 z-[60] relative">
+        <span className="animate-pulse">⚠️ ADMIN MODE ACTIVE ⚠️</span>
+        <span className="font-medium opacity-80">|</span>
+        <span>Original Operator: {baseUser?.fullName || baseUser?.full_name}</span>
+        <span className="font-medium opacity-80">|</span>
+        <button 
+          onClick={handleExitAdminSwitch}
+          className="bg-white/20 hover:bg-white/30 px-3 py-0.5 rounded transition-colors ml-4 uppercase"
+        >
+          Exit Admin Mode
+        </button>
+      </div>
+    )}
+
     <header id="topbar" className="bg-bg-2 border-b border-border px-4 py-2.5 flex items-center justify-between gap-3 sticky top-0 z-50">
       {/* Left: Hamburger + Logo */}
       <div className="flex items-center gap-3">
@@ -220,6 +245,28 @@ export default function Topbar({ onToggleSidebar, sidebarOpen, onLogoutClick }) 
                 </svg>
                 Setup Dedicated PC
               </button>
+              {baseUser?.role === ROLES.OPERATOR && !adminSwitchUser && (
+                <button
+                  onClick={() => { setShowUserMenu(false); setShowAdminSwitchModal(true); }}
+                  className="w-full text-left px-3 py-2 text-xs text-text hover:bg-bg-3 transition-colors flex items-center gap-2 border-b border-border/40"
+                >
+                  <svg className="w-3.5 h-3.5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                  Admin Switch
+                </button>
+              )}
+              {adminSwitchUser && (
+                <button
+                  onClick={handleExitAdminSwitch}
+                  className="w-full text-left px-3 py-2 text-xs text-text hover:bg-neon-red/10 transition-colors flex items-center gap-2 border-b border-border/40 text-neon-red"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                  Exit Admin Mode
+                </button>
+              )}
               <button
                 onClick={handleLogout}
                 className="w-full text-left px-3 py-2 text-xs text-neon-red hover:bg-neon-red/5 transition-colors flex items-center gap-2"
@@ -234,5 +281,7 @@ export default function Topbar({ onToggleSidebar, sidebarOpen, onLogoutClick }) 
         </div>
       </div>
     </header>
+    <AdminSwitchModal isOpen={showAdminSwitchModal} onClose={() => setShowAdminSwitchModal(false)} />
+    </>
   );
 }

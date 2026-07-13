@@ -14,6 +14,7 @@ public class User
     public DateTimeOffset? LastLogin { get; set; }
     public string? DeviceInfo { get; set; } // JSONB stored as string
     public string? DashboardPermissions { get; set; } // JSONB stored as string for Admins
+    public string? AccessPin { get; set; } // SOP §22: Admin Quick-Switch PIN
     
     // Password Reset fields
     public string? ResetToken { get; set; }

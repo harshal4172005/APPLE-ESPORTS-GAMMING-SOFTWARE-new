@@ -23,6 +23,15 @@ public interface IAuthService
     /// <summary>SOP §11: Force Logout — Super Admin forcibly logs out an operator</summary>
     Task<ForceLogoutResponseDto> ForceLogoutAsync(Guid adminId, Guid operatorId);
 
+    /// <summary>SOP §22: Get available admins for Quick-Switch</summary>
+    Task<IEnumerable<AvailableAdminDto>> GetAvailableAdminsForSwitchAsync();
+
+    /// <summary>SOP §22: Admin Quick-Switch In</summary>
+    Task<LoginResponseDto> AdminSwitchInAsync(AdminSwitchInDto dto);
+
+    /// <summary>SOP §22: Admin Quick-Switch Out</summary>
+    Task AdminSwitchOutAsync(Guid adminId, Guid shiftId);
+
     /// <summary>Refresh access token</summary>
     Task<TokenResponseDto> RefreshAccessTokenAsync(string refreshToken);
 

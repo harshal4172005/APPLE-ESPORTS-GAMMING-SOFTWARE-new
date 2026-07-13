@@ -8,6 +8,8 @@ public static class AuditActions
     public const string Logout = "logout";
     public const string FailedLogin = "failed_login";
     public const string ForcedLogout = "forced_logout";
+    public const string AdminSwitchIn = "admin_switch_in";
+    public const string AdminSwitchOut = "admin_switch_out";
 
     // Sessions
     public const string SessionStart = "session_start";

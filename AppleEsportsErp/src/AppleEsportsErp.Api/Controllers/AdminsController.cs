@@ -38,6 +38,7 @@ public class AdminsController : ControllerBase
             a.Email,
             Status = a.Status.ToString(),
             DashboardPermissions = a.DashboardPermissions ?? "{}",
+            HasAccessPin = !string.IsNullOrEmpty(a.AccessPin),
             a.CreatedAt,
             Type = "User"
         }).ToList();
@@ -55,6 +56,7 @@ public class AdminsController : ControllerBase
             Email = $"@{o.Username}",
             Status = o.Status.ToString(),
             DashboardPermissions = o.DashboardPermissions ?? "{}",
+            HasAccessPin = false, // Operators don't have this, only Users
             o.CreatedAt,
             Type = "Operator"
         });
@@ -82,6 +84,7 @@ public class AdminsController : ControllerBase
             PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password),
             Role = Roles.Admin,
             DashboardPermissions = dto.DashboardPermissions,
+            AccessPin = dto.AccessPin,
             Status = UserStatus.Active,
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
@@ -102,6 +105,10 @@ public class AdminsController : ControllerBase
         admin.FullName = dto.FullName;
         admin.Email = dto.Email.Trim();
         admin.DashboardPermissions = dto.DashboardPermissions;
+        if (dto.AccessPin != null) 
+        {
+            admin.AccessPin = dto.AccessPin; // Only update if provided
+        }
         admin.UpdatedAt = DateTimeOffset.UtcNow;
 
         if (!string.IsNullOrWhiteSpace(dto.Password))
@@ -150,6 +157,7 @@ public class CreateAdminDto
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
     public string? DashboardPermissions { get; set; }
+    public string? AccessPin { get; set; }
 }
 
 public class UpdateAdminDto
@@ -158,4 +166,5 @@ public class UpdateAdminDto
     public string Email { get; set; } = string.Empty;
     public string? Password { get; set; }
     public string? DashboardPermissions { get; set; }
+    public string? AccessPin { get; set; }
 }

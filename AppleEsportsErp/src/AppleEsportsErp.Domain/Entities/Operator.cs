@@ -14,6 +14,7 @@ public class Operator
     public Guid BranchId { get; set; }
     public OperatorStatus Status { get; set; } = OperatorStatus.Active;
     public bool IsGlobalAdmin { get; set; } = false;
+    public string? AccessPin { get; set; }
 
     /// <summary>SOP §19.2: Dashboard Permission Control — JSONB stored as string</summary>
     public string DashboardPermissions { get; set; } = @"{

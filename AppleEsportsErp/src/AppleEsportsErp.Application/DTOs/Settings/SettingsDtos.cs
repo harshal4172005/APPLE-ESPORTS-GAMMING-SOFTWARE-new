@@ -63,6 +63,7 @@ public class OperatorDto
     public string Status { get; set; } = null!;
     public string DashboardPermissions { get; set; } = "{}";
     public bool IsGlobalAdmin { get; set; } = false;
+    public bool HasAccessPin { get; set; } = false;
     public DateTimeOffset CreatedAt { get; set; }
 }
 
@@ -71,6 +72,7 @@ public class ManageAdminRoleDto
     public bool IsGlobalAdmin { get; set; }
     public bool CanAccessSettings { get; set; }
     public bool CanGiveDiscount { get; set; }
+    public string? AccessPin { get; set; }
 }
 
 public class AuditLogDto

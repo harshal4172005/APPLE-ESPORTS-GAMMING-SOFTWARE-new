@@ -21,7 +21,10 @@ const api = axios.create({
 // ── Request Interceptor — attach JWT token ──
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('accessToken');
+    // Check if there is an active Admin Switch session
+    const adminSwitchToken = sessionStorage.getItem('adminSwitchToken');
+    const token = adminSwitchToken || localStorage.getItem('accessToken');
+    
     if (token && !config.headers.Authorization && !config.headers.authorization) {
       config.headers.Authorization = `Bearer ${token}`;
     }

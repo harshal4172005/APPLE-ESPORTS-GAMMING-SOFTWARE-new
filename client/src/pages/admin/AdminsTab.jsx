@@ -139,6 +139,11 @@ export default function AdminsTab() {
         email: formData.get('email'),
         dashboardPermissions: JSON.stringify(permissions)
       };
+
+      const accessPin = formData.get('accessPin');
+      if (accessPin && accessPin !== '****') {
+        payload.accessPin = accessPin;
+      }
       
       const pwd = formData.get('password');
       if (pwd) {
@@ -177,6 +182,11 @@ export default function AdminsTab() {
         <div className="form-group">
           <label>{initialData ? 'Reset Password (leave blank to keep current)' : 'Password *'}</label>
           <input type="password" name="password" required={!initialData} className="form-control" placeholder="••••••••" />
+        </div>
+
+        <div className="form-group">
+          <label>Admin Switch PIN (Optional) <span className="text-text-3 font-normal ml-1">4-6 digits for Quick-Switch</span></label>
+          <input type="password" name="accessPin" defaultValue={initialData?.hasAccessPin ? '****' : ''} className="form-control" placeholder="1234" maxLength={6} pattern="\d{4,6}" title="4 to 6 digit PIN" />
         </div>
 
         <div className="mt-6 mb-2">

@@ -1,1 +1,2 @@
-SELECT "Id", "State", "CurrentSessionId" FROM "pcs" WHERE "PcNumber" = 'ADJ-PC-02';
+SELECT * FROM users;
+SELECT * FROM operators;

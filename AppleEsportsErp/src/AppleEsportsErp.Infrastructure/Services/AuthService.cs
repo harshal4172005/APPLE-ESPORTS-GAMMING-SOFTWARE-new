@@ -837,6 +837,143 @@ public class AuthService : IAuthService
         await _emailService.SendEmailAsync(targetEmail, subject, htmlBody);
     }
 
+    public async Task<IEnumerable<AvailableAdminDto>> GetAvailableAdminsForSwitchAsync()
+    {
+        var activeAdmins = await _db.Users
+            .Where(u => (u.Role == Roles.Admin || u.Role == Roles.SuperAdmin) && u.Status == UserStatus.Active && !string.IsNullOrEmpty(u.AccessPin))
+            .Select(u => new AvailableAdminDto
+            {
+                Id = u.Id,
+                FullName = u.FullName,
+                Type = "Admin",
+                PinLength = u.AccessPin!.Length
+            })
+            .ToListAsync();
+
+        var activeOps = await _db.Operators
+            .Where(o => o.IsGlobalAdmin && o.Status == OperatorStatus.Active && !string.IsNullOrEmpty(o.AccessPin))
+            .Select(o => new AvailableAdminDto
+            {
+                Id = o.Id,
+                FullName = o.FullName,
+                Type = "Operator",
+                PinLength = o.AccessPin!.Length
+            })
+            .ToListAsync();
+
+        return activeAdmins.Concat(activeOps).OrderBy(a => a.FullName);
+    }
+
+    public async Task<LoginResponseDto> AdminSwitchInAsync(AdminSwitchInDto dto)
+    {
+        Guid adminId;
+        string adminFullName;
+        string? adminDashboardPermissions;
+        UserStatus adminStatus;
+
+        // 1. Try to find an Admin or SuperAdmin in the Users table
+        var adminUser = await _db.Users.FirstOrDefaultAsync(u => u.Id == dto.AdminId && (u.Role == Roles.Admin || u.Role == Roles.SuperAdmin));
+        if (adminUser != null)
+        {
+            if (adminUser.AccessPin != dto.AccessPin)
+                throw new AuthenticationException("Invalid Admin PIN.", "INVALID_PIN");
+
+            adminId = adminUser.Id;
+            adminFullName = adminUser.FullName;
+            adminDashboardPermissions = adminUser.DashboardPermissions;
+            adminStatus = adminUser.Status;
+        }
+        else
+        {
+            var adminOp = await _db.Operators.FirstOrDefaultAsync(o => o.Id == dto.AdminId && o.IsGlobalAdmin);
+            if (adminOp != null)
+            {
+                if (adminOp.AccessPin != dto.AccessPin)
+                    throw new AuthenticationException("Invalid Admin PIN.", "INVALID_PIN");
+
+                adminId = adminOp.Id;
+                adminFullName = adminOp.FullName;
+                adminDashboardPermissions = adminOp.DashboardPermissions;
+                adminStatus = adminOp.Status == OperatorStatus.Active ? UserStatus.Active : UserStatus.Disabled;
+            }
+            else
+            {
+                throw new AuthenticationException("Admin not found.", "INVALID_ADMIN");
+            }
+        }
+
+        if (adminStatus != UserStatus.Active)
+            throw new AuthorizationException("Admin account is inactive.", "ACCOUNT_INACTIVE");
+
+        var shift = await _db.Shifts.Include(s => s.Operator).ThenInclude(o => o.Branch).FirstOrDefaultAsync(s => s.Id == dto.ShiftId);
+        if (shift == null || shift.Status != ShiftStatus.Active)
+            throw new AuthorizationException("Active operator shift not found for switch.", "INVALID_SHIFT");
+
+        // Generate temporary token for the Admin Switch
+        var claims = new Dictionary<string, string>
+        {
+            [ClaimTypes.NameIdentifier] = adminId.ToString(),
+            [ClaimTypes.Role] = Roles.Admin,
+            [ClaimTypes.Name] = adminFullName,
+            ["originalOperatorId"] = shift.OperatorId.ToString(),
+            ["shiftId"] = shift.Id.ToString(),
+            ["branchId"] = shift.BranchId.ToString(),
+            ["isSwitchedAdmin"] = "true"
+        };
+
+        if (!string.IsNullOrEmpty(adminDashboardPermissions))
+        {
+            claims["dashboardPermissions"] = adminDashboardPermissions;
+        }
+
+        var accessToken = _jwt.GenerateAccessToken(claims);
+
+        await _audit.LogAsync(new AuditEntry
+        {
+            UserId = adminId,
+            UserRole = Roles.Admin,
+            UserName = adminFullName,
+            OperatorId = shift.OperatorId, // associate with the operator
+            Action = AuditActions.AdminSwitchIn,
+            Details = new { shiftId = shift.Id, operatorName = shift.Operator.FullName, branchId = shift.BranchId }
+        });
+
+        return new LoginResponseDto
+        {
+            User = new UserProfileDto
+            {
+                Id = adminId,
+                FullName = adminFullName,
+                Email = adminFullName, // Set email to full name as fallback
+                Role = Roles.Admin,
+                BranchId = shift.BranchId,
+                BranchName = shift.Operator.Branch.Name,
+                ShiftId = shift.Id,
+                DashboardPermissions = adminDashboardPermissions != null ? JsonSerializer.Deserialize<object>(adminDashboardPermissions) : null,
+                Status = adminStatus.ToString().ToLowerInvariant(),
+                LastLogin = DateTimeOffset.UtcNow
+            },
+            AccessToken = accessToken,
+            RefreshToken = accessToken // We don't refresh this, it's ephemeral
+        };
+    }
+
+    public async Task AdminSwitchOutAsync(Guid adminId, Guid shiftId)
+    {
+        var admin = await _db.Users.FindAsync(adminId);
+        if (admin != null)
+        {
+            await _audit.LogAsync(new AuditEntry
+            {
+                UserId = admin.Id,
+                UserRole = Roles.Admin,
+                UserName = admin.FullName,
+                Action = AuditActions.AdminSwitchOut,
+                Details = new { shiftId }
+            });
+        }
+    }
+
     public async Task CompletePasswordResetAsync(ResetPasswordDto dto)
     {
         var email = dto.Email.Trim().ToLowerInvariant();

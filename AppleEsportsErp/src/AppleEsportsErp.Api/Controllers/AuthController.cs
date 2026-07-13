@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using AppleEsportsErp.Application.DTOs.Auth;
 using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Application.Constants;
 
 namespace AppleEsportsErp.Api.Controllers;
 
@@ -193,6 +194,51 @@ public class AuthController : ControllerBase
 
         var token = await _authService.GenerateEmergencyTokenAsync(userId, role, branchId, dashboardPermissions);
         return Ok(new { token });
+    }
+
+    /// <summary>SOP §22: Admin Quick-Switch Available</summary>
+    [HttpGet("admin-switch/available")]
+    [Authorize(Roles = Roles.Operator)]
+    public async Task<IActionResult> GetAvailableAdminsForSwitch()
+    {
+        var result = await _authService.GetAvailableAdminsForSwitchAsync();
+        return Ok(ApiResponse<IEnumerable<AvailableAdminDto>>.Ok(result));
+    }
+
+    /// <summary>SOP §22: Admin Quick-Switch In</summary>
+    [HttpPost("admin-switch/in")]
+    [Authorize(Roles = Roles.Operator)]
+    public async Task<IActionResult> AdminSwitchIn([FromBody] AdminSwitchInDto dto)
+    {
+        // Require that the request is coming from an authenticated Operator
+        var shiftIdClaim = User.FindFirstValue("shiftId");
+        if (string.IsNullOrEmpty(shiftIdClaim))
+            return Unauthorized(ApiResponse.Fail("Must be inside an active shift."));
+
+        dto.ShiftId = Guid.Parse(shiftIdClaim);
+        var result = await _authService.AdminSwitchInAsync(dto);
+        return Ok(ApiResponse<LoginResponseDto>.Ok(result));
+    }
+
+    /// <summary>SOP §22: Admin Quick-Switch Out</summary>
+    [HttpPost("admin-switch/out")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> AdminSwitchOut()
+    {
+        var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var shiftIdClaim = User.FindFirstValue("shiftId");
+        
+        // Ensure this is actually a switched-in token
+        var isSwitchedAdmin = User.FindFirstValue("isSwitchedAdmin");
+        if (isSwitchedAdmin != "true")
+            return BadRequest(ApiResponse.Fail("Token is not an admin switch token."));
+
+        if (!string.IsNullOrEmpty(shiftIdClaim))
+        {
+            await _authService.AdminSwitchOutAsync(adminId, Guid.Parse(shiftIdClaim));
+        }
+
+        return Ok(ApiResponse.Ok());
     }
 }
 
