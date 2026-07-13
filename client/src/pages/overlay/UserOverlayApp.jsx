@@ -8,7 +8,6 @@ import TimeExtensionScreen from './screens/TimeExtensionScreen';
 import CallOperatorScreen from './screens/CallOperatorScreen';
 import CurrentBillScreen from './screens/CurrentBillScreen';
 import OverlayMemberLoginScreen from './screens/OverlayMemberLoginScreen';
-import MemberTimeSelectionScreen from './screens/MemberTimeSelectionScreen';
 import PcLockScreen from './components/PcLockScreen';
 import { Minimize2, Maximize2 } from 'lucide-react';
 import { useOverlaySocket } from '../../contexts/OverlaySocketContext';
@@ -73,7 +72,6 @@ function OverlayContent({ isMinimized, setIsMinimized }) {
         <Routes>
           <Route path="/" element={<SessionInfoScreen />} />
           <Route path="/login" element={<OverlayMemberLoginScreen />} />
-          <Route path="/time-select" element={<MemberTimeSelectionScreen />} />
           <Route path="/food" element={<FoodOrderScreen />} />
           <Route path="/extend" element={<TimeExtensionScreen />} />
           <Route path="/call" element={<CallOperatorScreen />} />

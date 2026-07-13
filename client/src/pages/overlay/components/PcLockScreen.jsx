@@ -99,7 +99,46 @@ export default function PcLockScreen() {
         };
         localStorage.setItem('memberProfile', JSON.stringify(userProfile));
         setProfile(userProfile);
-        setStep('time_selection');
+        
+        // Auto-start postpaid session
+        try {
+          const pcRes = await api.get(`/public/pcs/${pcId}`);
+          if (pcRes.data.success) {
+            const actualPcId = pcRes.data.data.id;
+            const startRes = await api.post(
+              '/public/sessions/member-start',
+              {
+                pcId: actualPcId,
+                memberId: data.memberId,
+                customerName: data.fullName,
+                durationMinutes: 0,
+                packageName: 'Postpaid',
+                expectedAmount: 0,
+              },
+              {
+                headers: {
+                  Authorization: `Bearer ${data.token}`,
+                  'X-Branch-Id': pcRes.data.data.branchId,
+                },
+              }
+            );
+
+            if (startRes.data.success) {
+              toast.success(`Welcome back, ${data.fullName}! Postpaid session started.`);
+              await fetchSession();
+            } else {
+              setLoginError(startRes.data.error || 'Failed to start session automatically.');
+              toast.error(startRes.data.error || 'Failed to start session automatically.');
+            }
+          } else {
+            setLoginError('PC not found in database');
+            toast.error('PC not found in database');
+          }
+        } catch (err) {
+          const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to start session automatically.';
+          setLoginError(msg);
+          toast.error(msg);
+        }
       } else {
         const errorText = res.data.error || 'Login failed';
         setLoginError(errorText);

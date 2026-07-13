@@ -26,7 +26,7 @@ export default function OverlayMemberLoginScreen() {
 
       if (res.data.success) {
         const data = res.data.data;
-        // Save token and profile to local storage so the time selection screen can use it
+        // Save token and profile
         localStorage.setItem('memberToken', data.token);
         localStorage.setItem('memberProfile', JSON.stringify({
           memberId: data.memberId,
@@ -36,8 +36,36 @@ export default function OverlayMemberLoginScreen() {
           foodBalance: data.foodBalance,
         }));
         
-        toast.success(`Welcome back, ${data.fullName}!`);
-        navigate(`/pc-overlay/${pcId}/time-select`);
+        // Auto-start postpaid session directly
+        try {
+          const pcRes = await axios.get(`/api/public/pcs/${pcId}`);
+          const actualPcId = pcRes.data.success ? pcRes.data.data.id : pcId;
+          const branchId = pcRes.data.success ? pcRes.data.data.branchId : null;
+
+          const sessionRes = await axios.post('/api/public/sessions/member-start', {
+            pcId: actualPcId,
+            memberId: data.memberId,
+            customerName: data.fullName,
+            durationMinutes: 0,
+            packageName: 'Postpaid',
+            expectedAmount: 0
+          }, {
+            headers: {
+              Authorization: `Bearer ${data.token}`,
+              ...(branchId && { 'X-Branch-Id': branchId })
+            }
+          });
+
+          if (sessionRes.data.success) {
+            toast.success(`Welcome back, ${data.fullName}! Postpaid session started.`);
+            navigate(`/pc-overlay/${pcId}/`);
+          } else {
+            toast.error(sessionRes.data.error || 'Failed to start session automatically.');
+          }
+        } catch (err) {
+          toast.error(err.response?.data?.error || err.response?.data?.message || 'Failed to start session automatically.');
+        }
+
       } else {
         toast.error(res.data.error || 'Login failed');
       }

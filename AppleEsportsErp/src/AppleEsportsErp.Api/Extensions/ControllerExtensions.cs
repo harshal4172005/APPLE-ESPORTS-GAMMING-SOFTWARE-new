@@ -19,12 +19,12 @@ public static class ControllerExtensions
         var user = controller.User;
         
         // If it's a regular operator, just return their ID from the JWT
-        if (!user.IsInRole(Roles.SuperAdmin))
+        if (!user.IsInRole(Roles.SuperAdmin) && !user.IsInRole("Member"))
         {
             return Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
         }
 
-        // SuperAdmin is acting. Find or create a System Operator for the active branch.
+        // SuperAdmin or Member is acting. Find or create a System Operator for the active branch.
         var branchIdStr = controller.HttpContext.Items["BranchId"]?.ToString();
         if (string.IsNullOrEmpty(branchIdStr))
             throw new InvalidOperationException("BranchId is not set in HttpContext. Cannot resolve System Operator.");
@@ -58,7 +58,7 @@ public static class ControllerExtensions
     {
         var user = controller.User;
         
-        if (!user.IsInRole(Roles.SuperAdmin))
+        if (!user.IsInRole(Roles.SuperAdmin) && !user.IsInRole("Member"))
         {
             var shiftClaim = user.FindFirstValue("shiftId");
             if (string.IsNullOrEmpty(shiftClaim))
