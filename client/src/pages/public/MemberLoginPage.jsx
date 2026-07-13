@@ -23,19 +23,19 @@ export default function MemberLoginPage() {
     try {
       // Direct API call to the new Member login endpoint
       const response = await axios.post('/api/members/login', {
-        mobileNumber: identifier, // The backend handles resolving if it's Mobile or MemberNumber
+        identifier: identifier, // The backend handles resolving if it's Mobile or MemberNumber
         password
       });
 
       if (response.data.success) {
         // We don't use useAuth's login because AuthContext is mainly for Staff/Operators.
         // We set the member token and profile manually here.
-        localStorage.setItem('memberToken', response.data.data.accessToken);
+        localStorage.setItem('memberToken', response.data.data.token);
         localStorage.setItem('memberProfile', JSON.stringify({
-          memberId: response.data.data.user.id,
-          fullName: response.data.data.user.fullName,
-          gamingBalance: response.data.data.user.gamingBalance,
-          foodBalance: response.data.data.user.foodBalance,
+          memberId: response.data.data.memberId,
+          fullName: response.data.data.fullName,
+          gamingBalance: response.data.data.gamingBalance,
+          foodBalance: response.data.data.foodBalance,
         }));
         navigate('/user/member-portal');
       } else {
