@@ -131,6 +131,7 @@ export default function SessionsPage() {
     const handleRefresh = (e) => {
       const pcId = e.detail?.pcId;
       if (pcId) {
+        // Instantly mark active
         setPcs(current => {
           const idx = current.findIndex(p => p.id === pcId || p.name === pcId);
           if (idx === -1) return current;
@@ -138,13 +139,14 @@ export default function SessionsPage() {
           next[idx] = { ...next[idx], state: 'Active' };
           return next;
         });
+        
+        // Instantly remove walkin pending status
+        setWalkinRequests(prev => prev.filter(r => r.pcId !== pcId && r.PcId !== pcId));
       }
-      fetchPcs();
-      fetchAuditLogs(); // Refreshing audit logs too for consistency
     };
     window.addEventListener('refresh-pcs', handleRefresh);
     return () => window.removeEventListener('refresh-pcs', handleRefresh);
-  }, [fetchPcs, fetchAuditLogs]);
+  }, []);
 
   // Poll for pending walk-in requests every 5 seconds — reliable fallback regardless of SignalR state
   useEffect(() => {
@@ -220,7 +222,6 @@ export default function SessionsPage() {
           next[idx] = { ...next[idx], state: 'Active' };
           return next;
         });
-        fetchPcs();
       }
     } catch (err) {
       toast.error(err.response?.data?.error || 'Failed to approve walk-in');
