@@ -415,6 +415,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
   };
 
   const requestWalkinSession = async (customerName, durationMinutes, packageName) => {
+    setWalkinDeclineEvent(null); // Clear any stale decline events
     const payload = { pcId, customerName, duration: durationMinutes, packageName };
 
     if (isMockMode) {
