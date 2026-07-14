@@ -44,6 +44,9 @@ public class AppDbContext : DbContext
     public DbSet<OfflineSyncSession> OfflineSyncSessions => Set<OfflineSyncSession>();
     public DbSet<OfflineSyncBilling> OfflineSyncBillings => Set<OfflineSyncBilling>();
 
+    // HR Module
+    public DbSet<Employee> Employees => Set<Employee>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         base.OnModelCreating(modelBuilder);

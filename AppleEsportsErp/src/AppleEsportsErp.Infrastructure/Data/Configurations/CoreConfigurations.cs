@@ -114,3 +114,27 @@ public class PcConfiguration : IEntityTypeConfiguration<Pc>
             .HasForeignKey(e => e.LastOperatorId).OnDelete(DeleteBehavior.SetNull);
     }
 }
+
+/// <summary>SOP §HR-01: Employee HR records — migrations/001_add_employees.sql</summary>
+public class EmployeeConfiguration : IEntityTypeConfiguration<Employee>
+{
+    public void Configure(EntityTypeBuilder<Employee> builder)
+    {
+        builder.ToTable("employees");
+        builder.HasKey(e => e.Id);
+        builder.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
+        builder.Property(e => e.EmployeeNumber).HasMaxLength(20).IsRequired();
+        builder.HasIndex(e => e.EmployeeNumber).IsUnique();
+        builder.Property(e => e.FullName).HasMaxLength(200).IsRequired();
+        builder.Property(e => e.Status).HasMaxLength(20).HasDefaultValue("Active");
+        builder.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
+        builder.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");
+
+        builder.HasIndex(e => e.BranchId).HasDatabaseName("idx_employees_branch_id");
+
+        builder.HasOne(e => e.Branch).WithMany()
+            .HasForeignKey(e => e.BranchId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(e => e.SubmittedByOperator).WithMany()
+            .HasForeignKey(e => e.SubmittedBy).OnDelete(DeleteBehavior.SetNull);
+    }
+}

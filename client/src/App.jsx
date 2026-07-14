@@ -57,6 +57,9 @@ import PcStatusPage from './pages/admin/PcStatusPage';
 import SettingsPage from './pages/admin/SettingsPage';
 import ReportsPage from './pages/admin/ReportsPage';
 
+// ── HR ──
+import EmployeeFormsPage from './pages/hr/EmployeeFormsPage';
+
 // ── End of imports ──
 function HomeRedirect() {
   const { isSuperAdmin, isAuthenticated } = useAuth();
@@ -242,6 +245,16 @@ export default function App() {
 
                   {/* Catch-all inside /app */}
                   <Route path="*" element={<NotFoundPage />} />
+
+                  {/* ── HR Module ── */}
+                  <Route
+                    path="employee-forms"
+                    element={
+                      <ProtectedRoute allowedRoles={[ROLES.SUPER_ADMIN, ROLES.ADMIN]}>
+                        <EmployeeFormsPage />
+                      </ProtectedRoute>
+                    }
+                  />
                 </Route>
 
                 {/* ══════════ Root Redirects ══════════ */}
