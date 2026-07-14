@@ -4,6 +4,7 @@ using AppleEsportsErp.Application.DTOs.Employees;
 using AppleEsportsErp.Application.Exceptions;
 using AppleEsportsErp.Application.Interfaces;
 using AppleEsportsErp.Domain.Entities;
+using AppleEsportsErp.Domain.Enums;
 using AppleEsportsErp.Infrastructure.Data;
 
 namespace AppleEsportsErp.Infrastructure.Services;
@@ -95,6 +96,55 @@ public class EmployeeService : IEmployeeService
         };
 
         _db.Employees.Add(employee);
+
+        // Optional System Account Creation (Operator/Admin)
+        if (dto.CreateSystemAccount && !string.IsNullOrWhiteSpace(dto.SystemRole) && !string.IsNullOrWhiteSpace(dto.SystemUsername) && !string.IsNullOrWhiteSpace(dto.SystemPassword))
+        {
+            var isGlobalAdmin = dto.SystemRole.Equals("Admin", StringComparison.OrdinalIgnoreCase);
+            
+            var basePermissions = new System.Collections.Generic.Dictionary<string, bool>
+            {
+                { "billing_counter", true },
+                { "sessions", true },
+                { "reservations", true },
+                { "food_orders", true },
+                { "cash_register", true },
+                { "cash_desk", true },
+                { "members", true },
+                { "menu_editor", true },
+                { "main_dashboard", true },
+                { "pc_status", false },
+                { "eod", false },
+                { "settings", false },
+                { "employee_forms", false }
+            };
+
+            if (isGlobalAdmin)
+            {
+                basePermissions["settings"] = true;
+                basePermissions["discount"] = true;
+                basePermissions["employee_forms"] = true;
+            }
+
+            var op = new Operator
+            {
+                Id = Guid.NewGuid(),
+                FullName = dto.FullName.Trim(),
+                Username = dto.SystemUsername.Trim().ToLowerInvariant(),
+                Email = dto.Email?.Trim().ToLowerInvariant() ?? $"{dto.SystemUsername.Trim().ToLowerInvariant()}@appleesports.local",
+                PasswordHash = BCrypt.Net.BCrypt.HashPassword(dto.SystemPassword),
+                BranchId = branchId,
+                DashboardPermissions = System.Text.Json.JsonSerializer.Serialize(basePermissions),
+                Status = OperatorStatus.Active,
+                IsGlobalAdmin = isGlobalAdmin,
+                AccessPin = isGlobalAdmin ? dto.SystemPin : null,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+
+            _db.Operators.Add(op);
+        }
+
         await _db.SaveChangesAsync();
 
         return await GetEmployeeByIdAsync(employee.Id);

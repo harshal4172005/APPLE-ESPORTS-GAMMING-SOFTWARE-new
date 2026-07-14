@@ -66,6 +66,7 @@ const emptyForm = () => ({
   positionTitle: '', department: '', supervisor: '', startDate: '',
   bankName: '', accountNumber: '', accountHolderName: '', bankBranch: '',
   refName: '', refRelationship: '', refPhone: '', refAddress: '',
+  createSystemAccount: false, systemRole: 'Operator', systemUsername: '', systemPassword: '', systemPin: ''
 });
 
 // ─── VIEW: Full employee record (read-only) ───────────────────────────────────
@@ -256,6 +257,11 @@ export default function EmployeeFormsPage() {
         accountHolderName: form.accountHolderName || null, bankBranch: form.bankBranch || null,
         refName: form.refName || null, refRelationship: form.refRelationship || null,
         refPhone: form.refPhone || null, refAddress: form.refAddress || null,
+        createSystemAccount: form.createSystemAccount,
+        systemRole: form.createSystemAccount ? form.systemRole : null,
+        systemUsername: form.createSystemAccount ? form.systemUsername : null,
+        systemPassword: form.createSystemAccount ? form.systemPassword : null,
+        systemPin: form.createSystemAccount ? form.systemPin : null,
       };
       await api.post('/employees', payload);
       toast.success('Employee record created successfully!');
@@ -492,6 +498,42 @@ export default function EmployeeFormsPage() {
                 <div><label className="text-[10px] font-bold uppercase tracking-widest text-text-3 block mb-1">Address</label><input value={form.refAddress} onChange={set('refAddress')} placeholder="Reference address" className={inputCls} /></div>
               </div>
             </Section>
+
+            {/* System Access */}
+            <div className="bg-bg-2 border border-accent/20 rounded-xl p-5 space-y-4">
+              <label className="flex items-center gap-3 cursor-pointer select-none">
+                <input type="checkbox" checked={form.createSystemAccount} onChange={(e) => setForm(f => ({ ...f, createSystemAccount: e.target.checked }))} className="w-5 h-5 rounded border-border bg-bg-3 text-accent focus:ring-accent focus:ring-offset-bg-2" />
+                <span className="text-sm font-extrabold uppercase tracking-widest text-accent flex items-center gap-2">
+                  <Shield className="w-4 h-4" /> Create ERP System Account for this Employee
+                </span>
+              </label>
+
+              {form.createSystemAccount && (
+                <div className="pt-3 border-t border-border grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-text-3 block mb-1">System Role *</label>
+                    <select required value={form.systemRole} onChange={set('systemRole')} className={selectCls}>
+                      <option value="Operator">Operator (Standard)</option>
+                      <option value="Admin">Admin (Manager)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-text-3 block mb-1">Username *</label>
+                    <input required value={form.systemUsername} onChange={set('systemUsername')} placeholder="e.g. john.doe" className={inputCls} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-widest text-text-3 block mb-1">Password *</label>
+                    <input required type="password" value={form.systemPassword} onChange={set('systemPassword')} placeholder="••••••••" className={inputCls} />
+                  </div>
+                  {form.systemRole === 'Admin' && (
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-text-3 block mb-1">Admin Switch PIN *</label>
+                      <input required type="password" value={form.systemPin} onChange={set('systemPin')} placeholder="4-digit PIN" maxLength={4} className={inputCls} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Declaration */}
             <div className="bg-bg-2 border border-neon-orange/30 rounded-xl p-5 space-y-3">

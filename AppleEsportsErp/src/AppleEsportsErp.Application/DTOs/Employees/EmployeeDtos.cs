@@ -89,4 +89,11 @@ public class CreateEmployeeDto
     public string? RefRelationship { get; set; }
     public string? RefPhone { get; set; }
     public string? RefAddress { get; set; }
+
+    // System Account Link
+    public bool CreateSystemAccount { get; set; }
+    public string? SystemRole { get; set; } // "Operator" or "Admin"
+    public string? SystemUsername { get; set; }
+    public string? SystemPassword { get; set; }
+    public string? SystemPin { get; set; }
 }
