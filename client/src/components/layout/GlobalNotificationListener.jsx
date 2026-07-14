@@ -3,10 +3,14 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, MonitorPlay, X, Check, Loader2 } from 'lucide-react';
 import { useSocket } from '../../contexts/SocketContext';
 import { useToast } from '../ui/Toast';
+import { useBranch } from '../../contexts/BranchContext';
+import { useAuth } from '../../contexts/AuthContext';
 import api from '../../config/api';
 
 export default function GlobalNotificationListener() {
   const { subscribe, SIGNALR_HUBS, connected } = useSocket();
+  const { activeBranch } = useBranch();
+  const { user } = useAuth();
   const toast = useToast();
   
   // Array of active walk-in requests
@@ -25,6 +29,13 @@ export default function GlobalNotificationListener() {
         if (res.data.success) pcName = res.data.data.name;
       } catch (e) {
         // silent fallback to ID
+      }
+
+      // Filter notifications for Admins and SuperAdmins so they only see them for the actively selected branch
+      const isAdminOrSuperAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+      const alertBranchId = data.branchId || data.BranchId;
+      if (isAdminOrSuperAdmin && alertBranchId && activeBranch?.id && alertBranchId !== activeBranch.id) {
+        return; // Ignore this notification as it's not for the currently viewed branch
       }
 
       if (type === 'WalkinSessionRequest') {
@@ -72,6 +83,12 @@ export default function GlobalNotificationListener() {
         if (res.data.success) pcName = res.data.data.name;
       } catch (e) { }
 
+      const isAdminOrSuperAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+      const alertBranchId = data.branchId || data.BranchId;
+      if (isAdminOrSuperAdmin && alertBranchId && activeBranch?.id && alertBranchId !== activeBranch.id) {
+        return; 
+      }
+
       setRequests(prev => {
         const pcId = data.pcId || data.PcId;
         const reqData = { ...data, type: 'ExtensionRequested', resolvedPcName: pcName };
@@ -86,7 +103,7 @@ export default function GlobalNotificationListener() {
       if (unsubscribeStatus) unsubscribeStatus();
       if (unsubscribeExtension) unsubscribeExtension();
     };
-  }, [connected, subscribe, SIGNALR_HUBS.NOTIFICATIONS, SIGNALR_HUBS.PC_STATUS, SIGNALR_HUBS.SESSIONS, toast]);
+  }, [connected, subscribe, SIGNALR_HUBS.NOTIFICATIONS, SIGNALR_HUBS.PC_STATUS, SIGNALR_HUBS.SESSIONS, toast, user, activeBranch]);
 
   const handleApprove = async (req) => {
     setIsProcessing(true);

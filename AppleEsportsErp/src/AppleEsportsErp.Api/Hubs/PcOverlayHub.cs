@@ -193,10 +193,16 @@ public class PcOverlayHub : Hub
         _logger.LogInformation("Extension request from {PcId} for {Duration} mins", payload.PcId, payload.Duration);
         
         var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
-        var targetClients = pc != null ? _sessionHub.Clients.Group($"branch:{pc.BranchId}") : _sessionHub.Clients.All;
+        var targetClients = pc != null ? _sessionHub.Clients.Groups($"branch:{pc.BranchId}", "admin:all") : _sessionHub.Clients.All;
         
-        // Notify operators
-        await targetClients.SendAsync("ExtensionRequested", payload);
+        // Notify operators and admins globally
+        await targetClients.SendAsync("ExtensionRequested", new 
+        {
+            PcId = payload.PcId,
+            BranchId = pc?.BranchId,
+            Duration = payload.Duration,
+            SessionId = payload.SessionId
+        });
         
         // Simulating approval for the sake of the overlay testing. 
         // In real life, we would await an operator response.
@@ -207,13 +213,14 @@ public class PcOverlayHub : Hub
     {
         _logger.LogInformation("Operator called to {PcId}", payload.PcId);
         var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
-        var targetClients = pc != null ? _notificationHub.Clients.Group($"branch:{pc.BranchId}") : _notificationHub.Clients.All;
+        var targetClients = pc != null ? _notificationHub.Clients.Groups($"branch:{pc.BranchId}", "admin:all") : _notificationHub.Clients.All;
         
-        // Alert operators in the PC's branch
+        // Alert operators in the PC's branch, and admins globally
         await targetClients.SendAsync("Alert", new 
         { 
             Type = "OperatorCall",
             PcId = payload.PcId, 
+            BranchId = pc?.BranchId,
             Timestamp = payload.Timestamp,
             Message = $"Assistance required at {payload.PcId}" 
         });
@@ -238,13 +245,14 @@ public class PcOverlayHub : Hub
         PendingWalkinRequests[payload.PcId] = pending;
 
         var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
-        var targetClients = pc != null ? _notificationHub.Clients.Group($"branch:{pc.BranchId}") : _notificationHub.Clients.All;
+        var targetClients = pc != null ? _notificationHub.Clients.Groups($"branch:{pc.BranchId}", "admin:all") : _notificationHub.Clients.All;
 
-        // Real-time push to operator dashboards in this branch
+        // Real-time push to operator dashboards in this branch, and admins globally
         await targetClients.SendAsync("Alert", new
         {
             Type = "WalkinSessionRequest",
             pcId = payload.PcId,
+            branchId = pc?.BranchId,
             customerName = payload.CustomerName,
             duration = payload.Duration,
             packageName = payload.PackageName,
