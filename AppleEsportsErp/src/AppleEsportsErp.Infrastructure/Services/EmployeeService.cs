@@ -38,7 +38,7 @@ public class EmployeeService : IEmployeeService
             .Select(e => MapToDto(e))
             .ToListAsync();
 
-        return new PaginatedResult<EmployeeDto> { Items = items, Total = total, Page = page, PageSize = pageSize };
+        return new PaginatedResult<EmployeeDto>(items, total, page, pageSize);
     }
 
     public async Task<EmployeeDto> GetEmployeeByIdAsync(Guid id)
