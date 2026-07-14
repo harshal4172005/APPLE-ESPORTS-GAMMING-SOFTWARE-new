@@ -27,11 +27,6 @@ export default function SessionsPage() {
   const [overrideReason, setOverrideReason] = useState('');
   const [overrideLoading, setOverrideLoading] = useState(false);
 
-  // Billing Audit Logs states
-  const [auditDate, setAuditDate] = useState(new Date().toISOString().split('T')[0]);
-  const [auditLogs, setAuditLogs] = useState([]);
-  const [auditLoading, setAuditLoading] = useState(false);
-
   // Walk-in requests state
   const [walkinRequests, setWalkinRequests] = useState([]);
 
@@ -101,31 +96,10 @@ export default function SessionsPage() {
     }
   };
 
-  const fetchAuditLogs = useCallback(async () => {
-    if (!targetBranchId) return;
-    setAuditLoading(true);
-    try {
-      const response = await getRangeReport({
-        startDate: `${auditDate}T00:00:00Z`,
-        endDate: `${auditDate}T23:59:59Z`,
-        branchId: targetBranchId
-      });
-      setAuditLogs(response?.data?.allBills || []);
-    } catch (err) {
-      console.error('Failed to load audit logs', err);
-    } finally {
-      setAuditLoading(false);
-    }
-  }, [targetBranchId, auditDate]);
-
   useEffect(() => {
     setIsLoading(true);
     fetchPcs();
   }, [fetchPcs]);
-
-  useEffect(() => {
-    fetchAuditLogs();
-  }, [fetchAuditLogs]);
 
   useEffect(() => {
     const handleRefresh = (e) => {
@@ -351,80 +325,6 @@ export default function SessionsPage() {
         onFlagMaintenance={handleFlagMaintenance}
         onCreditClick={handleCreditClick}
       />
-
-      {/* ── Complete Billing Audit Logs ── */}
-      <div className="card bg-bg-2 border border-border p-6 rounded-xl mt-8">
-        <div className="flex justify-between items-center mb-6">
-          <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2">
-            <Clock className="w-4.5 h-4.5 text-accent" />
-            Complete Billing Audit Logs
-          </h2>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <input
-                type="date"
-                value={auditDate}
-                onChange={e => setAuditDate(e.target.value)}
-                className="bg-bg-3 border border-border text-text text-xs rounded-md p-1.5 focus:border-accent outline-none cursor-pointer"
-                style={{ colorScheme: 'dark' }}
-              />
-            </div>
-            <button
-              onClick={fetchAuditLogs}
-              className="btn-secondary py-1 px-3 text-[11px] font-bold uppercase tracking-wider"
-            >
-              Refresh
-            </button>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
-          {auditLoading ? (
-            <div className="flex justify-center items-center py-12">
-              <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
-            </div>
-          ) : auditLogs.length === 0 ? (
-            <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
-              No bills found for the selected date.
-            </div>
-          ) : (
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
-                  <th className="py-3 px-4">Date/Time</th>
-                  <th className="py-3 px-4">Bill Number</th>
-                  <th className="py-3 px-4">Operator</th>
-                  <th className="py-3 px-4">Customer</th>
-                  <th className="py-3 px-4 text-center">Payment</th>
-                  <th className="py-3 px-4 text-right">Gaming</th>
-                  <th className="py-3 px-4 text-right">Food</th>
-                  <th className="py-3 px-4 text-right">Discount</th>
-                  <th className="py-3 px-4 text-right">Total</th>
-                  <th className="py-3 px-4">Notes</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/40 font-mono">
-                {auditLogs.map(bill => (
-                  <tr key={bill.billId} className="hover:bg-bg-3/40 transition-colors">
-                    <td className="py-3 px-4 text-text-2 flex items-center gap-1">
-                      {new Date(bill.date).toLocaleString()}
-                    </td>
-                    <td className="py-3 px-4 text-text font-bold">{bill.billId}</td>
-                    <td className="py-3 px-4 text-neon-blue font-bold">{bill.operator}</td>
-                    <td className="py-3 px-4 text-text-2 font-sans">{bill.customer}</td>
-                    <td className="py-3 px-4 text-center text-text-3 uppercase">{bill.paymentType}</td>
-                    <td className="py-3 px-4 text-right text-text">₹{bill.gamingRevenue.toFixed(2)}</td>
-                    <td className="py-3 px-4 text-right text-text">₹{bill.foodRevenue.toFixed(2)}</td>
-                    <td className="py-3 px-4 text-right text-neon-red">{bill.discount > 0 ? `-₹${bill.discount.toFixed(2)}` : '-'}</td>
-                    <td className="py-3 px-4 text-right text-neon-green font-bold">₹{bill.totalRevenue.toFixed(2)}</td>
-                    <td className="py-3 px-4 text-text-3 text-[10px] whitespace-pre-wrap">{bill.sessionNotes || '-'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
 
       {/* ── Start Session Modal (only for new session initiation) ── */}
       <SessionActionModal
