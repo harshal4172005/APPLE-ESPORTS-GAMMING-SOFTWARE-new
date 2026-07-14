@@ -45,6 +45,7 @@ public class SessionsController : ControllerBase
         var result = await _sessionService.StartSessionAsync(GetBranchId(), (await this.GetOperatorIdAsync()), (await this.GetShiftIdAsync()), dto);
         // Remove any pending walk-in request for this PC now that a session has started
         PcOverlayHub.PendingWalkinRequests.TryRemove(dto.PcId.ToString(), out _);
+        PcOverlayHub.PendingWalkinRequests.TryRemove(result.PcName, out _);
         return Ok(ApiResponse<SessionDto>.Ok(result));
     }
 
@@ -54,6 +55,7 @@ public class SessionsController : ControllerBase
         Console.WriteLine($"[SessionsController] StopSession called for {id}. dto is null? {dto == null}. DeferPayment: {dto?.DeferPayment}");
         var result = await _sessionService.StopSessionAsync(GetBranchId(), (await this.GetOperatorIdAsync()), id, dto?.DeferPayment ?? false);
         AppleEsportsErp.Api.Hubs.PcOverlayHub.PendingWalkinRequests.TryRemove(result.PcId.ToString(), out _);
+        AppleEsportsErp.Api.Hubs.PcOverlayHub.PendingWalkinRequests.TryRemove(result.PcName, out _);
 
         // Auto-trigger wallet approval request for members
         if (result.MemberId != null)
