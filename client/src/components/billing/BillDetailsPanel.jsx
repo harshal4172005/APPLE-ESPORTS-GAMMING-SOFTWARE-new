@@ -115,7 +115,10 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
       (memberInfo.gamingBalance ?? 0) >= (bill.gamingAmount || 0) &&
       (memberInfo.foodBalance ?? 0) >= (bill.foodAmount || 0) && !walletWaiting;
     if (payMethod === 'split')  return Math.abs(splitDiff) <= 0.01;
-    if (payMethod === 'credit') return customerName.trim() !== '' && customerPhone.trim() !== '' && (parseFloat(cashReceived) || 0) <= total;
+    if (payMethod === 'credit') {
+      const amt = parseFloat(cashReceived) || 0;
+      return customerName.trim() !== '' && customerPhone.trim() !== '' && amt > 0 && amt < total;
+    }
     return false;
   })();
 
@@ -449,11 +452,11 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
               </label>
               <input
                 type="number"
-                min="0"
-                max={total}
+                min="1"
+                max={total - 1}
                 value={cashReceived}
                 onChange={e => setCashReceived(e.target.value)}
-                placeholder={`e.g. 0`}
+                placeholder={`Minimum payment > ₹0 required`}
                 className="w-full bg-bg-3 border border-border text-text font-mono text-xl rounded-lg p-2.5 focus:border-accent focus:ring-1 focus:ring-accent transition-all"
               />
               {/* Show Credit Remaining */}
