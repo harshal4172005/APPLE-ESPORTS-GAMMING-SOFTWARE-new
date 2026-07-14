@@ -14,6 +14,7 @@ export default function CreditsPage() {
   const [credits, setCredits] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState('pending'); // 'pending' | 'cleared' | 'all'
+  const [searchQuery, setSearchQuery] = useState('');
   
   const [selectedCredit, setSelectedCredit] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -96,6 +97,10 @@ export default function CreditsPage() {
     );
   }
 
+  const filteredCredits = credits.filter(c => 
+    !searchQuery || (c.customerName || 'Walk-in').toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
     <div className="h-full flex flex-col relative">
       <PageHeader
@@ -105,28 +110,40 @@ export default function CreditsPage() {
         badge="BETA"
       />
 
-      {/* Tabs */}
-      <div className="flex items-center gap-2 mt-6 border-b border-border pb-2">
-        <button
-          onClick={() => setFilter('pending')}
-          className={`px-4 py-2 text-sm font-bold uppercase tracking-wider rounded-t-lg border-b-2 transition-all ${
-            filter === 'pending'
-              ? 'border-neon-orange text-neon-orange bg-neon-orange/5'
-              : 'border-transparent text-text-3 hover:text-text-2'
-          }`}
-        >
-          Pending Credits
-        </button>
-        <button
-          onClick={() => setFilter('cleared')}
-          className={`px-4 py-2 text-sm font-bold uppercase tracking-wider rounded-t-lg border-b-2 transition-all ${
-            filter === 'cleared'
-              ? 'border-neon-blue text-neon-blue bg-neon-blue/5'
-              : 'border-transparent text-text-3 hover:text-text-2'
-          }`}
-        >
-          Cleared Credits
-        </button>
+      {/* Tabs & Search */}
+      <div className="flex items-center justify-between gap-4 mt-6 border-b border-border pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setFilter('pending')}
+            className={`px-4 py-2 text-sm font-bold uppercase tracking-wider rounded-t-lg border-b-2 transition-all ${
+              filter === 'pending'
+                ? 'border-neon-orange text-neon-orange bg-neon-orange/5'
+                : 'border-transparent text-text-3 hover:text-text-2'
+            }`}
+          >
+            Pending Credits
+          </button>
+          <button
+            onClick={() => setFilter('cleared')}
+            className={`px-4 py-2 text-sm font-bold uppercase tracking-wider rounded-t-lg border-b-2 transition-all ${
+              filter === 'cleared'
+                ? 'border-neon-blue text-neon-blue bg-neon-blue/5'
+                : 'border-transparent text-text-3 hover:text-text-2'
+            }`}
+          >
+            Cleared Credits
+          </button>
+        </div>
+        <div className="relative">
+          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-text-3" />
+          <input
+            type="text"
+            placeholder="Search customer name..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 pr-4 py-1.5 text-sm bg-bg-3 border border-border rounded-lg text-text focus:outline-none focus:border-accent w-64 transition-colors"
+          />
+        </div>
       </div>
 
       {/* List */}
@@ -135,7 +152,7 @@ export default function CreditsPage() {
           <div className="flex items-center justify-center h-32">
             <span className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin"></span>
           </div>
-        ) : credits.length === 0 ? (
+        ) : filteredCredits.length === 0 ? (
           <div className="text-center text-text-3 py-12 bg-bg-2 rounded-xl border border-border/50">
             <CheckCircle2 className="w-12 h-12 mx-auto mb-3 opacity-20" />
             <p className="text-sm font-bold uppercase tracking-wider">No Credits Found</p>
@@ -155,7 +172,7 @@ export default function CreditsPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
-                {credits.map(credit => (
+                {filteredCredits.map(credit => (
                   <tr key={credit.id} className="hover:bg-bg-3/30 transition-colors group">
                     <td className="p-4">
                       <div className="flex flex-col">
