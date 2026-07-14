@@ -4,10 +4,12 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import api from '../../config/api';
 import PageHeader from '../../components/layout/PageHeader';
+import { useSocket } from '../../contexts/SocketContext';
 
 export default function EodDashboardPage() {
   const { isSuperAdmin, user } = useAuth();
   const { activeBranch } = useBranch();
+  const { subscribe, connected, SIGNALR_HUBS } = useSocket();
 
   const [targetDate, setTargetDate] = useState(new Date().toISOString().split('T')[0]); // YYYY-MM-DD
   const [report, setReport] = useState(null);
@@ -87,6 +89,22 @@ export default function EodDashboardPage() {
   useEffect(() => {
     fetchEodData();
   }, [fetchEodData]);
+
+  // Real-time EOD updates via SignalR
+  useEffect(() => {
+    if (!connected || isHistorical) return;
+
+    // Listen to changes that impact EOD (Bills, Cash, Sessions)
+    const unsubCash = subscribe(SIGNALR_HUBS.CASH, 'CashRegisterUpdated', () => fetchEodData());
+    const unsubBill = subscribe(SIGNALR_HUBS.BILLING, 'BillUpdated', () => fetchEodData());
+    const unsubSession = subscribe(SIGNALR_HUBS.SESSIONS, 'SessionUpdated', () => fetchEodData());
+
+    return () => {
+      unsubCash();
+      unsubBill();
+      unsubSession();
+    };
+  }, [connected, subscribe, SIGNALR_HUBS.CASH, SIGNALR_HUBS.BILLING, SIGNALR_HUBS.SESSIONS, fetchEodData, isHistorical]);
 
   const handleFinalize = async () => {
     if (!window.confirm("Are you sure? This will generate a permanent immutable snapshot for this date. It cannot be undone.")) return;

@@ -24,8 +24,8 @@ public abstract class BranchAwareHub : Hub
         var userId = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier);
         var userName = Context.User?.FindFirstValue(ClaimTypes.Name);
 
-        // SOP §6.4: Operators join their branch group only
-        if (role == Roles.Operator && !string.IsNullOrEmpty(branchId))
+        // SOP §6.4: Operators and Admins join their branch group
+        if ((role == Roles.Operator || role == Roles.Admin) && !string.IsNullOrEmpty(branchId))
             await Groups.AddToGroupAsync(Context.ConnectionId, $"branch:{branchId}");
 
         // Super Admin joins all-branches group
