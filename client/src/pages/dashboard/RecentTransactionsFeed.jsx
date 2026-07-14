@@ -59,12 +59,7 @@ export default function RecentTransactionsFeed({ transactions }) {
                   </div>
                   
                   <div className="text-text-2 text-xs leading-relaxed flex items-center gap-2 flex-wrap">
-                    <span>{mainText}</span>
-                    {customerName && (
-                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-neon-green/10 text-neon-green border border-neon-green/20">
-                        {customerName}
-                      </span>
-                    )}
+                    <span>{customerName ? `${customerName} - ${mainText}` : mainText}</span>
                   </div>
                   
                   <div className="flex items-center gap-3 mt-2">

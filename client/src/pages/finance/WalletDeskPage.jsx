@@ -116,12 +116,9 @@ export default function WalletDeskPage() {
                           </div>
                           <div>
                             <div className="flex items-center gap-2">
-                              <p className="text-sm font-medium text-text">{mainText}</p>
-                              {customerName && (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-neon-green/10 text-neon-green border border-neon-green/20">
-                                  {customerName}
-                                </span>
-                              )}
+                              <p className="text-sm font-medium text-text">
+                                {customerName ? `${customerName} - ${mainText}` : mainText}
+                              </p>
                             </div>
                             <p className="text-xs text-text-3">{format(new Date(tx.timestamp), 'MMM d, hh:mm a')}</p>
                           </div>
