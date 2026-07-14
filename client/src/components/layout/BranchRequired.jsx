@@ -4,7 +4,7 @@ import { useBranch } from '../../contexts/BranchContext';
 import { Store, MonitorPlay, Users, Clock } from 'lucide-react';
 
 // Paths that intentionally work in "All Branches" global view
-const GLOBAL_PATHS = ['/app/dashboard', '/app/settings'];
+const GLOBAL_PATHS = ['/app/dashboard', '/app/settings', '/app/employee-forms'];
 
 export default function BranchRequired({ children }) {
   const { isSuperAdmin } = useAuth();
@@ -21,7 +21,7 @@ export default function BranchRequired({ children }) {
   return children;
 }
 
-function BranchPickerOverlay({ branches, onSelect }) {
+export function BranchPickerOverlay({ branches, onSelect }) {
   return (
     <div className="min-h-[70vh] flex flex-col items-center justify-center px-4">
       {/* Header */}

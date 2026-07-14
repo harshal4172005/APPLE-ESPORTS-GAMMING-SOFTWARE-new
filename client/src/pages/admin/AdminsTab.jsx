@@ -159,12 +159,13 @@ export default function AdminsTab() {
     };
 
     const AVAILABLE_PERMISSIONS = [
-      { id: 'reports', label: 'Reports & Analytics', desc: 'Reconciliation reports and revenue data' },
-      { id: 'settings', label: 'System Settings', desc: 'Configure branches and system rules' },
-      { id: 'pc_status', label: 'PC Fleet Status', desc: 'Full PC network health overview' },
-      // Admins have access to operators' pages by default in the branch, but we can also restrict them:
-      { id: 'members', label: 'Member Management', desc: 'Manage member accounts globally' },
-      { id: 'menu_editor', label: 'Menu & Pricing Profiles', desc: 'Configure cafe rates' }
+      { id: 'reports', label: 'Financial Reports & Audits', desc: 'View global revenue, EOD reports, and reconciliation' },
+      { id: 'settings', label: 'Global Settings & Branches', desc: 'Manage branch rules, shifts, and system configurations' },
+      { id: 'discount', label: 'Allow Manual Discounts', desc: 'Can apply custom discounts during billing and checkout' },
+      { id: 'pc_status', label: 'Live PC Fleet Overview', desc: 'Monitor active sessions and PC health across all branches' },
+      { id: 'members', label: 'Global Member Directory', desc: 'View and edit any customer account from any branch' },
+      { id: 'menu_editor', label: 'Café Menu & Pricing Editor', desc: 'Modify food items, inventory, and PC pricing rates' },
+      { id: 'employee_forms', label: 'HR & Employee Records', desc: 'Access employee joining forms and staff directories' }
     ];
 
     return (
@@ -185,8 +186,8 @@ export default function AdminsTab() {
         </div>
 
         <div className="form-group">
-          <label>Admin Switch PIN (Optional) <span className="text-text-3 font-normal ml-1">4-6 digits for Quick-Switch</span></label>
-          <input type="password" name="accessPin" defaultValue={initialData?.hasAccessPin ? '****' : ''} className="form-control" placeholder="1234" maxLength={6} pattern="\d{4,6}" title="4 to 6 digit PIN" />
+          <label>Admin Switch PIN (Optional) <span className="text-text-3 font-normal ml-1">{initialData?.hasAccessPin ? '(Leave blank to keep current)' : '4-6 digits for Quick-Switch'}</span></label>
+          <input type="password" name="accessPin" defaultValue="" className="form-control" placeholder={initialData?.hasAccessPin ? '••••' : '1234'} maxLength={6} pattern="\d{4,6}" title="4 to 6 digit PIN" />
         </div>
 
         <div className="mt-6 mb-2">

@@ -107,8 +107,29 @@ export const getSystemConfigs = async () => {
   return response.data;
 };
 
-export const saveSystemConfig = async (configData) => {
-  const response = await api.post('/system-config', configData);
+export const saveSystemConfig = async (data) => {
+  const response = await api.post('/system-config', data);
+  return response.data;
+};
+
+// --- Pricing Profiles ---
+export const getPricingProfiles = async (branchId) => {
+  const response = await api.get(`/pricing-profiles?branchId=${branchId}`);
+  return response.data;
+};
+
+export const createPricingProfile = async (data) => {
+  const response = await api.post('/pricing-profiles', data);
+  return response.data;
+};
+
+export const updatePricingProfile = async (id, data) => {
+  const response = await api.put(`/pricing-profiles/${id}`, data);
+  return response.data;
+};
+
+export const deletePricingProfile = async (id) => {
+  const response = await api.delete(`/pricing-profiles/${id}`);
   return response.data;
 };
 

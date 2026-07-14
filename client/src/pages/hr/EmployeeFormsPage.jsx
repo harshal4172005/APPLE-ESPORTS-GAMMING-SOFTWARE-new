@@ -2,13 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   User, Phone, Home, Briefcase, Landmark, Users,
   Search, Plus, ChevronDown, ChevronUp, Printer,
-  CheckCircle2, ArrowLeft, Eye, EyeOff, FileText, Shield
+  CheckCircle2, ArrowLeft, Eye, EyeOff, FileText, Shield, Store
 } from 'lucide-react';
 import api from '../../config/api';
 import PageHeader from '../../components/layout/PageHeader';
 import { useToast } from '../../components/ui/Toast';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
+import { BranchPickerOverlay } from '../../components/layout/BranchRequired';
 
 // ─── Print stylesheet injected once ───────────────────────────────────────────
 const printStyle = `
@@ -207,7 +208,7 @@ function EmployeeDetailView({ employee, onBack }) {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 export default function EmployeeFormsPage() {
   const { isSuperAdmin, user } = useAuth();
-  const { activeBranch } = useBranch();
+  const { activeBranch, branches, switchBranch } = useBranch();
   const toast = useToast();
 
   const [tab, setTab] = useState('records'); // 'records' | 'new'
@@ -221,17 +222,18 @@ export default function EmployeeFormsPage() {
   const targetBranchId = isSuperAdmin ? activeBranch?.id : user?.branchId;
 
   const fetchEmployees = useCallback(async () => {
-    if (!targetBranchId) return;
+    // If not super admin and no branch is set (shouldn't happen), prevent fetch.
+    if (!isSuperAdmin && !targetBranchId) return;
     try {
       setIsLoading(true);
-      const res = await api.get('/employees', { params: { search: search || undefined, page: 1, pageSize: 100 } });
+      const res = await api.get('/employees', { params: { branchId: targetBranchId || undefined, search: search || undefined, page: 1, pageSize: 100 } });
       setEmployees(res.data.data?.items || []);
     } catch {
       toast.error('Failed to load employee records');
     } finally {
       setIsLoading(false);
     }
-  }, [targetBranchId, search]);
+  }, [targetBranchId, search, isSuperAdmin]);
 
   useEffect(() => { fetchEmployees(); }, [fetchEmployees]);
 
@@ -251,7 +253,7 @@ export default function EmployeeFormsPage() {
         emergencyName: form.emergencyName || null, emergencyRelationship: form.emergencyRelationship || null,
         emergencyPhone: form.emergencyPhone || null, emergencyEmail: form.emergencyEmail || null,
         emergencyAddress: form.emergencyAddress || null,
-        positionTitle: form.positionTitle || null, department: form.department || null,
+        positionTitle: form.positionTitle || null, department: activeBranch?.name || form.department || null,
         supervisor: form.supervisor || null, startDate: form.startDate || null,
         bankName: form.bankName || null, accountNumber: form.accountNumber || null,
         accountHolderName: form.accountHolderName || null, bankBranch: form.bankBranch || null,
@@ -274,16 +276,6 @@ export default function EmployeeFormsPage() {
       setIsSubmitting(false);
     }
   };
-
-  if (isSuperAdmin && !activeBranch) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-        <FileText className="w-12 h-12 text-text-3 mb-4" />
-        <h2 className="text-xl font-heading font-bold text-text mb-2">Select a Branch</h2>
-        <p className="text-text-2">You must select a branch to view or add employees.</p>
-      </div>
-    );
-  }
 
   if (selectedEmployee) {
     return (
@@ -393,7 +385,10 @@ export default function EmployeeFormsPage() {
 
         {/* ── New Form Tab ── */}
         {tab === 'new' && (
-          <form onSubmit={handleSubmit} className="space-y-5 pb-10">
+          !targetBranchId ? (
+            <BranchPickerOverlay branches={branches} onSelect={switchBranch} />
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-5 pb-10">
             {/* Personal */}
             <Section icon={User} title="Personal Information" color="text-neon-purple">
               <div className={grid2}>
@@ -467,10 +462,11 @@ export default function EmployeeFormsPage() {
                 <div><label className="text-[10px] font-bold uppercase tracking-widest text-text-3 block mb-1">Position Title</label><input value={form.positionTitle} onChange={set('positionTitle')} placeholder="e.g. Gaming Operator" className={inputCls} /></div>
                 <div>
                   <label className="text-[10px] font-bold uppercase tracking-widest text-text-3 block mb-1">Department / Branch</label>
-                  <select value={form.department} onChange={set('department')} className={selectCls}>
-                    <option value="">Select Branch...</option>
-                    <option>Adajan Branch</option><option>Citylight Branch</option>
-                    <option>Katargam Branch</option><option>Varaccha Branch</option>
+                  <select value={activeBranch?.id || ''} onChange={(e) => switchBranch(e.target.value)} className={selectCls}>
+                    <option value="" disabled>Select Branch...</option>
+                    {branches.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
                   </select>
                 </div>
                 <div><label className="text-[10px] font-bold uppercase tracking-widest text-text-3 block mb-1">Supervisor / Manager</label><input value={form.supervisor} onChange={set('supervisor')} placeholder="Reporting manager name" className={inputCls} /></div>
@@ -543,6 +539,10 @@ export default function EmployeeFormsPage() {
               <p className="text-xs text-text-2 leading-relaxed">
                 By submitting this form, the employee declares that all information provided is true, complete, and accurate. Any false information will be their sole responsibility. They confirm having read and accepted all terms and conditions provided by Apple Esports.
               </p>
+              <label className="flex items-center gap-3 cursor-pointer select-none pt-2 border-t border-border/50">
+                <input type="checkbox" required className="w-4 h-4 rounded border-border bg-bg-3 text-neon-orange focus:ring-neon-orange focus:ring-offset-bg-2 cursor-pointer" />
+                <span className="text-xs font-bold text-text">I acknowledge and accept this declaration</span>
+              </label>
             </div>
 
             {/* Submit */}
@@ -558,6 +558,7 @@ export default function EmployeeFormsPage() {
               </button>
             </div>
           </form>
+          )
         )}
       </div>
     </div>

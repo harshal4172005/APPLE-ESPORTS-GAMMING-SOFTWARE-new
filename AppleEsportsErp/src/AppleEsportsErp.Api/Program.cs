@@ -234,6 +234,7 @@ builder.Services.AddHostedService<AppleEsportsErp.Api.Services.OpenSessionMonito
 builder.Services.AddHostedService<AppleEsportsErp.Api.Services.DeferredBillingMonitorService>();
 builder.Services.AddScoped<IOfflineSyncService, OfflineSyncService>();
 builder.Services.AddScoped<IEmployeeService, EmployeeService>();
+builder.Services.AddScoped<IPricingProfileService, PricingProfileService>();
 
 
 // ── 9. Controllers + Swagger ──

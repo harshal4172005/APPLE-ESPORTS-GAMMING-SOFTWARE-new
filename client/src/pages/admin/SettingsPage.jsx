@@ -11,7 +11,7 @@ import {
   getBranchPcsDetailed, createPc, updatePc, deletePc,
   getAuditLogs,
   forceLogoutOperator, getSystemConfigs, saveSystemConfig,
-  manageOperatorAdminRole
+  manageOperatorAdminRole, getPricingProfiles
 } from '../../api/settings.api';
 import { authAPI } from '../../api/auth.api';
 import {
@@ -20,6 +20,7 @@ import {
 import SystemConfigTab from './SystemConfigTab';
 import SecuritySettingsTab from './SecuritySettingsTab';
 import AdminsTab from './AdminsTab';
+import PricingProfilesTab from './PricingProfilesTab';
 import './SettingsPage.css';
 
 const PERMISSION_KEYS = [
@@ -61,7 +62,7 @@ export default function SettingsPage() {
   const [credentialsDrawer, setCredentialsDrawer] = useState({ isOpen: false, data: null });
   
   // PC fleet sub-state for a specific branch
-  const [pcModal, setPcModal] = useState({ isOpen: false, branch: null, pcs: [], loading: false });
+  const [pcModal, setPcModal] = useState({ isOpen: false, branch: null, pcs: [], pricingProfiles: [], loading: false });
   const [pcDrawer, setPcDrawer] = useState({ isOpen: false, data: null }); // Nested PC create/edit drawer
 
   // Dropdown States — tracks id + screen coords for fixed-position menu
@@ -266,10 +267,18 @@ export default function SettingsPage() {
 
   // ----- PC FLEET HANDLERS -----
   const openPcManager = async (branch) => {
-    setPcModal({ isOpen: true, branch, pcs: [], loading: true });
+    setPcModal({ isOpen: true, branch, pcs: [], pricingProfiles: [], loading: true });
     try {
-      const pcsData = await getBranchPcsDetailed(branch.id);
-      setPcModal(prev => ({ ...prev, pcs: pcsData.data || [], loading: false }));
+      const [pcsData, pricingData] = await Promise.all([
+        getBranchPcsDetailed(branch.id),
+        getPricingProfiles(branch.id)
+      ]);
+      setPcModal(prev => ({ 
+        ...prev, 
+        pcs: pcsData.data || [], 
+        pricingProfiles: pricingData.data?.filter(p => p.isActive) || [],
+        loading: false 
+      }));
     } catch (error) {
       toast.error('Failed to load PC fleet status');
       setPcModal(prev => ({ ...prev, loading: false }));
@@ -280,10 +289,19 @@ export default function SettingsPage() {
     // Use the override or fall back to the current pcModal.branch
     const targetBranchId = branchIdOverride || pcModal.branch?.id;
     if (!targetBranchId) return;
+
     setPcModal(prev => ({ ...prev, loading: true }));
     try {
-      const pcsData = await getBranchPcsDetailed(targetBranchId);
-      setPcModal(prev => ({ ...prev, pcs: pcsData.data || [], loading: false }));
+      const [pcsData, pricingData] = await Promise.all([
+        getBranchPcsDetailed(targetBranchId),
+        getPricingProfiles(targetBranchId)
+      ]);
+      setPcModal(prev => ({ 
+        ...prev, 
+        pcs: pcsData.data || [], 
+        pricingProfiles: pricingData.data?.filter(p => p.isActive) || [],
+        loading: false 
+      }));
     } catch (error) {
       toast.error('Failed to load PC fleet status');
       setPcModal(prev => ({ ...prev, loading: false }));
@@ -306,6 +324,7 @@ export default function SettingsPage() {
       ipAddress: formData.get('ipAddress'),
       specs: JSON.stringify(specs),
       zone: formData.get('zone'),
+      pricingProfileId: formData.get('pricingProfileId') || null,
       hardwareNotes: formData.get('hardwareNotes')
     };
 
@@ -382,6 +401,12 @@ export default function SettingsPage() {
                   onClick={() => setActiveTab('system-config')}
                 >
                   <Wrench size={16} /> System Configuration
+                </button>
+                <button 
+                  className={`nav-item w-full ${activeTab === 'pricing-profiles' ? 'active' : ''}`} 
+                  onClick={() => setActiveTab('pricing-profiles')}
+                >
+                  <Monitor size={16} /> Pricing Profiles
                 </button>
                 <button 
                   className={`nav-item w-full ${activeTab === 'security' ? 'active' : ''}`} 
@@ -616,6 +641,9 @@ export default function SettingsPage() {
               {/* SYSTEM CONFIG TAB */}
               {activeTab === 'system-config' && <SystemConfigTab />}
 
+              {/* PRICING PROFILES TAB */}
+              {activeTab === 'pricing-profiles' && <PricingProfilesTab />}
+
               {/* SECURITY SETTINGS TAB */}
               {activeTab === 'security' && <SecuritySettingsTab />}
               
@@ -835,7 +863,7 @@ export default function SettingsPage() {
                       <tr>
                         <th>Rig / No</th>
                         <th>Specs</th>
-                        <th>Network Zone</th>
+                        <th>Zone / Profile</th>
                         <th>IP Address</th>
                         <th>Hardware Notes</th>
                         <th>Status</th>
@@ -851,6 +879,8 @@ export default function SettingsPage() {
                           parsedSpecs = {};
                         }
 
+                        const profile = pcModal.pricingProfiles?.find(prof => prof.id === p.pricingProfileId);
+
                         return (
                           <tr key={p.id}>
                             <td className="font-semibold text-text font-heading text-xs">
@@ -862,7 +892,11 @@ export default function SettingsPage() {
                               ) : 'N/A'}
                             </td>
                             <td>
-                              <span className="px-2 py-0.5 bg-bg-3 rounded border border-border text-text-2">{p.zone || 'Standard'}</span>
+                              {profile ? (
+                                <span className="px-2 py-0.5 bg-accent/10 rounded border border-accent/20 text-accent font-medium">{profile.name}</span>
+                              ) : (
+                                <span className="px-2 py-0.5 bg-bg-3 rounded border border-border text-text-2">{p.zone || 'Standard'}</span>
+                              )}
                             </td>
                             <td className="text-text-2 font-mono">{p.ipAddress || '-'}</td>
                             <td className="text-text-2 max-w-[120px] truncate">{p.hardwareNotes || '-'}</td>
@@ -936,7 +970,7 @@ export default function SettingsPage() {
           </div>
 
           <div className="form-group">
-            <label>Zone / Tier</label>
+            <label>Zone / Tier (Legacy)</label>
             <select 
               name="zone" 
               defaultValue={pcDrawer.data?.zone || 'Standard'} 
@@ -947,6 +981,23 @@ export default function SettingsPage() {
               <option value="Console">Console Room</option>
               <option value="Streaming">Streaming Booth</option>
             </select>
+          </div>
+
+          <div className="form-group">
+            <label>Pricing Profile / Dynamic Zone</label>
+            <select 
+              name="pricingProfileId" 
+              defaultValue={pcDrawer.data?.pricingProfileId || ''} 
+              className="form-control"
+            >
+              <option value="">-- No Pricing Profile Assigned --</option>
+              {pcModal.pricingProfiles?.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name} (₹{p.baseHourlyRate}/hr)
+                </option>
+              ))}
+            </select>
+            <p className="text-[10px] text-text-3 mt-1">Select the billing profile for this PC.</p>
           </div>
 
           <div className="form-group">

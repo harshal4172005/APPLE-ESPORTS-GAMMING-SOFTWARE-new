@@ -11,6 +11,9 @@ public class PricingProfile
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 
+    public string? RefreshRate { get; set; }
+    public string? SystemSpecs { get; set; }
+    
     // Navigation
     public Branch Branch { get; set; } = null!;
     public ICollection<Pc> Pcs { get; set; } = new List<Pc>();
