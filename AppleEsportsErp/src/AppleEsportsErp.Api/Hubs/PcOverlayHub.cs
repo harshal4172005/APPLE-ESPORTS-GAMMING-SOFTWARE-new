@@ -192,8 +192,11 @@ public class PcOverlayHub : Hub
     {
         _logger.LogInformation("Extension request from {PcId} for {Duration} mins", payload.PcId, payload.Duration);
         
+        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
+        var targetClients = pc != null ? _sessionHub.Clients.Group($"branch:{pc.BranchId}") : _sessionHub.Clients.All;
+        
         // Notify operators
-        await _sessionHub.Clients.All.SendAsync("ExtensionRequested", payload);
+        await targetClients.SendAsync("ExtensionRequested", payload);
         
         // Simulating approval for the sake of the overlay testing. 
         // In real life, we would await an operator response.
@@ -203,9 +206,11 @@ public class PcOverlayHub : Hub
     public async Task<object> CallOperator(CallPayload payload)
     {
         _logger.LogInformation("Operator called to {PcId}", payload.PcId);
+        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
+        var targetClients = pc != null ? _notificationHub.Clients.Group($"branch:{pc.BranchId}") : _notificationHub.Clients.All;
         
-        // Alert all operators
-        await _notificationHub.Clients.All.SendAsync("Alert", new 
+        // Alert operators in the PC's branch
+        await targetClients.SendAsync("Alert", new 
         { 
             Type = "OperatorCall",
             PcId = payload.PcId, 
@@ -232,8 +237,11 @@ public class PcOverlayHub : Hub
         // Persist so operators can poll for missed SignalR events
         PendingWalkinRequests[payload.PcId] = pending;
 
-        // Real-time push to all connected operator dashboards
-        await _notificationHub.Clients.All.SendAsync("Alert", new
+        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
+        var targetClients = pc != null ? _notificationHub.Clients.Group($"branch:{pc.BranchId}") : _notificationHub.Clients.All;
+
+        // Real-time push to operator dashboards in this branch
+        await targetClients.SendAsync("Alert", new
         {
             Type = "WalkinSessionRequest",
             pcId = payload.PcId,
