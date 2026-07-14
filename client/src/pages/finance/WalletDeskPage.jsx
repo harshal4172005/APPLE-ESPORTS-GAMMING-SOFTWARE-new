@@ -105,6 +105,9 @@ export default function WalletDeskPage() {
                 <div className="space-y-3">
                   {data.transactions.map((tx) => {
                     const isTopUp = tx.action.includes('Recharge');
+                    const match = tx.description.match(/^(.*) \((.*)\)$/);
+                    const mainText = match ? match[1] : tx.description;
+                    const customerName = match ? match[2] : null;
                     return (
                       <div key={tx.id} className="flex items-center justify-between p-3 rounded-lg bg-bg-3 border border-border">
                         <div className="flex items-center gap-3">
@@ -112,7 +115,14 @@ export default function WalletDeskPage() {
                             {isTopUp ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
                           </div>
                           <div>
-                            <p className="text-sm font-medium text-text">{tx.description}</p>
+                            <div className="flex items-center gap-2">
+                              <p className="text-sm font-medium text-text">{mainText}</p>
+                              {customerName && (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-neon-green/10 text-neon-green border border-neon-green/20">
+                                  {customerName}
+                                </span>
+                              )}
+                            </div>
                             <p className="text-xs text-text-3">{format(new Date(tx.timestamp), 'MMM d, hh:mm a')}</p>
                           </div>
                         </div>

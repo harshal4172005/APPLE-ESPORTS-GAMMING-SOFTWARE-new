@@ -95,22 +95,33 @@ export default function OnlineDeskPage() {
             ) : (
               <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin">
                 <div className="space-y-3">
-                  {data.transactions.map((tx) => (
+                  {data.transactions.map((tx) => {
+                    const match = tx.description.match(/^(.*) \((.*)\)$/);
+                    const mainText = match ? match[1] : tx.description;
+                    const customerName = match ? match[2] : null;
+                    return (
                     <div key={tx.id} className="flex items-center justify-between p-3 rounded-lg bg-bg-3 border border-border">
                       <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-accent/10 flex items-center justify-center text-accent">
                           <ArrowRightLeft className="w-4 h-4" />
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-text">{tx.description}</p>
-                          <p className="text-xs text-text-3">{format(new Date(tx.timestamp), 'MMM d, hh:mm a')}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium text-text">{mainText}</p>
+                            {customerName && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-neon-green/10 text-neon-green border border-neon-green/20">
+                                {customerName}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-text-3 mt-0.5">{format(new Date(tx.timestamp), 'MMM d, hh:mm a')}</p>
                         </div>
                       </div>
                       <div className="font-mono font-bold text-accent">
                         +₹{tx.amount.toFixed(2)}
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               </div>
             )}

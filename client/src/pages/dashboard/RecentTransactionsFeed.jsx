@@ -34,6 +34,9 @@ export default function RecentTransactionsFeed({ transactions }) {
         <AnimatePresence initial={false}>
           {transactions.map((tx, idx) => {
             const { icon: Icon, color, bg } = getIconAndColor(tx.category, tx.type);
+            const match = tx.description ? tx.description.match(/^(.*) \((.*)\)$/) : null;
+            const mainText = match ? match[1] : tx.description;
+            const customerName = match ? match[2] : null;
             
             return (
               <motion.div
@@ -55,9 +58,14 @@ export default function RecentTransactionsFeed({ transactions }) {
                     </span>
                   </div>
                   
-                  <p className="text-text-2 text-xs line-clamp-2 leading-relaxed">
-                    {tx.description}
-                  </p>
+                  <div className="text-text-2 text-xs leading-relaxed flex items-center gap-2 flex-wrap">
+                    <span>{mainText}</span>
+                    {customerName && (
+                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-neon-green/10 text-neon-green border border-neon-green/20">
+                        {customerName}
+                      </span>
+                    )}
+                  </div>
                   
                   <div className="flex items-center gap-3 mt-2">
                     {tx.amount != null && (
