@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { UserCheck, Lock, Loader2, ArrowLeft } from 'lucide-react';
 import axios from 'axios';
 import { useToast } from '../../../components/ui/Toast';
+import PasswordInput from '../../../components/ui/PasswordInput';
 
 export default function OverlayMemberLoginScreen() {
   const { pcId } = useParams();
@@ -121,8 +122,7 @@ export default function OverlayMemberLoginScreen() {
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Lock className="h-4 w-4 text-text-3" />
               </div>
-              <input
-                type="password"
+              <PasswordInput
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

@@ -5,6 +5,8 @@ import { UserCheck, Lock, ArrowLeft, Loader2 } from 'lucide-react';
 import axios from 'axios';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../components/ui/Toast';
+import api from '../../config/api';
+import PasswordInput from '../../components/ui/PasswordInput';
 
 export default function MemberLoginPage() {
   const navigate = useNavigate();
@@ -98,8 +100,7 @@ export default function MemberLoginPage() {
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Lock className="h-5 w-5 text-text-muted" />
                 </div>
-                <input
-                  type="password"
+                <PasswordInput
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
