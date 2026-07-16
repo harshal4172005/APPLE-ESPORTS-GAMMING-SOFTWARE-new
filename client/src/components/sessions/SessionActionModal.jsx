@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Play, X, User, Clock, Users, Search } from 'lucide-react';
+import { Play, X, User, Clock, Users, Search, Loader2 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { getMembers } from '../../api/members.api';
 import api from '../../config/api';
@@ -18,7 +18,6 @@ export default function SessionActionModal({ pc, onClose, onActionSuccess }) {
   const [form, setForm] = useState({
     customerName: pc?.isRestart && pc?.lastCustomerName ? pc.lastCustomerName : '',
     customerType: pc?.isRestart && pc?.lastMemberId ? 'Member' : 'Walk-in',
-    durationMinutes: 0, // 0 means Open Session
     memberId: pc?.isRestart && pc?.lastMemberId ? pc.lastMemberId : null,
   });
 
@@ -26,6 +25,31 @@ export default function SessionActionModal({ pc, onClose, onActionSuccess }) {
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [selectedMember, setSelectedMember] = useState(null);
+
+  const [plans, setPlans] = useState([]);
+  const [selectedPlan, setSelectedPlan] = useState(null);
+  const [loadingPlans, setLoadingPlans] = useState(true);
+
+  useEffect(() => {
+    if (!pc) return;
+    const fetchPlans = async () => {
+      try {
+        setLoadingPlans(true);
+        const res = await api.get(`/public/pcs/${pc.id}/plans`);
+        if (res.data.success) {
+          setPlans(res.data.data);
+          if (res.data.data.length > 0) {
+            setSelectedPlan(res.data.data[0]);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch PC plans', err);
+      } finally {
+          setLoadingPlans(false);
+      }
+    };
+    fetchPlans();
+  }, [pc]);
 
   if (!pc) return null;
 
@@ -76,23 +100,21 @@ export default function SessionActionModal({ pc, onClose, onActionSuccess }) {
       setError('Customer name is required.');
       return;
     }
+    if (!selectedPlan) {
+      setError('Please wait for plans to load or select a plan.');
+      return;
+    }
 
     setLoading(true);
     setError(null);
     try {
-      const ratePerHour = form.customerType.toLowerCase() === 'member' ? 80 : 100;
-      const expectedAmount = form.durationMinutes > 0 ? (form.durationMinutes / 60) * ratePerHour : 0;
-      const packageName = form.durationMinutes > 0 
-        ? `${form.customerType.toUpperCase()} - ${form.durationMinutes}m` 
-        : `${form.customerType.toUpperCase()} - OPEN`;
-      
       await api.post('/sessions/start', {
         pcId: pc.id,
         customerName: form.customerName.trim(),
         customerType: form.customerType,
-        durationMinutes: form.durationMinutes,
-        packageName: packageName,
-        expectedAmount: expectedAmount,
+        durationMinutes: selectedPlan.duration > 0 ? selectedPlan.duration : null,
+        packageName: selectedPlan.name,
+        expectedAmount: selectedPlan.price,
         isOverride: isSuperAdmin,
         operatorId: user?.id,
         memberId: form.memberId,
@@ -239,30 +261,38 @@ export default function SessionActionModal({ pc, onClose, onActionSuccess }) {
               />
             </div>
 
-            {/* Duration */}
+            {/* Branch-Wise Plan Selection */}
             <div className="space-y-1.5">
-              <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center gap-1">
-                <Clock className="w-3 h-3" /> Duration
+              <label className="text-[10px] font-mono font-semibold text-text-2 uppercase tracking-wider flex items-center justify-between">
+                <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> Select Plan</span>
+                {loadingPlans && <Loader2 className="w-3 h-3 animate-spin text-accent" />}
               </label>
-              <div className="grid grid-cols-4 gap-1.5">
-                {[0, 60, 120, 180].map(min => {
-                  const label = min === 0 ? 'Open' : (min === 60 ? '1 Hr' : `${min / 60} Hrs`);
-                  return (
+              
+              {!loadingPlans && plans.length === 0 ? (
+                <div className="text-xs text-text-3 border border-border/50 bg-bg-3 p-3 rounded text-center">
+                  No plans available for this PC.
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {plans.map(plan => (
                     <button
-                      key={min}
+                      key={plan.id}
                       type="button"
-                      onClick={() => setForm(f => ({ ...f, durationMinutes: min }))}
-                      className={`py-2 rounded border text-xs font-semibold transition-colors ${
-                        form.durationMinutes === min
+                      onClick={() => setSelectedPlan(plan)}
+                      className={`p-2 rounded border text-left transition-colors flex flex-col gap-0.5 ${
+                        selectedPlan?.id === plan.id
                           ? 'border-pc-active bg-pc-active/10 text-pc-active'
-                          : 'border-border bg-bg-3 text-text-2 hover:border-border-2'
+                          : 'border-border bg-bg-3 text-text-2 hover:border-border-2 hover:text-text'
                       }`}
                     >
-                      {label}
+                      <span className="text-[11px] font-bold uppercase tracking-wide truncate w-full">{plan.name}</span>
+                      <span className="text-[10px] font-mono opacity-80">
+                        {plan.price > 0 ? `₹${plan.price}` : 'Pay Later'}
+                      </span>
                     </button>
-                  );
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Submit */}
