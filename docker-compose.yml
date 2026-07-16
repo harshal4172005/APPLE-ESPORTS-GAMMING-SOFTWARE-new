@@ -94,22 +94,6 @@ services:
       dockerfile: Dockerfile
     container_name: appleesports-v2-client
     restart: always
-    ports:
-      - "5175:80"
-    networks:
-      - appleesports_net
-
-  # ── React Frontend (Local Development) ──
-  client-dev:
-    image: node:20-alpine
-    container_name: appleesports-v2-client-dev
-    working_dir: /app
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./client:/app
-      - /app/node_modules
-    command: sh -c "npm install --legacy-peer-deps && npm run dev -- --host 0.0.0.0"
     networks:
       - appleesports_net
 
