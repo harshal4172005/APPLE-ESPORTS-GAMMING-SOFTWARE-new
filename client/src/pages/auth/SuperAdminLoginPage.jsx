@@ -22,9 +22,9 @@ export default function LoginPage() {
     if (isAuthenticated) {
       const role = (typeof window !== 'undefined' && JSON.parse(localStorage.getItem('user') || '{}'))?.role || '';
       if (role === 'super_admin' || role.toLowerCase().includes('admin')) {
-        navigate('/app/dashboard', { replace: true });
+        navigate('/app/sessions', { replace: true });
       } else {
-        navigate('/app/billing', { replace: true });
+        navigate('/app/sessions', { replace: true });
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
