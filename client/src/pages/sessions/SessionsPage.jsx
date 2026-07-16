@@ -11,12 +11,14 @@ import { useToast } from '../../components/ui/Toast';
 import { startReservedSession, overrideReservation } from '../../api/reservations.api';
 import { getRangeReport } from '../../api/food.api';
 import { getActiveBills, getBill, processPayment } from '../../api/billing.api';
+import { useNavigate } from 'react-router-dom';
 
 export default function SessionsPage() {
   const { isSuperAdmin, user } = useAuth();
   const { activeBranch } = useBranch();
   const { subscribe, connected, SIGNALR_HUBS } = useSocket();
   const toast = useToast();
+  const navigate = useNavigate();
 
   const [pcs, setPcs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -147,6 +149,14 @@ export default function SessionsPage() {
     if (!connected || !targetBranchId) return;
     const unsubPcStatus = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (payload) => {
       console.log('[SessionsPage] PcStatusChanged received. Refetching PCs...');
+      const data = payload.payload || payload.Payload || payload.data || payload.Data || payload;
+      const status = data.status || data.State || data.state;
+      if (status === 'active' || status === 'Active' || status === 1 || status === '1') {
+        setWalkinRequests(prev => prev.filter(r => {
+          const reqPcId = r.pcId || r.PcId;
+          return reqPcId !== (data.pcId || data.id) && reqPcId !== (data.name || data.Name);
+        }));
+      }
       fetchPcs();
     });
 
@@ -215,7 +225,7 @@ export default function SessionsPage() {
   const handleCreditClick = async (pc) => {
     try {
       if (pc.activeSessionId) {
-        // Stop session to generate final bill
+        // Stop session and generate bill
         await api.post(`/sessions/${pc.activeSessionId}/stop`, { deferPayment: false });
       }
       navigate('/app/billing', { state: { autoSelectPcId: pc.id, autoSelectPaymentMethod: 'credit' } });
@@ -223,10 +233,10 @@ export default function SessionsPage() {
       const errCode = err.response?.data?.code || err.response?.data?.errorCode;
       const errMsg = err.response?.data?.error || err.response?.data?.message || '';
       
-      if (errCode === 'SESSION_ALREADY_ENDED' || errMsg.toLowerCase().includes('already ended')) {
+      if (errCode === 'SESSION_ALREADY_ENDED' || errMsg?.toLowerCase().includes('already ended')) {
         navigate('/app/billing', { state: { autoSelectPcId: pc.id, autoSelectPaymentMethod: 'credit' } });
       } else {
-        toast.error(errMsg || 'Failed to stop session for credit');
+        toast.error(`Error: ${errMsg || err.message || 'Failed to stop session for credit'}`);
       }
     }
   };

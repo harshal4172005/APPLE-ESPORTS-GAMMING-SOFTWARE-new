@@ -1005,26 +1005,27 @@ public class AuthService : IAuthService
         await _db.SaveChangesAsync();
     }
 
-    public async Task ChangeCredentialsAsync(Guid userId, string role, ChangeCredentialsDto dto)
+    public async Task ChangeCredentialsAsync(Guid targetUserId, ChangeCredentialsDto dto)
     {
-        if (role == Roles.SuperAdmin || role == Roles.Admin)
+        var user = await _db.Users.FindAsync(targetUserId);
+        if (user != null)
         {
-            var user = await _db.Users.FindAsync(userId);
-            if (user == null || !BCryptNet.Verify(dto.CurrentPassword, user.PasswordHash))
-                throw new AuthorizationException("Invalid current password.");
-
             if (!string.IsNullOrEmpty(dto.NewEmail)) user.Email = dto.NewEmail.Trim().ToLowerInvariant();
             if (!string.IsNullOrEmpty(dto.NewPassword)) user.PasswordHash = BCryptNet.HashPassword(dto.NewPassword);
         }
-        else if (role == Roles.Operator)
+        else
         {
-            var op = await _db.Operators.FindAsync(userId);
-            if (op == null || !BCryptNet.Verify(dto.CurrentPassword, op.PasswordHash))
-                throw new AuthorizationException("Invalid current password.");
-
-            if (!string.IsNullOrEmpty(dto.NewEmail)) op.Email = dto.NewEmail.Trim().ToLowerInvariant();
-            if (!string.IsNullOrEmpty(dto.NewUsername)) op.Username = dto.NewUsername.Trim().ToLowerInvariant();
-            if (!string.IsNullOrEmpty(dto.NewPassword)) op.PasswordHash = BCryptNet.HashPassword(dto.NewPassword);
+            var op = await _db.Operators.FindAsync(targetUserId);
+            if (op != null)
+            {
+                if (!string.IsNullOrEmpty(dto.NewEmail)) op.Email = dto.NewEmail.Trim().ToLowerInvariant();
+                if (!string.IsNullOrEmpty(dto.NewUsername)) op.Username = dto.NewUsername.Trim().ToLowerInvariant();
+                if (!string.IsNullOrEmpty(dto.NewPassword)) op.PasswordHash = BCryptNet.HashPassword(dto.NewPassword);
+            }
+            else
+            {
+                throw new NotFoundException("Target user or operator not found.");
+            }
         }
         await _db.SaveChangesAsync();
     }

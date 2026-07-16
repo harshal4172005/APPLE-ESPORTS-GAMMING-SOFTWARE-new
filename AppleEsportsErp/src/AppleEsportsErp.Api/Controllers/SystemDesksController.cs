@@ -27,7 +27,7 @@ public class SystemDesksController : ControllerBase
     private Guid GetBranchId() => Guid.Parse(HttpContext.Items["BranchId"]!.ToString()!);
 
     [HttpGet("online/active")]
-    [Authorize(Roles = Roles.Operator + "," + Roles.SuperAdmin)]
+    [Authorize(Roles = Roles.Operator + "," + Roles.Admin + "," + Roles.SuperAdmin)]
     public async Task<IActionResult> GetActiveOnlineDesk()
     {
         try
@@ -42,7 +42,7 @@ public class SystemDesksController : ControllerBase
     }
 
     [HttpGet("wallet/active")]
-    [Authorize(Roles = Roles.Operator + "," + Roles.SuperAdmin)]
+    [Authorize(Roles = Roles.Operator + "," + Roles.Admin + "," + Roles.SuperAdmin)]
     public async Task<IActionResult> GetActiveWalletDesk()
     {
         try

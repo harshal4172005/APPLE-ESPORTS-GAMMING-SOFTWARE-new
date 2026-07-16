@@ -138,6 +138,18 @@ api.interceptors.response.use(
       window.location.href = '/?reason=account_inactive';
       return Promise.reject(error);
     }
+    // Broadcast 5xx or Network Errors for Dashboard System Flags
+    if (!error.response || error.response.status >= 500) {
+      window.dispatchEvent(new CustomEvent('system-error', {
+        detail: {
+          url: originalRequest.url,
+          method: originalRequest.method,
+          message: error.message || 'Network or Server Error',
+          status: error.response?.status || 'Network',
+          timestamp: new Date().toISOString()
+        }
+      }));
+    }
 
     return Promise.reject(error);
   }

@@ -28,8 +28,8 @@ public class DashboardAuthorizationHandler : AuthorizationHandler<DashboardRequi
     {
         var role = context.User.FindFirstValue(ClaimTypes.Role);
 
-        // Super Admin always has full access
-        if (role == Roles.SuperAdmin)
+        // Super Admin and Admin always have full access
+        if (role == Roles.SuperAdmin || role == Roles.Admin)
         {
             context.Succeed(requirement);
             return Task.CompletedTask;

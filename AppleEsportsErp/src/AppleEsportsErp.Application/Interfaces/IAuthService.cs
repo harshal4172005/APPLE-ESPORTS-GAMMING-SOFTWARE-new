@@ -61,5 +61,7 @@ public interface IAuthService
     // Password Reset Methods
     Task InitiatePasswordResetAsync(string email);
     Task CompletePasswordResetAsync(ResetPasswordDto dto);
-    Task ChangeCredentialsAsync(Guid userId, string role, ChangeCredentialsDto dto);
+
+    /// <summary>Change credentials for any user (Admin/SuperAdmin functionality)</summary>
+    Task ChangeCredentialsAsync(Guid targetUserId, ChangeCredentialsDto dto);
 }

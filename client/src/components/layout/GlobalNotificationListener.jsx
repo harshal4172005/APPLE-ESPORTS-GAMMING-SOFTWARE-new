@@ -67,12 +67,15 @@ export default function GlobalNotificationListener() {
     });
 
     const unsubscribeStatus = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', (payload) => {
-      const data = payload.data || payload.Data || payload;
+      const data = payload.payload || payload.Payload || payload.data || payload.Data || payload;
       // If PC becomes active, remove any pending walk-in requests for it
       // Wait, our backend sends 'PcStatusChanged' on PC_STATUS hub
       const status = data.status || data.State || data.state;
-      if (status === 'active' || status === 'Active') {
-        setRequests(prev => prev.filter(r => (r.pcId || r.PcId) !== (data.pcId || data.id)));
+      if (status === 'active' || status === 'Active' || status === 1 || status === '1') {
+        setRequests(prev => prev.filter(r => {
+          const reqPcId = r.pcId || r.PcId;
+          return reqPcId !== (data.pcId || data.id) && reqPcId !== (data.name || data.Name);
+        }));
       }
     });
 

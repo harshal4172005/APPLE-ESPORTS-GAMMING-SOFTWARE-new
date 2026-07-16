@@ -18,7 +18,29 @@ export default function MainDashboardPage() {
   const [transactions, setTransactions] = useState([]);
   const [branchSummaries, setBranchSummaries] = useState([]);
   const [systemHealth, setSystemHealth] = useState(null);
+  const [systemAlerts, setSystemAlerts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Global feature error listener
+  useEffect(() => {
+    const handleSystemError = (e) => {
+      const newAlert = e.detail;
+      setSystemAlerts(prev => {
+        // Prevent duplicate spam if same URL fails repeatedly
+        const lastAlert = prev[0];
+        if (lastAlert && lastAlert.url === newAlert.url && lastAlert.message === newAlert.message) {
+          const updated = [...prev];
+          updated[0] = { ...lastAlert, count: (lastAlert.count || 1) + 1, timestamp: newAlert.timestamp };
+          return updated;
+        }
+        // Keep only last 10 alerts
+        return [{ ...newAlert, count: 1 }, ...prev].slice(0, 10);
+      });
+    };
+
+    window.addEventListener('system-error', handleSystemError);
+    return () => window.removeEventListener('system-error', handleSystemError);
+  }, []);
 
   // The branch we should fetch data for
   // Operators are locked to their own branch via backend, but we pass it anyway.
@@ -400,6 +422,57 @@ export default function MainDashboardPage() {
               <span className="text-xl font-heading font-bold text-neon-red">{summary?.lowStockAlerts || 0}</span>
             </div>
           </div>
+
+          {/* System Alerts & Feature Flags */}
+          {systemAlerts.length > 0 && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="mt-6 bg-bg-2 border border-neon-red/50 rounded-lg p-5 shadow-[0_0_15px_rgba(255,51,102,0.1)]"
+            >
+              <div className="flex items-center justify-between mb-4 border-b border-border/50 pb-3">
+                <div className="flex items-center gap-2 text-neon-red">
+                  <AlertTriangle className="w-5 h-5 animate-pulse" />
+                  <h3 className="font-heading font-bold text-sm tracking-wider uppercase">System Alerts & Feature Flags</h3>
+                </div>
+                <button 
+                  onClick={() => setSystemAlerts([])}
+                  className="text-[11px] font-bold uppercase tracking-wider text-text-3 hover:text-text transition-colors"
+                >
+                  Clear All
+                </button>
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-2">
+                {systemAlerts.map((alert, idx) => (
+                  <div key={idx} className="bg-bg-3/50 border border-neon-red/20 rounded p-3 flex flex-col gap-1.5">
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-neon-red/20 text-neon-red uppercase tracking-wider shrink-0">
+                          {alert.method || 'ERR'}
+                        </span>
+                        <span className="text-xs font-mono text-text-2 truncate" title={alert.url}>
+                          {alert.url}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {alert.count > 1 && (
+                          <span className="text-[10px] bg-accent/20 text-accent font-bold px-1.5 py-0.5 rounded">
+                            {alert.count}x
+                          </span>
+                        )}
+                        <span className="text-[10px] text-text-3 font-mono">
+                          {new Date(alert.timestamp).toLocaleTimeString()}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-neon-red font-medium leading-relaxed">
+                      {alert.message} {alert.status && `(Status: ${alert.status})`}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </motion.div>
+          )}
         </div>
 
         {/* Right Side: Activity Feed */}

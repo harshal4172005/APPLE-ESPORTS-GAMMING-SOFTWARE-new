@@ -117,7 +117,7 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
     if (payMethod === 'split')  return Math.abs(splitDiff) <= 0.01;
     if (payMethod === 'credit') {
       const amt = parseFloat(cashReceived) || 0;
-      return customerName.trim() !== '' && customerPhone.trim() !== '' && amt > 0 && amt < total;
+      return customerName.trim() !== '' && customerPhone.trim() !== '' && amt >= 0 && amt <= total;
     }
     return false;
   })();
@@ -451,12 +451,12 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
                 Amount Paid Today (₹)
               </label>
               <input
-                type="number"
-                min="1"
-                max={total - 1}
-                value={cashReceived}
-                onChange={e => setCashReceived(e.target.value)}
-                placeholder={`Minimum payment > ₹0 required`}
+                  type="number"
+                  min="0"
+                  max={total}
+                  value={cashReceived}
+                  onChange={e => setCashReceived(e.target.value)}
+                  placeholder={`Minimum payment ₹0 required`}
                 className="w-full bg-bg-3 border border-border text-text font-mono text-xl rounded-lg p-2.5 focus:border-accent focus:ring-1 focus:ring-accent transition-all"
               />
               {/* Show Credit Remaining */}

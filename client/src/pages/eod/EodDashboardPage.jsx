@@ -400,28 +400,28 @@ export default function EodDashboardPage() {
                 </h3>
                 <div className="space-y-4">
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-text-2">Total Cash Collected</span>
+                    <span className="text-text-2">Cash</span>
                     <span className="font-mono text-text">₹{report.paymentMethods.totalCash}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-text-2">Total Online (UPI/Card)</span>
+                    <span className="text-text-2">Online</span>
                     <span className="font-mono text-text">₹{report.paymentMethods.totalOnline}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-text-2">Wallet Payments / Deductions</span>
+                    <span className="text-text-2">Wallet</span>
                     <span className="font-mono text-neon-purple">₹{report.paymentMethods.totalWalletDeductions}</span>
                   </div>
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-text-2">New Credit Given</span>
-                    <span className="font-mono text-neon-orange">
-                      ₹{report.creditLogs?.filter(c => c.status === 'Pending').reduce((acc, c) => acc + c.creditAmount, 0) || 0}
+                    <span className="text-text-2">Credits Pending</span>
+                    <span className="font-mono text-neon-red">
+                      -₹{(report.creditLogs?.filter(c => c.status?.toLowerCase() === 'pending').reduce((acc, c) => acc + c.creditAmount, 0) || 0).toFixed(2)}
                     </span>
                   </div>
                   
                   <div className="flex justify-between items-center text-sm bg-neon-blue/10 p-4 rounded-lg border border-neon-blue/30 mt-6">
                     <span className="font-bold text-neon-blue uppercase tracking-widest text-xs">Overall End Total</span>
                     <span className="font-mono font-bold text-xl text-neon-blue">
-                      ₹{(report.paymentMethods.totalCash + report.paymentMethods.totalOnline + report.paymentMethods.totalWalletDeductions + (report.creditLogs?.filter(c => c.status === 'Pending').reduce((acc, c) => acc + c.creditAmount, 0) || 0)).toFixed(2)}
+                      ₹{(report.paymentMethods.totalCash + report.paymentMethods.totalOnline + report.paymentMethods.totalWalletDeductions).toFixed(2)}
                     </span>
                   </div>
                 </div>
@@ -495,7 +495,7 @@ export default function EodDashboardPage() {
                                 </>
                               ) : (
                                 <>
-                                  <span className="text-neon-orange text-[9px] bg-neon-orange/10 px-1.5 py-0.5 rounded border border-neon-orange/20 uppercase tracking-wider font-bold">
+                                  <span className="text-neon-red text-[9px] bg-neon-red/10 px-1.5 py-0.5 rounded border border-neon-red/20 uppercase tracking-wider font-bold">
                                     ₹{(bill.creditAmount || 0).toFixed(2)} Pending
                                   </span>
                                   <span className="text-text-3 text-[9px]">Upfront: ₹{(bill.amountPaidInitially || 0).toFixed(2)}</span>
@@ -560,12 +560,12 @@ export default function EodDashboardPage() {
                         <td className="py-3 px-4 text-text-2">{credit.pcNumber}</td>
                         <td className="py-3 px-4 text-right text-text">₹{credit.originalBillAmount.toFixed(2)}</td>
                         <td className="py-3 px-4 text-right text-text">₹{credit.amountPaidInitially.toFixed(2)}</td>
-                        <td className="py-3 px-4 text-right text-neon-orange font-bold">₹{credit.creditAmount.toFixed(2)}</td>
+                        <td className="py-3 px-4 text-right text-neon-red font-bold">₹{credit.creditAmount.toFixed(2)}</td>
                         <td className="py-3 px-4 text-center">
                           {credit.status.toLowerCase() === 'cleared' ? (
                             <span className="text-neon-green font-bold uppercase tracking-wider text-[10px] bg-neon-green/10 px-2 py-1 rounded border border-neon-green/20">Cleared</span>
                           ) : (
-                            <span className="text-neon-orange font-bold uppercase tracking-wider text-[10px] bg-neon-orange/10 px-2 py-1 rounded border border-neon-orange/20">Pending</span>
+                            <span className="text-neon-red font-bold uppercase tracking-wider text-[10px] bg-neon-red/10 px-2 py-1 rounded border border-neon-red/20">Pending</span>
                           )}
                         </td>
                         <td className="py-3 px-4 text-text-3">

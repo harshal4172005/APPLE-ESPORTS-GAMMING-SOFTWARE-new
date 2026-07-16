@@ -156,12 +156,10 @@ public class AuthController : ControllerBase
     }
 
     [HttpPost("change-credentials")]
-    [Authorize]
+    [Authorize(Roles = "super_admin,admin")]
     public async Task<IActionResult> ChangeCredentials([FromBody] ChangeCredentialsDto dto)
     {
-        var userId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
-        var role = User.FindFirstValue(ClaimTypes.Role)!;
-        await _authService.ChangeCredentialsAsync(userId, role, dto);
+        await _authService.ChangeCredentialsAsync(dto.UserId, dto);
         return Ok(ApiResponse<object>.Ok(new { message = "Credentials updated successfully." }));
     }
 

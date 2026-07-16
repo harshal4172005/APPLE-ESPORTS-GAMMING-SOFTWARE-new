@@ -324,6 +324,7 @@ public class SessionService : ISessionService
                     OperatorId = operatorId,
                     BillId = bill.Id,
                     CustomerName = session.CustomerName ?? session.Member?.Username ?? "Walk-in",
+                    CustomerPhone = session.Member?.MobileNumber ?? "N/A",
                     PcNumber = pc.PcNumber ?? "N/A",
                     OriginalBillAmount = bill.TotalAmount,
                     AmountPaidInitially = 0,

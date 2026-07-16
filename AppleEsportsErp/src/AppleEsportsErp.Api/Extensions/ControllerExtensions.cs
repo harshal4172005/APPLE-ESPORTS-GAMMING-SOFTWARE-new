@@ -19,7 +19,7 @@ public static class ControllerExtensions
         var user = controller.User;
         
         // If it's a regular operator, just return their ID from the JWT
-        if (!user.IsInRole(Roles.SuperAdmin) && !user.IsInRole("Member"))
+        if (!user.IsInRole(Roles.SuperAdmin) && !user.IsInRole(Roles.Admin) && !user.IsInRole("Member"))
         {
             return Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
         }
@@ -58,7 +58,7 @@ public static class ControllerExtensions
     {
         var user = controller.User;
         
-        if (!user.IsInRole(Roles.SuperAdmin) && !user.IsInRole("Member"))
+        if (!user.IsInRole(Roles.SuperAdmin) && !user.IsInRole(Roles.Admin) && !user.IsInRole("Member"))
         {
             var shiftClaim = user.FindFirstValue("shiftId");
             if (string.IsNullOrEmpty(shiftClaim))

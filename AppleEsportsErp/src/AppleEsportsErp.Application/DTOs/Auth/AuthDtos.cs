@@ -118,7 +118,7 @@ public class ResetPasswordDto
 
 public class ChangeCredentialsDto
 {
-    public string CurrentPassword { get; set; } = null!;
+    public Guid UserId { get; set; }
     public string? NewUsername { get; set; }
     public string? NewEmail { get; set; }
     public string? NewPassword { get; set; }

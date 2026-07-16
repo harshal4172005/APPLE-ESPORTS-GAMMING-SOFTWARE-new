@@ -21,8 +21,8 @@ public class BranchIsolationAttribute : ActionFilterAttribute
 
         var role = user.FindFirstValue(ClaimTypes.Role);
 
-        // Super Admin can access any branch via query param or header
-        if (role == Roles.SuperAdmin)
+        // Super Admin and Admin can access any branch via query param or header
+        if (role == Roles.SuperAdmin || role == Roles.Admin)
         {
             var branchId = context.HttpContext.Request.Query["branch_id"].FirstOrDefault()
                         ?? context.HttpContext.Request.Query["branchId"].FirstOrDefault()

@@ -28,8 +28,8 @@ public abstract class BranchAwareHub : Hub
         if ((role == Roles.Operator || role == Roles.Admin) && !string.IsNullOrEmpty(branchId))
             await Groups.AddToGroupAsync(Context.ConnectionId, $"branch:{branchId}");
 
-        // Super Admin joins all-branches group
-        if (role == Roles.SuperAdmin)
+        // Super Admin and Admin join all-branches group
+        if (role == Roles.SuperAdmin || role == Roles.Admin)
             await Groups.AddToGroupAsync(Context.ConnectionId, "admin:all");
 
         // User-specific group for targeted notifications
