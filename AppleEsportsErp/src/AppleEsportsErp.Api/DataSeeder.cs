@@ -44,6 +44,7 @@ public static class DataSeeder
                 Id = Guid.NewGuid(),
                 FullName = op,
                 Username = op.ToLower() + "_adajan",
+                Email = op.ToLower() + "_adajan@appleesports.com",
                 PasswordHash = defaultPassword,
                 MobileNumber = adajanContact,
                 BranchId = adajan.Id,
@@ -103,6 +104,7 @@ public static class DataSeeder
                 Id = Guid.NewGuid(),
                 FullName = op,
                 Username = op.ToLower() + "_citylight",
+                Email = op.ToLower() + "_citylight@appleesports.com",
                 PasswordHash = defaultPassword,
                 MobileNumber = citylightContact,
                 BranchId = citylight.Id,
@@ -143,7 +145,7 @@ public static class DataSeeder
         var katargamContact = "+91 9909507047";
         foreach (var op in katargamOperators)
         {
-            db.Operators.Add(new Operator { Id = Guid.NewGuid(), FullName = op, Username = op.ToLower() + "_katargam", PasswordHash = defaultPassword, MobileNumber = katargamContact, BranchId = katargam.Id, Status = OperatorStatus.Active, CreatedBy = adminRoleUserId, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+            db.Operators.Add(new Operator { Id = Guid.NewGuid(), FullName = op, Username = op.ToLower() + "_katargam", Email = op.ToLower() + "_katargam@appleesports.com", PasswordHash = defaultPassword, MobileNumber = katargamContact, BranchId = katargam.Id, Status = OperatorStatus.Active, CreatedBy = adminRoleUserId, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
         }
 
         var katargamPricing1 = new PricingProfile { Id = Guid.NewGuid(), Name = "RECRUIT DECK", BaseHourlyRate = 60m, BranchId = katargam.Id, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow };
@@ -172,7 +174,7 @@ public static class DataSeeder
         var varachhaContact = "+91 9909507038";
         foreach (var op in varachhaOperators)
         {
-            db.Operators.Add(new Operator { Id = Guid.NewGuid(), FullName = op, Username = op.ToLower() + "_varachha", PasswordHash = defaultPassword, MobileNumber = varachhaContact, BranchId = varachha.Id, Status = OperatorStatus.Active, CreatedBy = adminRoleUserId, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+            db.Operators.Add(new Operator { Id = Guid.NewGuid(), FullName = op, Username = op.ToLower() + "_varachha", Email = op.ToLower() + "_varachha@appleesports.com", PasswordHash = defaultPassword, MobileNumber = varachhaContact, BranchId = varachha.Id, Status = OperatorStatus.Active, CreatedBy = adminRoleUserId, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
         }
 
         var varachhaPricing1 = new PricingProfile { Id = Guid.NewGuid(), Name = "TITAN DESK", BaseHourlyRate = 80m, BranchId = varachha.Id, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow };

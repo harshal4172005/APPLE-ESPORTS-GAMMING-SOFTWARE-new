@@ -79,6 +79,9 @@ services:
       - Jwt__Audience=AppleEsportsErpClient
       - Jwt__AccessExpiry=24h
       - Jwt__RefreshExpiry=7d
+      - Cors__AllowedOrigins__0=http://localhost:8081
+      - Cors__AllowedOrigins__1=http://127.0.0.1:8081
+      - Cors__AllowedOrigins__2=http://localhost:5173
       # Uncomment below to enable Redis Backplane when scaling out
       # - Redis__ConnectionString=redis:6379,password=${REDIS_PASSWORD}
     networks:
