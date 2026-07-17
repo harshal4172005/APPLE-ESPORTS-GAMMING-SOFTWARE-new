@@ -60,8 +60,7 @@ export default function LandingGatewayPage() {
       description: 'Multi-branch management portal.',
       icon: <Shield className="w-12 h-12 text-accent mb-4 group-hover:scale-110 transition-transform" />,
       onClick: () => {
-        if (setupStatus?.needsAdminSetup) navigate('/setup/admin');
-        else navigate('/login/admin');
+        navigate('/login/admin');
       },
     },
     {

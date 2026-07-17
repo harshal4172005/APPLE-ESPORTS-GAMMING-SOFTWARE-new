@@ -234,63 +234,72 @@ public class SessionService : ISessionService
             
             var bill = session.Bills.FirstOrDefault();
 
-            // 1. If Open Session, Calculate Cost
-            if (session.PlannedDurationMin == null)
+            // 1. Calculate Prorated Cost based on actual time played
+            var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
+            decimal defaultBaseRate = 100m;
+            Dictionary<string, decimal> hzPricing = new();
+            if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
             {
-                // Fetch global Hz pricing
-                var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
-                decimal defaultBaseRate = 100m;
-                Dictionary<string, decimal> hzPricing = new();
-                if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
+                try
                 {
-                    try
+                    using var doc = JsonDocument.Parse(globalConfig.ConfigValue);
+                    if (doc.RootElement.TryGetProperty("pricing", out var pricing))
                     {
-                        using var doc = JsonDocument.Parse(globalConfig.ConfigValue);
-                        if (doc.RootElement.TryGetProperty("pricing", out var pricing))
+                        if (pricing.TryGetProperty("baseRate", out var br))
+                            defaultBaseRate = br.GetDecimal();
+                            
+                        if (pricing.TryGetProperty("hzPricing", out var hzObj))
                         {
-                            if (pricing.TryGetProperty("baseRate", out var br))
-                                defaultBaseRate = br.GetDecimal();
-                                
-                            if (pricing.TryGetProperty("hzPricing", out var hzObj))
+                            foreach (var prop in hzObj.EnumerateObject())
                             {
-                                foreach (var prop in hzObj.EnumerateObject())
-                                {
-                                    if (prop.Value.ValueKind == JsonValueKind.Number)
-                                        hzPricing[prop.Name] = prop.Value.GetDecimal();
-                                }
+                                if (prop.Value.ValueKind == JsonValueKind.Number)
+                                    hzPricing[prop.Name] = prop.Value.GetDecimal();
                             }
                         }
                     }
-                    catch { /* fallback */ }
                 }
+                catch { /* fallback */ }
+            }
 
-                decimal ratePerHour = defaultBaseRate;
-                if (!string.IsNullOrEmpty(session.Pc?.MonitorHz) && hzPricing.TryGetValue(session.Pc.MonitorHz, out var hrRate))
+            decimal ratePerHour = defaultBaseRate;
+            if (!string.IsNullOrEmpty(session.Pc?.MonitorHz) && hzPricing.TryGetValue(session.Pc.MonitorHz, out var hrRate))
+            {
+                ratePerHour = hrRate;
+            }
+
+            // Min 1 min charge for time-based calculations
+            decimal hours = Math.Max((decimal)session.ActualDurationMin.Value / 60m, 1m / 60m); 
+            decimal proratedGamingAmount = Math.Round(hours * ratePerHour, 2);
+
+            if (session.PlannedDurationMin == null)
+            {
+                // Open Session: Always use the exact time-based cost
+                session.GamingAmount = proratedGamingAmount;
+            }
+            else
+            {
+                // Fixed Session: Cap the bill if they left early and prorated cost is cheaper than fixed plan
+                if (proratedGamingAmount < session.GamingAmount)
                 {
-                    ratePerHour = hrRate;
+                    session.GamingAmount = proratedGamingAmount;
+                    session.GamingType += " (Early Checkout Prorated)";
                 }
+            }
 
-                // If member, apply a flat discount or specific member rate if defined, otherwise maybe same rate? 
-                // The user requested standardizing the rate based on Hz. We'll use the Hz rate.
-                // Optionally apply discount logic here later.
+            session.TotalAmount = session.GamingAmount + session.FoodAmount;
 
-                decimal hours = Math.Max((decimal)session.ActualDurationMin.Value / 60m, 1m / 60m); // Min 1 min charge
-                session.GamingAmount = Math.Round(hours * ratePerHour, 2);
-                session.TotalAmount = session.GamingAmount + session.FoodAmount;
-
-                if (bill != null)
+            if (bill != null)
+            {
+                bill.GamingAmount = session.GamingAmount;
+                bill.Subtotal = session.TotalAmount;
+                bill.TotalAmount = session.TotalAmount;
+                
+                var gamingItem = bill.Items.FirstOrDefault(i => i.ItemType == "gaming");
+                if (gamingItem != null)
                 {
-                    bill.GamingAmount = session.GamingAmount;
-                    bill.Subtotal = session.TotalAmount;
-                    bill.TotalAmount = session.TotalAmount;
-                    
-                    var gamingItem = bill.Items.FirstOrDefault(i => i.ItemType == "gaming");
-                    if (gamingItem != null)
-                    {
-                        gamingItem.ItemName = $"Open Session ({session.ActualDurationMin}m)";
-                        gamingItem.TotalPrice = session.GamingAmount;
-                        gamingItem.UnitPrice = session.GamingAmount;
-                    }
+                    gamingItem.ItemName = session.PlannedDurationMin == null ? $"Open Session ({session.ActualDurationMin}m)" : $"{session.GamingType}";
+                    gamingItem.TotalPrice = session.GamingAmount;
+                    gamingItem.UnitPrice = session.GamingAmount;
                 }
             }
 
