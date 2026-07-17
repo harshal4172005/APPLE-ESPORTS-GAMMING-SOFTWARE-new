@@ -262,15 +262,25 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
       }
     });
 
-    newConnection.start()
-      .then(() => {
-        setConnectionStatus('connected');
-        newConnection.invoke('ConnectPc', pcId).catch(console.error);
-      })
-      .catch(err => {
+    let isSubscribed = true;
+    let reconnectTimeout = null;
+
+    const startConnection = async () => {
+      if (!isSubscribed) return;
+      try {
+        if (newConnection.state === 'Disconnected') {
+          await newConnection.start();
+          setConnectionStatus('connected');
+          newConnection.invoke('ConnectPc', pcId).catch(console.error);
+        }
+      } catch (err) {
         console.error('[Overlay] SignalR connection error:', err);
         setConnectionStatus('disconnected');
-      });
+        reconnectTimeout = setTimeout(startConnection, 5000);
+      }
+    };
+
+    startConnection();
 
     newConnection.on('WalkinRequestDeclined', (data) => {
       console.log('Walkin request declined by operator', data);
@@ -282,10 +292,17 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
       setConnectionStatus('connected');
       newConnection.invoke('ConnectPc', pcId).catch(console.error);
     });
-    newConnection.onclose(() => setConnectionStatus('disconnected'));
+    newConnection.onclose(() => {
+      setConnectionStatus('disconnected');
+      reconnectTimeout = setTimeout(startConnection, 5000);
+    });
 
     setConnection(newConnection);
-    return () => { newConnection.stop(); };
+    return () => { 
+      isSubscribed = false;
+      clearTimeout(reconnectTimeout);
+      newConnection.stop(); 
+    };
   }, [pcId, isMockMode]);
 
   // ── HEARTBEAT ──
