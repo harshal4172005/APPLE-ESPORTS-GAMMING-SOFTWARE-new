@@ -7,9 +7,9 @@ services:
     container_name: appleesports-v2-postgres
     restart: always
     environment:
-      POSTGRES_USER: ${DB_USER:-gamecafe_admin}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-GameCafe_Secure_2026!}
-      POSTGRES_DB: ${DB_NAME:-gamecafe_erp}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
       - "5433:5432"
     volumes:
@@ -29,9 +29,9 @@ services:
     restart: always
     environment:
       POSTGRES_HOST: postgres
-      POSTGRES_USER: ${DB_USER:-gamecafe_admin}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-GameCafe_Secure_2026!}
-      POSTGRES_DB: ${DB_NAME:-gamecafe_erp}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
       SCHEDULE: '@daily'
       BACKUP_KEEP_DAYS: 30
       BACKUP_KEEP_WEEKS: 12
@@ -50,7 +50,7 @@ services:
     image: redis:7-alpine
     container_name: appleesports-v2-redis
     restart: always
-    command: redis-server --requirepass ${REDIS_PASSWORD:-redispassword}
+    command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
     networks:
@@ -72,15 +72,15 @@ services:
       - "5016:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${DB_NAME:-gamecafe_erp};Username=${DB_USER:-gamecafe_admin};Password=${DB_PASSWORD:-GameCafe_Secure_2026!}
-      - Jwt__Secret=${JWT_SECRET:-supersecretkey_min_32_chars_long!!}
-      - Jwt__RefreshSecret=${JWT_REFRESH_SECRET:-supersecretkey_refresh_min_32_chars_long!!}
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=${DB_NAME};Username=${DB_USER};Password=${DB_PASSWORD}
+      - Jwt__Secret=${JWT_SECRET}
+      - Jwt__RefreshSecret=${JWT_REFRESH_SECRET}
       - Jwt__Issuer=AppleEsportsErp
       - Jwt__Audience=AppleEsportsErpClient
       - Jwt__AccessExpiry=24h
       - Jwt__RefreshExpiry=7d
       # Uncomment below to enable Redis Backplane when scaling out
-      # - Redis__ConnectionString=redis:6379,password=${REDIS_PASSWORD:-redispassword}
+      # - Redis__ConnectionString=redis:6379,password=${REDIS_PASSWORD}
     networks:
       - appleesports_net
     depends_on:

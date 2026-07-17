@@ -3,6 +3,22 @@ echo ========================================================
 echo   APPLE ESPORTS GAMING SOFTWARE - SYSTEM STARTUP
 echo ========================================================
 echo.
+if not exist ".env" (
+    echo [WARNING] No .env file found!
+    echo Creating .env from .env.example...
+    copy .env.example .env > nul
+    echo.
+    echo ========================================================
+    echo ACTION REQUIRED:
+    echo Please open the newly created '.env' file in this folder
+    echo and fill in your secure passwords and secret keys.
+    echo The system cannot start without secure credentials.
+    echo ========================================================
+    echo.
+    pause
+    exit /b 1
+)
+
 echo Stopping any old containers...
 docker-compose down
 
