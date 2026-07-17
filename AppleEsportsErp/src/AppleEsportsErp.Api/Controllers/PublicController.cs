@@ -184,17 +184,17 @@ public class PublicController : ControllerBase
         Domain.Entities.Pc? pc = null;
         if (Guid.TryParse(pcIdentifier, out var pcGuid))
         {
-            pc = await _db.Pcs.FirstOrDefaultAsync(p => p.Id == pcGuid);
+            pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.Id == pcGuid);
         }
         else
         {
-            pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == pcIdentifier || p.PcName == pcIdentifier);
+            pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.PcNumber == pcIdentifier || p.PcName == pcIdentifier);
         }
 
         if (pc == null)
             return Ok(new { success = false, error = "PC not found" });
 
-        return Ok(ApiResponse<object>.Ok(new { id = pc.Id, name = pc.PcName ?? pc.PcNumber, branchId = pc.BranchId, monitorHz = pc.MonitorHz }));
+        return Ok(ApiResponse<object>.Ok(new { id = pc.Id, name = pc.PcName ?? pc.PcNumber, branchId = pc.BranchId, branchName = pc.Branch?.Name, monitorHz = pc.MonitorHz }));
     }
 
     [HttpPost("pcs/{pcId:guid}/hz")]

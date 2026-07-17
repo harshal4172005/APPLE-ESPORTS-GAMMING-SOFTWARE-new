@@ -144,11 +144,16 @@ export default function MainDashboardPage() {
       });
     });
 
+    const unsubRefresh = subscribe(SIGNALR_HUBS.DASHBOARD, 'DashboardRefreshRequired', () => {
+      fetchDashboardData();
+    });
+
     return () => {
       unsubSummary();
       unsubFeed();
+      unsubRefresh();
     };
-  }, [connected, subscribe, SIGNALR_HUBS.DASHBOARD]);
+  }, [connected, subscribe, SIGNALR_HUBS.DASHBOARD, fetchDashboardData]);
 
   if (isLoading && !summary) {
     return (

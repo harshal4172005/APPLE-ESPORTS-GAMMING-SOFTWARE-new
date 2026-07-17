@@ -152,19 +152,39 @@ public class PcOverlayHub : Hub
 
                 await _db.SaveChangesAsync();
 
-                await _foodOrderHub.Clients.All.SendAsync("NewFoodOrder", new
+                bool isOperatorOnline = pc != null && AppleEsportsErp.Application.Services.OperatorPresenceTracker.IsOperatorAvailable(pc.BranchId.ToString());
+                if (pc != null && isOperatorOnline)
                 {
-                    orderId = order.Id,
-                    orderNumber = order.OrderNumber,
-                    pcId = pc.Id,
-                    pcName = pc.PcName ?? pc.PcNumber,
-                    branchId = pc.BranchId,
-                    customerName = order.CustomerName,
-                    totalAmount = order.TotalAmount,
-                    status = order.Status.ToString(),
-                    items = payload.Items,
-                    orderTime = order.OrderTime
-                });
+                    await _foodOrderHub.Clients.Group($"branch:{pc.BranchId}").SendAsync("NewFoodOrder", new
+                    {
+                        orderId = order.Id,
+                        orderNumber = order.OrderNumber,
+                        pcId = pc.Id,
+                        pcName = pc.PcName ?? pc.PcNumber,
+                        branchId = pc.BranchId,
+                        customerName = order.CustomerName,
+                        totalAmount = order.TotalAmount,
+                        status = order.Status.ToString(),
+                        items = payload.Items,
+                        orderTime = order.OrderTime
+                    });
+                }
+                else
+                {
+                    await _foodOrderHub.Clients.Group("admin:all").SendAsync("NewFoodOrder", new
+                    {
+                        orderId = order.Id,
+                        orderNumber = order.OrderNumber,
+                        pcId = pc.Id,
+                        pcName = pc.PcName ?? pc.PcNumber,
+                        branchId = pc?.BranchId,
+                        customerName = order.CustomerName,
+                        totalAmount = order.TotalAmount,
+                        status = order.Status.ToString(),
+                        items = payload.Items,
+                        orderTime = order.OrderTime
+                    });
+                }
 
                 await Clients.Group($"pc:{payload.PcId}").SendAsync("BillUpdated", new
                 {
@@ -178,7 +198,7 @@ public class PcOverlayHub : Hub
             }
 
             // PC not found fallback
-            await _foodOrderHub.Clients.All.SendAsync("NewFoodOrder", payload);
+            await _foodOrderHub.Clients.Group("admin:all").SendAsync("NewFoodOrder", payload);
             return new { success = true, orderId = payload.OrderId };
         }
         catch (Exception ex)
@@ -203,16 +223,24 @@ public class PcOverlayHub : Hub
         _logger.LogInformation("Extension request from {PcId} for {Duration} mins", payload.PcId, payload.Duration);
         
         var pc = await GetPcAsync(payload.PcId);
-        var targetClients = pc != null ? _sessionHub.Clients.Groups(new List<string> { $"branch:{pc.BranchId}", "admin:all" }) : _sessionHub.Clients.All;
-        
-        // Notify operators and admins globally
-        await targetClients.SendAsync("ExtensionRequested", new 
+        bool isOperatorOnline = pc != null && AppleEsportsErp.Application.Services.OperatorPresenceTracker.IsOperatorAvailable(pc.BranchId.ToString());
+        var payloadObj = new 
         {
             PcId = payload.PcId,
             BranchId = pc?.BranchId,
             Duration = payload.Duration,
             SessionId = payload.SessionId
-        });
+        };
+        
+        // Notify operators in this branch, OR admins globally if operator is offline
+        if (pc != null && isOperatorOnline)
+        {
+            await _sessionHub.Clients.Group($"branch:{pc.BranchId}").SendAsync("ExtensionRequested", payloadObj);
+        }
+        else
+        {
+            await _sessionHub.Clients.Group("admin:all").SendAsync("ExtensionRequested", payloadObj);
+        }
         
         // Simulating approval for the sake of the overlay testing. 
         // In real life, we would await an operator response.
@@ -223,17 +251,28 @@ public class PcOverlayHub : Hub
     {
         _logger.LogInformation("Operator called to {PcId}", payload.PcId);
         var pc = await GetPcAsync(payload.PcId);
-        var targetClients = pc != null ? _notificationHub.Clients.Groups(new List<string> { $"branch:{pc.BranchId}", "admin:all" }) : _notificationHub.Clients.All;
-        
-        // Alert operators in the PC's branch, and admins globally
-        await targetClients.SendAsync("Alert", new 
+        bool isOperatorOnline = pc != null && AppleEsportsErp.Application.Services.OperatorPresenceTracker.IsOperatorAvailable(pc.BranchId.ToString());
+        string alertMsg = $"Assistance required at {payload.PcId}";
+        if (!isOperatorOnline) alertMsg = "[Operator Offline] " + alertMsg;
+
+        var payloadObj = new 
         { 
             Type = "OperatorCall",
             PcId = payload.PcId, 
             BranchId = pc?.BranchId,
             Timestamp = payload.Timestamp,
-            Message = $"Assistance required at {payload.PcId}" 
-        });
+            Message = alertMsg 
+        };
+        
+        // Alert operators in the PC's branch, OR admins globally if operator is offline
+        if (pc != null && isOperatorOnline)
+        {
+            await _notificationHub.Clients.Group($"branch:{pc.BranchId}").SendAsync("Alert", payloadObj);
+        }
+        else
+        {
+            await _notificationHub.Clients.Group("admin:all").SendAsync("Alert", payloadObj);
+        }
         
         return new { success = true };
     }
@@ -255,10 +294,11 @@ public class PcOverlayHub : Hub
         PendingWalkinRequests[payload.PcId] = pending;
 
         var pc = await GetPcAsync(payload.PcId);
-        var targetClients = pc != null ? _notificationHub.Clients.Groups(new List<string> { $"branch:{pc.BranchId}", "admin:all" }) : _notificationHub.Clients.All;
+        bool isOperatorOnline = pc != null && AppleEsportsErp.Application.Services.OperatorPresenceTracker.IsOperatorAvailable(pc.BranchId.ToString());
+        string alertMsg = $"Walk-in request: {payload.CustomerName} wants {payload.PackageName ?? (payload.Duration + " mins")} at {payload.PcId}";
+        if (!isOperatorOnline) alertMsg = "[Operator Offline] " + alertMsg;
 
-        // Real-time push to operator dashboards in this branch, and admins globally
-        await targetClients.SendAsync("Alert", new
+        var payloadObj = new
         {
             Type = "WalkinSessionRequest",
             pcId = payload.PcId,
@@ -267,8 +307,18 @@ public class PcOverlayHub : Hub
             duration = payload.Duration,
             packageName = payload.PackageName,
             timestamp = pending.Timestamp,
-            message = $"Walk-in request: {payload.CustomerName} wants {payload.PackageName ?? (payload.Duration + " mins")} at {payload.PcId}"
-        });
+            message = alertMsg
+        };
+
+        // Real-time push to operator dashboards in this branch, OR admins globally if operator is offline
+        if (pc != null && isOperatorOnline)
+        {
+            await _notificationHub.Clients.Group($"branch:{pc.BranchId}").SendAsync("Alert", payloadObj);
+        }
+        else
+        {
+            await _notificationHub.Clients.Group("admin:all").SendAsync("Alert", payloadObj);
+        }
 
         return new { success = true, status = "pending_operator_approval" };
     }

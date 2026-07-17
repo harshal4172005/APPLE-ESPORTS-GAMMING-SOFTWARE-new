@@ -26,7 +26,18 @@ public abstract class BranchAwareHub : Hub
 
         // SOP §6.4: Operators and Admins join their branch group
         if ((role == Roles.Operator || role == Roles.Admin) && !string.IsNullOrEmpty(branchId))
+        {
             await Groups.AddToGroupAsync(Context.ConnectionId, $"branch:{branchId}");
+            if (role == Roles.Operator)
+            {
+                AppleEsportsErp.Application.Services.OperatorPresenceTracker.OperatorConnected(branchId);
+                var notificationService = Context.GetHttpContext()?.RequestServices.GetService<AppleEsportsErp.Application.Interfaces.IHubNotificationService>();
+                if (notificationService != null)
+                {
+                    await notificationService.TriggerDashboardRefreshAsync();
+                }
+            }
+        }
 
         // Super Admin and Admin join all-branches group
         if (role == Roles.SuperAdmin || role == Roles.Admin)
@@ -54,6 +65,19 @@ public abstract class BranchAwareHub : Hub
             Logger.LogInformation("Hub disconnected gracefully: {User} [{Hub}] - ConnectionId: {ConnectionId}", 
                 userName, GetType().Name, Context.ConnectionId);
         }
+
+        var role = Context.User?.FindFirstValue(ClaimTypes.Role);
+        var branchId = Context.User?.FindFirstValue("branchId");
+        if (role == Roles.Operator && !string.IsNullOrEmpty(branchId))
+        {
+            AppleEsportsErp.Application.Services.OperatorPresenceTracker.OperatorDisconnected(branchId);
+            var notificationService = Context.GetHttpContext()?.RequestServices.GetService<AppleEsportsErp.Application.Interfaces.IHubNotificationService>();
+            if (notificationService != null)
+            {
+                await notificationService.TriggerDashboardRefreshAsync();
+            }
+        }
+
         await base.OnDisconnectedAsync(exception);
     }
 }

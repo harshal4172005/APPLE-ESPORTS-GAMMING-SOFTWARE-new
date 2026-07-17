@@ -11,4 +11,5 @@ public interface IHubNotificationService
     Task BroadcastPcManagementUpdateAsync(Guid branchId, Guid pcId, string action);
     Task SendUnlockCommandToAgentAsync(Guid pcId, int durationMinutes, string? customerName);
     Task SendLockCommandToAgentAsync(Guid pcId);
+    Task TriggerDashboardRefreshAsync();
 }

@@ -199,11 +199,20 @@ public class DashboardService : IDashboardService
             var activePcs = await _context.Pcs.CountAsync(p => p.BranchId == branchId && !p.IsDeleted && p.State == PcState.Active);
             var idlePcs = await _context.Pcs.CountAsync(p => p.BranchId == branchId && !p.IsDeleted && p.State == PcState.Idle);
 
-            // Active operator shift
+            // Active operator shift (exclude system admin)
             var activeShift = await _context.Shifts
                 .Include(s => s.Operator)
-                .FirstOrDefaultAsync(s => s.BranchId == branchId && s.Status == ShiftStatus.Active);
-            var activeOperator = activeShift?.Operator?.FullName ?? "None";
+                .FirstOrDefaultAsync(s => s.BranchId == branchId && s.Status == ShiftStatus.Active && !s.Operator.Username.StartsWith("system_admin"));
+                
+            bool isOperatorActuallyOnline = AppleEsportsErp.Application.Services.OperatorPresenceTracker.IsOperatorAvailable(branchId.ToString());
+            
+            string activeOperator = "None";
+            if (activeShift?.Operator != null)
+            {
+                activeOperator = isOperatorActuallyOnline 
+                    ? activeShift.Operator.FullName 
+                    : $"{activeShift.Operator.FullName} (Offline)";
+            }
 
             // Total operators assigned to this branch (registered, regardless of shift)
             var assignedOperatorsCount = await _context.Operators

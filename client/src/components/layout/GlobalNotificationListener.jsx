@@ -24,9 +24,13 @@ export default function GlobalNotificationListener() {
       const type = data.type || data.Type;
       
       let pcName = data.pcId || data.PcId;
+      let branchName = "";
       try {
         const res = await api.get(`/public/pcs/${pcName}`);
-        if (res.data.success) pcName = res.data.data.name;
+        if (res.data.success) {
+          pcName = res.data.data.name;
+          branchName = res.data.data.branchName || "";
+        }
       } catch (e) {
         // silent fallback to ID
       }
@@ -44,7 +48,7 @@ export default function GlobalNotificationListener() {
           const pcId = data.pcId || data.PcId;
           // avoid duplicates if same PC sends multiple times
           const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId);
-          return [...filtered, { ...data, resolvedPcName: pcName }];
+          return [...filtered, { ...data, resolvedPcName: pcName, resolvedBranchName: branchName }];
         });
         toast.info(`Walk-in request from ${pcName}`);
       } else if (type === 'OperatorCall') {
@@ -53,7 +57,7 @@ export default function GlobalNotificationListener() {
         
         setRequests(prev => {
           const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId || r.type !== 'OperatorCall');
-          return [...filtered, { ...data, type: 'OperatorCall', resolvedPcName: pcName }];
+          return [...filtered, { ...data, type: 'OperatorCall', resolvedPcName: pcName, resolvedBranchName: branchName }];
         });
         
         // Speak the notification
@@ -81,9 +85,13 @@ export default function GlobalNotificationListener() {
 
     const unsubscribeExtension = subscribe(SIGNALR_HUBS.SESSIONS, 'ExtensionRequested', async (data) => {
       let pcName = data.pcId || data.PcId;
+      let branchName = "";
       try {
         const res = await api.get(`/public/pcs/${pcName}`);
-        if (res.data.success) pcName = res.data.data.name;
+        if (res.data.success) {
+            pcName = res.data.data.name;
+            branchName = res.data.data.branchName || "";
+        }
       } catch (e) { }
 
       const isAdminOrSuperAdmin = user?.role === 'admin' || user?.role === 'super_admin';
@@ -94,7 +102,7 @@ export default function GlobalNotificationListener() {
 
       setRequests(prev => {
         const pcId = data.pcId || data.PcId;
-        const reqData = { ...data, type: 'ExtensionRequested', resolvedPcName: pcName };
+        const reqData = { ...data, type: 'ExtensionRequested', resolvedPcName: pcName, resolvedBranchName: branchName };
         const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId);
         return [...filtered, reqData];
       });
@@ -237,7 +245,12 @@ export default function GlobalNotificationListener() {
                   <h3 className="font-heading font-bold text-text uppercase tracking-widest text-sm">
                     {isOperatorCall ? 'Operator Call' : isExtension ? 'Time Extension' : 'Walk-in Request'}
                   </h3>
-                  <p className="text-text-2 font-body text-xs mt-0.5">Station <span className="text-accent font-semibold">{pcName}</span></p>
+                  <p className="text-text-2 font-body text-xs mt-0.5">
+                    Station <span className="text-accent font-semibold">{pcName}</span>
+                    {req.resolvedBranchName && (
+                      <span className="text-text-3"> • {req.resolvedBranchName}</span>
+                    )}
+                  </p>
                 </div>
               </div>
 

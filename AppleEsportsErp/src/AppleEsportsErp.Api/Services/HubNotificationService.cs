@@ -18,6 +18,7 @@ public class HubNotificationService : IHubNotificationService
     private readonly IHubContext<FoodOrderHub> _foodOrderHub;
     private readonly IHubContext<CashHub> _cashHub;
     private readonly IHubContext<PcOverlayHub> _pcOverlayHub;
+    private readonly IHubContext<DashboardHub> _dashboardHub;
     private readonly IServiceScopeFactory _scopeFactory;
 
     public HubNotificationService(
@@ -28,6 +29,7 @@ public class HubNotificationService : IHubNotificationService
         IHubContext<FoodOrderHub> foodOrderHub,
         IHubContext<CashHub> cashHub,
         IHubContext<PcOverlayHub> pcOverlayHub,
+        IHubContext<DashboardHub> dashboardHub,
         IServiceScopeFactory scopeFactory)
     {
         _pcStatusHub = pcStatusHub;
@@ -37,6 +39,7 @@ public class HubNotificationService : IHubNotificationService
         _foodOrderHub = foodOrderHub;
         _cashHub = cashHub;
         _pcOverlayHub = pcOverlayHub;
+        _dashboardHub = dashboardHub;
         _scopeFactory = scopeFactory;
     }
 
@@ -178,5 +181,16 @@ public class HubNotificationService : IHubNotificationService
             var dashboardService = scope.ServiceProvider.GetRequiredService<IDashboardService>();
             await dashboardService.InvalidateCacheAsync(branchId);
         }
+    }
+
+    public async Task TriggerDashboardRefreshAsync()
+    {
+        // Invalidate global cache so the next fetch gets fresh data
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var dashboardService = scope.ServiceProvider.GetRequiredService<IDashboardService>();
+            await dashboardService.InvalidateCacheAsync(null);
+        }
+        await _dashboardHub.Clients.All.SendAsync("DashboardRefreshRequired");
     }
 }
