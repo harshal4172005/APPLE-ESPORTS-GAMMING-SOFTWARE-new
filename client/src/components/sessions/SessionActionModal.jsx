@@ -16,8 +16,8 @@ export default function SessionActionModal({ pc, onClose, onActionSuccess }) {
   const [error, setError] = useState(null);
 
   const [form, setForm] = useState({
-    customerName: pc?.isRestart && pc?.lastCustomerName ? pc.lastCustomerName : '',
-    customerType: pc?.isRestart && pc?.lastMemberId ? 'Member' : 'Walk-in',
+    customerName: pc?.walkinReq?.customerName || (pc?.isRestart && pc?.lastCustomerName ? pc.lastCustomerName : ''),
+    customerType: (pc?.isRestart && pc?.lastMemberId) ? 'Member' : 'Walk-in',
     memberId: pc?.isRestart && pc?.lastMemberId ? pc.lastMemberId : null,
   });
 
@@ -119,7 +119,7 @@ export default function SessionActionModal({ pc, onClose, onActionSuccess }) {
         operatorId: user?.id,
         memberId: form.memberId,
       });
-      onActionSuccess?.();
+      onActionSuccess?.(pc);
     } catch (err) {
       setError(err.response?.data?.error || err.response?.data?.message || 'Failed to start session');
     } finally {
