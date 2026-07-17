@@ -188,12 +188,22 @@ public class PcOverlayHub : Hub
         }
     }
 
+    private async Task<Pc?> GetPcAsync(string pcIdentifier)
+    {
+        if (Guid.TryParse(pcIdentifier, out Guid pcGuid))
+        {
+            var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.Id == pcGuid);
+            if (pc != null) return pc;
+        }
+        return await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == pcIdentifier || p.PcName == pcIdentifier);
+    }
+
     public async Task<object> RequestExtension(ExtensionPayload payload)
     {
         _logger.LogInformation("Extension request from {PcId} for {Duration} mins", payload.PcId, payload.Duration);
         
-        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
-        var targetClients = pc != null ? _sessionHub.Clients.Groups($"branch:{pc.BranchId}", "admin:all") : _sessionHub.Clients.All;
+        var pc = await GetPcAsync(payload.PcId);
+        var targetClients = pc != null ? _sessionHub.Clients.Groups(new List<string> { $"branch:{pc.BranchId}", "admin:all" }) : _sessionHub.Clients.All;
         
         // Notify operators and admins globally
         await targetClients.SendAsync("ExtensionRequested", new 
@@ -212,8 +222,8 @@ public class PcOverlayHub : Hub
     public async Task<object> CallOperator(CallPayload payload)
     {
         _logger.LogInformation("Operator called to {PcId}", payload.PcId);
-        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
-        var targetClients = pc != null ? _notificationHub.Clients.Groups($"branch:{pc.BranchId}", "admin:all") : _notificationHub.Clients.All;
+        var pc = await GetPcAsync(payload.PcId);
+        var targetClients = pc != null ? _notificationHub.Clients.Groups(new List<string> { $"branch:{pc.BranchId}", "admin:all" }) : _notificationHub.Clients.All;
         
         // Alert operators in the PC's branch, and admins globally
         await targetClients.SendAsync("Alert", new 
@@ -244,8 +254,8 @@ public class PcOverlayHub : Hub
         // Persist so operators can poll for missed SignalR events
         PendingWalkinRequests[payload.PcId] = pending;
 
-        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.PcNumber == payload.PcId);
-        var targetClients = pc != null ? _notificationHub.Clients.Groups($"branch:{pc.BranchId}", "admin:all") : _notificationHub.Clients.All;
+        var pc = await GetPcAsync(payload.PcId);
+        var targetClients = pc != null ? _notificationHub.Clients.Groups(new List<string> { $"branch:{pc.BranchId}", "admin:all" }) : _notificationHub.Clients.All;
 
         // Real-time push to operator dashboards in this branch, and admins globally
         await targetClients.SendAsync("Alert", new

@@ -182,12 +182,33 @@ export default function SessionsPage() {
     };
   }, [connected, subscribe, SIGNALR_HUBS.PC_STATUS, SIGNALR_HUBS.NOTIFICATIONS, targetBranchId]);
 
-  const handleApproveWalkin = (req) => {
-    const pc = pcs.find(p => p.name === req.pcId || p.id === req.pcId);
-    if (pc) {
-      setStartModalPc({ ...pc, walkinReq: req });
-    } else {
-      toast.error('PC not found for this walk-in request.');
+  const handleApproveWalkin = async (req) => {
+    try {
+      const expectedAmount = req.duration ? (req.duration / 60) * 100 : 0;
+      const pc = pcs.find(p => p.name === req.pcId || p.id === req.pcId);
+      const actualPcId = pc ? pc.id : req.pcId;
+
+      const res = await api.post('/sessions/start', {
+        pcId: actualPcId,
+        memberId: null,
+        customerName: req.customerName,
+        durationMinutes: req.duration,
+        packageName: req.packageName || 'Walk-in',
+        expectedAmount: expectedAmount
+      });
+      if (res.data.success) {
+        toast.success(`Walk-in session started for ${req.pcId}`);
+        setWalkinRequests(prev => prev.filter(r => r.pcId !== req.pcId));
+        setPcs(current => {
+          const idx = current.findIndex(p => p.id === actualPcId);
+          if (idx === -1) return current;
+          const next = [...current];
+          next[idx] = { ...next[idx], state: 'Active' };
+          return next;
+        });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to approve walk-in');
     }
   };
 
@@ -319,10 +340,7 @@ export default function SessionsPage() {
       <SessionActionModal
         pc={startModalPc}
         onClose={() => setStartModalPc(null)}
-        onActionSuccess={(pc) => {
-          if (pc?.walkinReq) {
-            setWalkinRequests(prev => prev.filter(r => r.pcId !== pc.walkinReq.pcId));
-          }
+        onActionSuccess={() => {
           setStartModalPc(null);
           fetchPcs();
         }}

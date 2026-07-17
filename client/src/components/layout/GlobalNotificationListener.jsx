@@ -34,7 +34,7 @@ export default function GlobalNotificationListener() {
       // Filter notifications for Admins and SuperAdmins so they only see them for the actively selected branch
       const isAdminOrSuperAdmin = user?.role === 'admin' || user?.role === 'super_admin';
       const alertBranchId = data.branchId || data.BranchId;
-      if (isAdminOrSuperAdmin && alertBranchId && activeBranch?.id && alertBranchId !== activeBranch.id) {
+      if (isAdminOrSuperAdmin && alertBranchId && activeBranch?.id && String(alertBranchId).toLowerCase() !== String(activeBranch.id).toLowerCase()) {
         return; // Ignore this notification as it's not for the currently viewed branch
       }
 
@@ -88,7 +88,7 @@ export default function GlobalNotificationListener() {
 
       const isAdminOrSuperAdmin = user?.role === 'admin' || user?.role === 'super_admin';
       const alertBranchId = data.branchId || data.BranchId;
-      if (isAdminOrSuperAdmin && alertBranchId && activeBranch?.id && alertBranchId !== activeBranch.id) {
+      if (isAdminOrSuperAdmin && alertBranchId && activeBranch?.id && String(alertBranchId).toLowerCase() !== String(activeBranch.id).toLowerCase()) {
         return; 
       }
 
