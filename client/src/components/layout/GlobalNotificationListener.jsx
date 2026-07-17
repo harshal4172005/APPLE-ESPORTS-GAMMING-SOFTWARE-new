@@ -25,11 +25,13 @@ export default function GlobalNotificationListener() {
       
       let pcName = data.pcId || data.PcId;
       let branchName = "";
+      let ratePerHour = 100;
       try {
         const res = await api.get(`/public/pcs/${pcName}`);
         if (res.data.success) {
           pcName = res.data.data.name;
           branchName = res.data.data.branchName || "";
+          ratePerHour = res.data.data.ratePerHour || 100;
         }
       } catch (e) {
         // silent fallback to ID
@@ -48,7 +50,7 @@ export default function GlobalNotificationListener() {
           const pcId = data.pcId || data.PcId;
           // avoid duplicates if same PC sends multiple times
           const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId);
-          return [...filtered, { ...data, resolvedPcName: pcName, resolvedBranchName: branchName }];
+          return [...filtered, { ...data, resolvedPcName: pcName, resolvedBranchName: branchName, resolvedRatePerHour: ratePerHour }];
         });
         toast.info(`Walk-in request from ${pcName}`);
       } else if (type === 'OperatorCall') {
@@ -57,7 +59,7 @@ export default function GlobalNotificationListener() {
         
         setRequests(prev => {
           const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId || r.type !== 'OperatorCall');
-          return [...filtered, { ...data, type: 'OperatorCall', resolvedPcName: pcName, resolvedBranchName: branchName }];
+          return [...filtered, { ...data, type: 'OperatorCall', resolvedPcName: pcName, resolvedBranchName: branchName, resolvedRatePerHour: ratePerHour }];
         });
         
         // Speak the notification
@@ -86,11 +88,13 @@ export default function GlobalNotificationListener() {
     const unsubscribeExtension = subscribe(SIGNALR_HUBS.SESSIONS, 'ExtensionRequested', async (data) => {
       let pcName = data.pcId || data.PcId;
       let branchName = "";
+      let ratePerHour = 100;
       try {
         const res = await api.get(`/public/pcs/${pcName}`);
         if (res.data.success) {
             pcName = res.data.data.name;
             branchName = res.data.data.branchName || "";
+            ratePerHour = res.data.data.ratePerHour || 100;
         }
       } catch (e) { }
 
@@ -102,7 +106,7 @@ export default function GlobalNotificationListener() {
 
       setRequests(prev => {
         const pcId = data.pcId || data.PcId;
-        const reqData = { ...data, type: 'ExtensionRequested', resolvedPcName: pcName, resolvedBranchName: branchName };
+        const reqData = { ...data, type: 'ExtensionRequested', resolvedPcName: pcName, resolvedBranchName: branchName, resolvedRatePerHour: ratePerHour };
         const filtered = prev.filter(r => (r.pcId || r.PcId) !== pcId);
         return [...filtered, reqData];
       });
@@ -126,15 +130,15 @@ export default function GlobalNotificationListener() {
       if (req.type === 'ExtensionRequested') {
         const sessionId = req.sessionId || req.SessionId;
         
-        // Fetch session to get actual ratePerHour
-        let ratePerHour = 100;
+        // Use the resolved rate from PricingProfile, or fetch from session as fallback
+        let ratePerHour = req.resolvedRatePerHour || 100;
         try {
             const sessionRes = await api.get(`/public/session/pc/${pcId}`);
             if (sessionRes.data.success && sessionRes.data.data) {
-                ratePerHour = sessionRes.data.data.ratePerHour || 100;
+                ratePerHour = sessionRes.data.data.ratePerHour || ratePerHour;
             }
         } catch (e) {
-            console.warn('Failed to fetch session rate, using default 100');
+            console.warn('Failed to fetch session rate, using PricingProfile rate');
         }
         
         const expectedAmount = duration ? (duration / 60) * ratePerHour : 0;
@@ -269,7 +273,7 @@ export default function GlobalNotificationListener() {
                 <div className="flex justify-between items-center">
                   <span className="text-text-3 font-body text-xs">Expected Bill</span>
                   <span className="text-text font-mono font-bold text-sm text-accent">
-                    {duration === 0 ? 'Variable' : `₹${(duration / 60) * 100}`}
+                    {duration === 0 ? 'Variable' : `₹${(duration / 60) * (req.resolvedRatePerHour || 100)}`}
                   </span>
                 </div>
               </div>

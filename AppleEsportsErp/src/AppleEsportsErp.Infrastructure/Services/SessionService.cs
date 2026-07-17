@@ -216,6 +216,7 @@ public class SessionService : ISessionService
         {
             var session = await _db.Sessions
                 .Include(s => s.Pc)
+                    .ThenInclude(p => p.PricingProfile)
                 .Include(s => s.Bills)
                     .ThenInclude(b => b.Items)
                 .FirstOrDefaultAsync(s => s.Id == sessionId && s.BranchId == branchId);
@@ -234,55 +235,68 @@ public class SessionService : ISessionService
             
             var bill = session.Bills.FirstOrDefault();
 
-            // 1. Calculate Prorated Cost based on actual time played
-            var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
-            decimal defaultBaseRate = 100m;
-            Dictionary<string, decimal> hzPricing = new();
-            if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
+            // 1. Calculate ratePerHour
+            decimal ratePerHour = 100m; // Fallback
+            
+            if (session.Pc?.PricingProfile != null)
             {
-                try
-                {
-                    using var doc = JsonDocument.Parse(globalConfig.ConfigValue);
-                    if (doc.RootElement.TryGetProperty("pricing", out var pricing))
-                    {
-                        if (pricing.TryGetProperty("baseRate", out var br))
-                            defaultBaseRate = br.GetDecimal();
-                            
-                        if (pricing.TryGetProperty("hzPricing", out var hzObj))
-                        {
-                            foreach (var prop in hzObj.EnumerateObject())
-                            {
-                                if (prop.Value.ValueKind == JsonValueKind.Number)
-                                    hzPricing[prop.Name] = prop.Value.GetDecimal();
-                            }
-                        }
-                    }
-                }
-                catch { /* fallback */ }
-            }
-
-            decimal ratePerHour = defaultBaseRate;
-            if (!string.IsNullOrEmpty(session.Pc?.MonitorHz) && hzPricing.TryGetValue(session.Pc.MonitorHz, out var hrRate))
-            {
-                ratePerHour = hrRate;
-            }
-
-            // Min 1 min charge for time-based calculations
-            decimal hours = Math.Max((decimal)session.ActualDurationMin.Value / 60m, 1m / 60m); 
-            decimal proratedGamingAmount = Math.Round(hours * ratePerHour, 2);
-
-            if (session.PlannedDurationMin == null)
-            {
-                // Open Session: Always use the exact time-based cost
-                session.GamingAmount = proratedGamingAmount;
+                ratePerHour = session.Pc.PricingProfile.BaseHourlyRate;
             }
             else
             {
-                // Fixed Session: Cap the bill if they left early and prorated cost is cheaper than fixed plan
-                if (proratedGamingAmount < session.GamingAmount)
+                var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
+                Dictionary<string, decimal> hzPricing = new();
+                if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
                 {
-                    session.GamingAmount = proratedGamingAmount;
-                    session.GamingType += " (Early Checkout Prorated)";
+                    try
+                    {
+                        using var doc = JsonDocument.Parse(globalConfig.ConfigValue);
+                        if (doc.RootElement.TryGetProperty("pricing", out var pricing))
+                        {
+                            if (pricing.TryGetProperty("baseRate", out var br))
+                                ratePerHour = br.GetDecimal();
+                                
+                            if (pricing.TryGetProperty("hzPricing", out var hzObj))
+                            {
+                                foreach (var prop in hzObj.EnumerateObject())
+                                {
+                                    if (prop.Value.ValueKind == JsonValueKind.Number)
+                                        hzPricing[prop.Name] = prop.Value.GetDecimal();
+                                }
+                            }
+                        }
+                    }
+                    catch { /* fallback */ }
+                }
+
+                if (!string.IsNullOrEmpty(session.Pc?.MonitorHz) && hzPricing.TryGetValue(session.Pc.MonitorHz, out var hrRate))
+                {
+                    ratePerHour = hrRate;
+                }
+            }
+
+            // 2. Apply 10-minute Buffer & Calculate Final Amount
+            if (session.ActualDurationMin <= 10)
+            {
+                // Under 10 minutes buffer time, session is free
+                session.GamingAmount = 0;
+                if (!session.GamingType.Contains("Cancelled"))
+                {
+                    session.GamingType += " (Cancelled - Under 10m Buffer)";
+                }
+            }
+            else
+            {
+                if (session.PlannedDurationMin == null)
+                {
+                    // Open Session: Exact time-based cost based on PricingProfile rate
+                    decimal hours = Math.Max((decimal)session.ActualDurationMin.Value / 60m, 1m / 60m); 
+                    session.GamingAmount = Math.Round(hours * ratePerHour, 2);
+                }
+                else
+                {
+                    // Fixed Session: They are charged the FULL package price originally set. No downward prorating.
+                    // We keep session.GamingAmount as it was.
                 }
             }
 

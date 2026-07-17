@@ -184,17 +184,19 @@ public class PublicController : ControllerBase
         Domain.Entities.Pc? pc = null;
         if (Guid.TryParse(pcIdentifier, out var pcGuid))
         {
-            pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.Id == pcGuid);
+            pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).FirstOrDefaultAsync(p => p.Id == pcGuid);
         }
         else
         {
-            pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.PcNumber == pcIdentifier || p.PcName == pcIdentifier);
+            pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).FirstOrDefaultAsync(p => p.PcNumber == pcIdentifier || p.PcName == pcIdentifier);
         }
 
         if (pc == null)
             return Ok(new { success = false, error = "PC not found" });
 
-        return Ok(ApiResponse<object>.Ok(new { id = pc.Id, name = pc.PcName ?? pc.PcNumber, branchId = pc.BranchId, branchName = pc.Branch?.Name, monitorHz = pc.MonitorHz }));
+        decimal rate = pc.PricingProfile?.BaseHourlyRate ?? 100m;
+
+        return Ok(ApiResponse<object>.Ok(new { id = pc.Id, name = pc.PcName ?? pc.PcNumber, branchId = pc.BranchId, branchName = pc.Branch?.Name, monitorHz = pc.MonitorHz, ratePerHour = rate }));
     }
 
     [HttpPost("pcs/{pcId:guid}/hz")]
@@ -217,17 +219,17 @@ public class PublicController : ControllerBase
         Domain.Entities.Pc? pc = null;
         if (Guid.TryParse(pcId, out var pcGuid))
         {
-            pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.Id == pcGuid);
+            pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).FirstOrDefaultAsync(p => p.Id == pcGuid);
         }
         else
         {
-            pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.PcNumber == pcId || p.PcName == pcId);
+            pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).FirstOrDefaultAsync(p => p.PcNumber == pcId || p.PcName == pcId);
         }
 
         if (pc == null)
             return Ok(new { success = false, error = "PC not found" });
 
-        decimal ratePerHour = GetRateForBranchAndTier(pc.Branch?.Name ?? "", pc.MonitorHz ?? "");
+        decimal ratePerHour = pc.PricingProfile?.BaseHourlyRate ?? 100m;
 
         var plans = new List<object>();
         string planName = string.IsNullOrEmpty(pc.MonitorHz) ? "Standard" : $"{pc.MonitorHz}Hz Tier";
@@ -240,43 +242,12 @@ public class PublicController : ControllerBase
         return Ok(ApiResponse<object>.Ok(plans));
     }
 
-    private decimal GetRateForBranchAndTier(string branchName, string monitorHz)
-    {
-        branchName = branchName?.Trim().ToLowerInvariant() ?? "";
-        monitorHz = monitorHz?.Trim().ToLowerInvariant() ?? "";
-
-        if (branchName.Contains("adajan"))
-        {
-            return 60m; // 240Hz only
-        }
-        if (branchName.Contains("citylight"))
-        {
-            if (monitorHz == "144hz") return 50m;
-            if (monitorHz == "240hz") return 60m;
-            return 50m; // default
-        }
-        if (branchName.Contains("katargam"))
-        {
-            if (monitorHz == "165hz") return 60m;
-            if (monitorHz == "240hz") return 70m;
-            if (monitorHz == "360hz") return 80m;
-            return 60m; // default
-        }
-        if (branchName.Contains("varachha"))
-        {
-            if (monitorHz == "240hz") return 80m;
-            if (monitorHz == "400hz") return 90m;
-            return 80m; // default
-        }
-
-        return 100m; // fallback
-    }
-
     [HttpGet("branches/{branchId}/plans")]
     public async Task<IActionResult> GetBranchPlans(Guid branchId)
     {
         var branch = await _db.Branches
             .Include(b => b.Pcs)
+                .ThenInclude(p => p.PricingProfile)
             .FirstOrDefaultAsync(b => b.Id == branchId);
 
         if (branch == null)
@@ -297,7 +268,8 @@ public class PublicController : ControllerBase
 
         foreach (var tier in uniqueTiers)
         {
-            decimal ratePerHour = GetRateForBranchAndTier(branch.Name, tier);
+            var pcWithTier = branch.Pcs.FirstOrDefault(p => (string.IsNullOrWhiteSpace(p.MonitorHz) ? "Standard" : p.MonitorHz) == tier);
+            decimal ratePerHour = pcWithTier?.PricingProfile?.BaseHourlyRate ?? 100m;
             string planNameTier = tier == "Standard" ? "Standard Tier" : $"{tier}Hz Tier";
             string monitorHzVal = tier == "Standard" ? "" : tier;
 
@@ -344,7 +316,7 @@ public class PublicController : ControllerBase
         dto.MemberId = memberId;
 
         // Retrieve PC to find out which Branch this session belongs to
-        var pc = await _db.Pcs.Include(p => p.Branch).FirstOrDefaultAsync(p => p.Id == dto.PcId);
+        var pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).FirstOrDefaultAsync(p => p.Id == dto.PcId);
         if (pc == null)
             return BadRequest(new { success = false, error = "PC not found." });
 
@@ -385,7 +357,7 @@ public class PublicController : ControllerBase
 
             // Build session from reservation
             var durationMin = pendingReservation.DurationMin ?? 60;
-            var ratePerHour = GetRateForBranchAndTier(pc.Branch?.Name ?? "", pc.MonitorHz ?? "");
+            var ratePerHour = pc.PricingProfile?.BaseHourlyRate ?? 100m;
             var expectedAmount = pendingReservation.DurationMin.HasValue ? (durationMin / 60m) * ratePerHour : 0m; // 0 for member-only (postpaid)
 
             var session = new Session
