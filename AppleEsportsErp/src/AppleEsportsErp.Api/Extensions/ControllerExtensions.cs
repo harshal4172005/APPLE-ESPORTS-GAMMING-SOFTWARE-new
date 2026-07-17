@@ -42,6 +42,7 @@ public static class ControllerExtensions
                 BranchId = branchId,
                 FullName = "System Administrator",
                 Username = sysUsername,
+                Email = $"{sysUsername}@system.local",
                 PasswordHash = "LOCKED",
                 Status = OperatorStatus.Active,
                 CreatedAt = DateTimeOffset.UtcNow,
