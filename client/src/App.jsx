@@ -62,11 +62,12 @@ import EmployeeFormsPage from './pages/hr/EmployeeFormsPage';
 
 // ── End of imports ──
 function HomeRedirect() {
-  const { isSuperAdmin, isAuthenticated } = useAuth();
+  const { isAuthenticated } = useAuth();
   if (!isAuthenticated) {
     return <Navigate to="/" replace />;
   }
-  return isSuperAdmin ? <Navigate to="/app/dashboard" replace /> : <Navigate to="/app/billing" replace />;
+  // All roles (Operator, Admin, SuperAdmin) should land on Sessions first
+  return <Navigate to="/app/sessions" replace />;
 }
 
 export default function App() {

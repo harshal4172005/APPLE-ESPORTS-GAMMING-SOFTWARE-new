@@ -51,6 +51,13 @@ public class BillingController : ControllerBase
         return Ok(ApiResponse<BillDto>.Ok(result));
     }
 
+    [HttpGet("by-number/{billNumber}")]
+    public async Task<IActionResult> GetBillByNumber(string billNumber)
+    {
+        var result = await _billingService.GetBillByNumberAsync(GetBranchId(), billNumber);
+        return Ok(ApiResponse<BillDto>.Ok(result));
+    }
+
     [HttpPost("{id:guid}/discount")]
     [Idempotent]
     [Authorize] // Replaced strict policy with inline check

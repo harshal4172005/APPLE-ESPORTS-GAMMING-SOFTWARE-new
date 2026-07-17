@@ -151,7 +151,7 @@ public class EodController : ControllerBase
                 CreditAmount = c.CreditAmount,
                 CreditStatus = "cleared",
                 SessionNotes = "Credit clearance payment for past session",
-                SessionStartTime = (DateTimeOffset?)null,
+                SessionStartTime = c.Bill != null ? c.Bill.CreatedAt : c.CreatedAt,
                 SessionEndTime = (DateTimeOffset?)null,
                 SessionDurationMinutes = 0d,
                 PcId = (Guid?)null,

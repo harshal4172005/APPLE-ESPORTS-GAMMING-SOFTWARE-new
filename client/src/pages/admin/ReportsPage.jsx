@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import PageHeader from '../../components/layout/PageHeader';
 import api from '../../config/api';
+import { printBill } from '../../utils/printBill';
 import { getRangeReport, getDiscrepancies } from '../../api/food.api';
 import { getCashReconciliationReport } from '../../api/reports.api';
 import { useBranch } from '../../contexts/BranchContext';
@@ -454,6 +455,7 @@ export default function ReportsPage() {
                   <th className="py-3 px-4 text-right">Discount</th>
                   <th className="py-3 px-4 text-right">Total</th>
                   <th className="py-3 px-4">Notes</th>
+                  <th className="py-3 px-4 text-center">Print</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40 font-mono">
@@ -492,6 +494,15 @@ export default function ReportsPage() {
                     <td className="py-3 px-4 text-right text-neon-red">{bill.discount > 0 ? `-₹${bill.discount.toFixed(2)}` : '-'}</td>
                     <td className="py-3 px-4 text-right text-neon-green font-bold">₹{bill.totalRevenue.toFixed(2)}</td>
                     <td className="py-3 px-4 text-text-3 text-[10px] whitespace-pre-wrap">{bill.sessionNotes || '-'}</td>
+                    <td className="py-3 px-4 text-center">
+                        <button 
+                          onClick={() => printBill(bill.billId || bill.id, bill)} 
+                          className="p-1.5 bg-bg-3 hover:bg-accent hover:text-bg transition-colors rounded-lg text-text-2 tooltip-trigger"
+                          title="Print Bill"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

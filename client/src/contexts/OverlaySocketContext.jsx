@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
 import { HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
-import axios from 'axios';
+import api from '../config/api';
 
 const OverlaySocketContext = createContext(null);
 
@@ -72,7 +72,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
       
       let pcRatePerHour = 100;
       try {
-        const pcRes = await axios.get(`/api/public/pcs/${pcId}`);
+        const pcRes = await api.get(`/public/pcs/${pcId}`);
         if (pcRes.data.success && pcRes.data.data) {
           if (pcRes.data.data.ratePerHour) {
             pcRatePerHour = pcRes.data.data.ratePerHour;
@@ -85,7 +85,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
         console.warn('[Overlay] Failed to fetch PC rate, using default 100:', e);
       }
 
-      const res = await axios.get(`/api/public/session/pc/${pcId}`);
+      const res = await api.get(`/public/session/pc/${pcId}`);
       if (res.data.success && res.data.data) {
         const d = res.data.data;
         setSessionData({

@@ -70,6 +70,18 @@ public class BillingService : IBillingService
         return MapToDto(bill);
     }
 
+    public async Task<BillDto> GetBillByNumberAsync(Guid branchId, string billNumber)
+    {
+        var bill = await _unitOfWork.Repository<Bill>().Query()
+            .Include(b => b.Items)
+            .Include(b => b.Payments)
+            .Include(b => b.Pc)
+            .FirstOrDefaultAsync(b => b.BillNumber == billNumber && b.BranchId == branchId)
+            ?? throw new NotFoundException("Bill not found.");
+
+        return MapToDto(bill);
+    }
+
     public async Task<BillDto> ApplyDiscountAsync(Guid branchId, Guid superAdminId, Guid id, ApplyDiscountDto dto)
     {
         var bill = await _unitOfWork.Repository<Bill>().Query()

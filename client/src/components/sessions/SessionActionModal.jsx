@@ -141,11 +141,10 @@ export default function SessionActionModal({ pc, onClose, onActionSuccess }) {
             <div>
               <h2 className="font-heading font-bold text-text uppercase tracking-wider text-base flex items-center gap-2">
                 <Play className="w-4 h-4 text-pc-active" />
-                Start Session — {pc.name}
+                START SESSION — {pc.name}
               </h2>
               <p className="text-text-3 text-[10px] font-mono mt-0.5">
-                {pc.zone && <span className="mr-2 text-neon-purple">{pc.zone}</span>}
-                {pc.ratePerHour > 0 && <span>₹{pc.ratePerHour}/hr</span>}
+                {pc.zone && <span className="mr-2 text-neon-purple uppercase">{pc.zone}</span>}
               </p>
             </div>
             <button onClick={onClose} className="p-1 text-text-3 hover:text-text rounded transition-colors">

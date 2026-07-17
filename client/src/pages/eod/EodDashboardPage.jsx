@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, AlertTriangle, FileText, CheckCircle, Lock, Monitor, Utensils, Clock } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, FileText, CheckCircle, Lock, Monitor, Utensils, Clock, Printer } from 'lucide-react';
+import { printBill } from '../../utils/printBill';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import api from '../../config/api';
@@ -473,6 +474,7 @@ export default function EodDashboardPage() {
                       <th className="py-3 px-4 text-right">Discount</th>
                       <th className="py-3 px-4 text-right">Total</th>
                       <th className="py-3 px-4">Notes</th>
+                      <th className="py-3 px-4 text-center">Print</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40 font-mono">
@@ -511,6 +513,15 @@ export default function EodDashboardPage() {
                         <td className="py-3 px-4 text-right text-neon-red">{bill.discount > 0 ? `-₹${bill.discount.toFixed(2)}` : '-'}</td>
                         <td className="py-3 px-4 text-right text-neon-green font-bold">₹{bill.totalRevenue.toFixed(2)}</td>
                         <td className="py-3 px-4 text-text-3 text-[10px] whitespace-pre-wrap">{bill.sessionNotes || '-'}</td>
+                        <td className="py-3 px-4 text-center">
+                          <button 
+                            onClick={() => printBill(bill.billId || bill.id, bill)} 
+                            className="p-1.5 bg-bg-3 hover:bg-accent hover:text-bg transition-colors rounded-lg text-text-2 tooltip-trigger"
+                            title="Print Bill"
+                          >
+                            <Printer className="w-4 h-4" />
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
