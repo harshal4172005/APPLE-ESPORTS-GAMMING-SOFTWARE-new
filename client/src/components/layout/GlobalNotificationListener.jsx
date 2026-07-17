@@ -135,6 +135,8 @@ export default function GlobalNotificationListener() {
             AdditionalMinutes: duration,
             AdditionalAmount: expectedAmount,
             PackageName: req.packageName || req.PackageName || 'Extension'
+        }, {
+            headers: { 'X-Branch-Id': req.branchId || req.BranchId }
         });
         if (extendRes.data.success) {
           toast.success(`Time extended for ${pcId}`);
@@ -154,6 +156,7 @@ export default function GlobalNotificationListener() {
       }
       
       const actualPcId = pcRes.data.data.id;
+      const resolvedBranchId = pcRes.data.data.branchId || req.branchId || req.BranchId;
       const ratePerHour = pcRes.data.data.ratePerHour || 100;
       const expectedAmount = duration ? (duration / 60) * ratePerHour : 0;
 
@@ -165,6 +168,8 @@ export default function GlobalNotificationListener() {
         durationMinutes: duration,
         packageName: req.packageName || req.PackageName || 'Walk-in',
         expectedAmount: expectedAmount
+      }, {
+        headers: { 'X-Branch-Id': resolvedBranchId }
       });
 
       if (startRes.data.success) {
@@ -182,11 +187,14 @@ export default function GlobalNotificationListener() {
   const handleDecline = async (req) => {
     try {
       const pcId = req.pcId || req.PcId;
+      const branchId = req.branchId || req.BranchId;
       if (req.type === 'ExtensionRequested') {
         setRequests(prev => prev.filter(r => (r.pcId || r.PcId) !== pcId));
         toast.info(`Declined extension for ${pcId}`);
       } else {
-        await api.post(`/public/pcs/${pcId}/decline-walkin`);
+        await api.post(`/public/pcs/${pcId}/decline-walkin`, {}, {
+          headers: { 'X-Branch-Id': branchId }
+        });
         setRequests(prev => prev.filter(r => (r.pcId || r.PcId) !== pcId));
         toast.info(`Declined walk-in for ${pcId}`);
       }
