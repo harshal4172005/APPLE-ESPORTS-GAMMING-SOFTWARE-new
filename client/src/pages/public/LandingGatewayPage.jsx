@@ -50,8 +50,7 @@ export default function LandingGatewayPage() {
       description: 'Manage sessions, billing and branch operations.',
       icon: <MonitorStop className="w-12 h-12 text-accent mb-4 group-hover:scale-110 transition-transform" />,
       onClick: () => {
-        if (setupStatus?.needsOperatorSetup) navigate('/setup/operator');
-        else navigate('/login/operator');
+        navigate('/login/operator');
       },
     },
     {

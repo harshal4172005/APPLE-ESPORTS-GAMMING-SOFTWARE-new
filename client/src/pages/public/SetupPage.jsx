@@ -69,7 +69,12 @@ export default function SetupPage() {
     }
   };
 
-  const isOperator = role === 'operator';
+  const isOperator = false;
+
+  if (role !== 'superadmin') {
+    navigate('/login/operator');
+    return null;
+  }
 
   return (
     <div className="min-h-screen bg-bg flex items-center justify-center p-6 relative overflow-hidden">
