@@ -5,7 +5,7 @@
 // ═══════════════════════════════════════════════════════════
 
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import { useSocket } from '../../contexts/SocketContext';
@@ -14,6 +14,7 @@ import AdminSwitchModal from '../auth/AdminSwitchModal';
 
 export default function Topbar({ onToggleSidebar, sidebarOpen, onLogoutClick }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, baseUser, adminSwitchUser, logout, isSuperAdmin, exitAdminSwitch } = useAuth();
   const { branches, activeBranch, switchBranch } = useBranch();
   const { connected } = useSocket();
@@ -148,7 +149,15 @@ export default function Topbar({ onToggleSidebar, sidebarOpen, onLogoutClick }) 
                 </div>
                 
                 <button
-                  onClick={() => { switchBranch(null); setShowBranchMenu(false); }}
+                  onClick={() => { 
+                    switchBranch(null); 
+                    setShowBranchMenu(false); 
+                    
+                    const GLOBAL_PATHS = ['/app/dashboard', '/app/settings', '/app/employee-forms'];
+                    if (!GLOBAL_PATHS.some(p => location.pathname.startsWith(p))) {
+                      navigate('/app/dashboard');
+                    }
+                  }}
                   className={`w-full text-left px-3 py-2 text-xs hover:bg-bg-3 transition-colors flex items-center gap-2 border-b border-border/40 ${
                     activeBranch === null ? 'text-accent bg-accent/5' : 'text-text'
                   }`}

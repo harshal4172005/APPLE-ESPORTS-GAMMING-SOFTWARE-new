@@ -242,9 +242,11 @@ public class PcOverlayHub : Hub
     {
         _logger.LogInformation("Walk-in session request from {PcId} by {CustomerName} for {Duration} mins (Package: {PackageName})", payload.PcId, payload.CustomerName, payload.Duration, payload.PackageName);
 
+        var pc = await GetPcAsync(payload.PcId);
         var pending = new PendingWalkinData
         {
             PcId = payload.PcId,
+            BranchId = pc?.BranchId.ToString(),
             CustomerName = payload.CustomerName,
             Duration = payload.Duration,
             PackageName = payload.PackageName,
@@ -254,7 +256,6 @@ public class PcOverlayHub : Hub
         // Persist so operators can poll for missed SignalR events
         PendingWalkinRequests[payload.PcId] = pending;
 
-        var pc = await GetPcAsync(payload.PcId);
         var targetClients = pc != null ? _notificationHub.Clients.Groups(new List<string> { $"branch:{pc.BranchId}", "admin:all" }) : _notificationHub.Clients.All;
 
         // Real-time push to operator dashboards in this branch, and admins globally
@@ -359,6 +360,7 @@ public class PendingWalkinData
 {
     [JsonPropertyName("type")] public string Type { get; set; } = "WalkinSessionRequest";
     [JsonPropertyName("pcId")] public string PcId { get; set; } = string.Empty;
+    [JsonPropertyName("branchId")] public string? BranchId { get; set; }
     [JsonPropertyName("customerName")] public string CustomerName { get; set; } = string.Empty;
     [JsonPropertyName("duration")] public int Duration { get; set; }
     [JsonPropertyName("packageName")] public string PackageName { get; set; } = string.Empty;
