@@ -295,14 +295,9 @@ public class PcOverlayHub : Hub
         // Persist so operators can poll for missed SignalR events
         PendingWalkinRequests[payload.PcId] = pending;
 
-<<<<<<< HEAD
-        var pc = await GetPcAsync(payload.PcId);
         bool isOperatorOnline = pc != null && AppleEsportsErp.Application.Services.OperatorPresenceTracker.IsOperatorAvailable(pc.BranchId.ToString());
         string alertMsg = $"Walk-in request: {payload.CustomerName} wants {payload.PackageName ?? (payload.Duration + " mins")} at {payload.PcId}";
         if (!isOperatorOnline) alertMsg = "[Operator Offline] " + alertMsg;
-=======
-        var targetClients = pc != null ? _notificationHub.Clients.Groups(new List<string> { $"branch:{pc.BranchId}", "admin:all" }) : _notificationHub.Clients.All;
->>>>>>> origin/main
 
         var payloadObj = new
         {
