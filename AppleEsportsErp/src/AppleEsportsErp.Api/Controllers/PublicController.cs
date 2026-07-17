@@ -288,6 +288,14 @@ public class PublicController : ControllerBase
     public IActionResult GetPendingWalkinRequests()
     {
         var pending = PcOverlayHub.PendingWalkinRequests.Values.ToList();
+        
+        // Isolate by BranchId if present in Request Headers
+        if (Request.Headers.TryGetValue("X-Branch-Id", out var branchIdVal) && Guid.TryParse(branchIdVal.ToString(), out Guid branchId))
+        {
+            var branchIdStr = branchId.ToString();
+            pending = pending.Where(p => string.IsNullOrEmpty(p.BranchId) || p.BranchId.Equals(branchIdStr, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+        
         return Ok(new { success = true, data = pending });
     }
 

@@ -281,9 +281,11 @@ public class PcOverlayHub : Hub
     {
         _logger.LogInformation("Walk-in session request from {PcId} by {CustomerName} for {Duration} mins (Package: {PackageName})", payload.PcId, payload.CustomerName, payload.Duration, payload.PackageName);
 
+        var pc = await GetPcAsync(payload.PcId);
         var pending = new PendingWalkinData
         {
             PcId = payload.PcId,
+            BranchId = pc?.BranchId.ToString(),
             CustomerName = payload.CustomerName,
             Duration = payload.Duration,
             PackageName = payload.PackageName,
@@ -293,7 +295,6 @@ public class PcOverlayHub : Hub
         // Persist so operators can poll for missed SignalR events
         PendingWalkinRequests[payload.PcId] = pending;
 
-        var pc = await GetPcAsync(payload.PcId);
         bool isOperatorOnline = pc != null && AppleEsportsErp.Application.Services.OperatorPresenceTracker.IsOperatorAvailable(pc.BranchId.ToString());
         string alertMsg = $"Walk-in request: {payload.CustomerName} wants {payload.PackageName ?? (payload.Duration + " mins")} at {payload.PcId}";
         if (!isOperatorOnline) alertMsg = "[Operator Offline] " + alertMsg;
@@ -409,6 +410,7 @@ public class PendingWalkinData
 {
     [JsonPropertyName("type")] public string Type { get; set; } = "WalkinSessionRequest";
     [JsonPropertyName("pcId")] public string PcId { get; set; } = string.Empty;
+    [JsonPropertyName("branchId")] public string? BranchId { get; set; }
     [JsonPropertyName("customerName")] public string CustomerName { get; set; } = string.Empty;
     [JsonPropertyName("duration")] public int Duration { get; set; }
     [JsonPropertyName("packageName")] public string PackageName { get; set; } = string.Empty;
