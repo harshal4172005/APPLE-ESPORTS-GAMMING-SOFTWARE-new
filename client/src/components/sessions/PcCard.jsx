@@ -59,9 +59,13 @@ const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReserved
   const [isTransferring, setIsTransferring] = useState(false);
 
   // Live charge: if fixed session, just totalAmount. if open-ended, totalAmount + elapsed rate.
-  const liveCharge = pc.sessionEndTime
-    ? (pc.totalAmount || 0)
-    : (pc.totalAmount || 0) + (pc.ratePerHour > 0 ? Number((Math.max(elapsed.totalMin / 60, 1 / 60) * pc.ratePerHour).toFixed(2)) : 0);
+  let liveCharge = 0;
+  if (pc.sessionEndTime) {
+    liveCharge = pc.totalAmount || 0;
+  } else {
+    const elapsedGamingCharge = pc.ratePerHour > 0 ? Number((Math.max(elapsed.totalMin / 60, 1 / 60) * pc.ratePerHour).toFixed(2)) : 0;
+    liveCharge = (pc.totalAmount || 0) + (elapsed.totalMin <= 10 ? 0 : elapsedGamingCharge);
+  }
 
   const isActive = pc.state === 'Active';
   const isIdle = pc.state === 'Idle';

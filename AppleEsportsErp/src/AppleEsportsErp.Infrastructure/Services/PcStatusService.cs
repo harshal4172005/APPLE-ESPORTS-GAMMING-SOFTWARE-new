@@ -62,39 +62,12 @@ public class PcStatusService : IPcStatusService
 
         var result = new List<PcStatusDto>();
 
-        // Fetch global Hz pricing
-        var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
-        Dictionary<string, decimal> hzPricing = new();
-        decimal defaultBaseRate = 100m;
-        if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
-        {
-            try
-            {
-                using var doc = JsonDocument.Parse(globalConfig.ConfigValue);
-                if (doc.RootElement.TryGetProperty("pricing", out var pricing))
-                {
-                    if (pricing.TryGetProperty("baseRate", out var br))
-                        defaultBaseRate = br.GetDecimal();
-                        
-                    if (pricing.TryGetProperty("hzPricing", out var hzObj))
-                    {
-                        foreach (var prop in hzObj.EnumerateObject())
-                        {
-                            if (prop.Value.ValueKind == JsonValueKind.Number)
-                                hzPricing[prop.Name] = prop.Value.GetDecimal();
-                        }
-                    }
-                }
-            }
-            catch { /* fallback to defaults */ }
-        }
-
         foreach (var pc in pcs)
         {
-            decimal calculatedRate = defaultBaseRate;
-            if (!string.IsNullOrEmpty(pc.MonitorHz) && hzPricing.TryGetValue(pc.MonitorHz, out var hrRate))
+            decimal calculatedRate = 100m;
+            if (pc.PricingProfile != null)
             {
-                calculatedRate = hrRate;
+                calculatedRate = pc.PricingProfile.BaseHourlyRate;
             }
 
             var dto = new PcStatusDto

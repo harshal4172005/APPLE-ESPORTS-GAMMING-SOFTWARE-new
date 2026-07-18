@@ -23,7 +23,7 @@ export default function SessionInfoScreen() {
       const elapsedMin = elapsedSeconds / 60;
       const ratePerHour = sessionData.ratePerHour || 100;
       const hours = Math.max(elapsedMin / 60, 1 / 60);
-      const gaming = Number((hours * ratePerHour).toFixed(2));
+      const gaming = elapsedMin <= 10 ? 0 : Number((hours * ratePerHour).toFixed(2));
       return { liveGamingCharge: gaming, liveTotalBill: (sessionData.foodCharges || 0) + gaming };
     }
     return { liveGamingCharge: sessionData.gamingCharges || 0, liveTotalBill: sessionData.totalBill || 0 };
