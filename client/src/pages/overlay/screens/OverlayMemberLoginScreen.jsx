@@ -14,6 +14,33 @@ export default function OverlayMemberLoginScreen() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState(false);
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!forgotEmail) {
+      toast.error('Please enter your email address.');
+      return;
+    }
+    try {
+      setIsLoading(true);
+      await axios.post('/api/auth/forgot-password', { email: forgotEmail });
+      setForgotSuccess(true);
+      toast.success('Reset link sent! Please check your inbox.');
+      setTimeout(() => {
+        setIsForgotPassword(false);
+        setForgotSuccess(false);
+        setForgotEmail('');
+      }, 5000);
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to send reset link.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!identifier || !password) return;
@@ -98,9 +125,63 @@ export default function OverlayMemberLoginScreen() {
           <p className="text-text-2 font-body text-xs">Login to start a session directly from your wallet.</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-text-2 mb-1.5 font-body tracking-wide">MOBILE OR ID</label>
+        {isForgotPassword ? (
+          <form onSubmit={handleForgotPassword} className="space-y-4">
+            <div className="text-center mb-4">
+              <p className="text-text-2 text-xs">Enter your account email to receive a reset link.</p>
+            </div>
+
+            {forgotSuccess ? (
+              <div className="bg-green-500/10 border border-green-500/30 text-green-500 text-xs p-3 rounded text-center">
+                Link sent! Please check your inbox.
+              </div>
+            ) : (
+              <div>
+                <label className="block text-xs font-medium text-text-2 mb-1.5 font-body tracking-wide">ACCOUNT EMAIL</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <UserCheck className="h-4 w-4 text-text-3" />
+                  </div>
+                  <input
+                    type="email"
+                    required
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    className="input w-full pl-9 py-2 text-sm focus:border-accent focus:ring-accent/30 bg-bg-3"
+                    placeholder="member@example.com"
+                  />
+                </div>
+              </div>
+            )}
+
+            {!forgotSuccess && (
+              <button
+                type="submit"
+                disabled={isLoading || !forgotEmail}
+                className="w-full bg-accent hover:bg-accent-dark text-white font-semibold py-2.5 px-4 rounded-sm transition-all duration-200 flex items-center justify-center mt-6 shadow-[0_0_15px_rgba(220,38,38,0.3)] disabled:opacity-50 disabled:cursor-not-allowed border border-accent/50"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <span className="font-heading text-sm tracking-wider uppercase font-bold">Send Reset Link</span>
+                )}
+              </button>
+            )}
+
+            <div className="text-center mt-4">
+              <button 
+                type="button" 
+                onClick={() => setIsForgotPassword(false)}
+                className="text-text-3 hover:text-white text-xs transition-colors"
+              >
+                Back to Login
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-text-2 mb-1.5 font-body tracking-wide">MOBILE OR ID</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <UserCheck className="h-4 w-4 text-text-3" />
@@ -130,6 +211,15 @@ export default function OverlayMemberLoginScreen() {
                 placeholder="••••••••"
               />
             </div>
+            <div className="text-right mt-1.5">
+              <button 
+                type="button" 
+                onClick={() => setIsForgotPassword(true)}
+                className="text-xs text-text-3 hover:text-accent transition-colors"
+              >
+                Forgot Password?
+              </button>
+            </div>
           </div>
 
           <button
@@ -144,6 +234,7 @@ export default function OverlayMemberLoginScreen() {
             )}
           </button>
         </form>
+        )}
       </div>
     </div>
   );

@@ -17,6 +17,33 @@ export default function MemberLoginPage() {
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState(false);
+
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!forgotEmail) {
+      toast.error('Please enter your email address.');
+      return;
+    }
+    try {
+      setIsLoading(true);
+      await api.post('/auth/forgot-password', { email: forgotEmail });
+      setForgotSuccess(true);
+      toast.success('Reset link sent! Please check your inbox.');
+      setTimeout(() => {
+        setIsForgotPassword(false);
+        setForgotSuccess(false);
+        setForgotEmail('');
+      }, 5000);
+    } catch (error) {
+      toast.error(error.response?.data?.error || 'Failed to send reset link.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!identifier || !password) return;
@@ -76,9 +103,68 @@ export default function MemberLoginPage() {
             <p className="text-text-muted font-inter mt-2 text-sm">Access your wallet and start sessions directly.</p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium text-text-muted mb-2 font-inter">Mobile No. or Member ID</label>
+          {isForgotPassword ? (
+            <motion.form 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              onSubmit={handleForgotPassword} 
+              className="space-y-6"
+            >
+              <div className="text-center mb-4">
+                <p className="text-text-muted text-sm">Enter your account email to receive a reset link.</p>
+              </div>
+
+              {forgotSuccess ? (
+                <div className="bg-green-500/10 border border-green-500/30 text-green-500 text-sm p-4 rounded text-center">
+                  Link sent! Please check your inbox.
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-text-muted mb-2 font-inter">Account Email</label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <UserCheck className="h-5 w-5 text-text-muted" />
+                    </div>
+                    <input
+                      type="email"
+                      required
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      className="input w-full pl-10 bg-black/20 border-glass-border focus:border-neon-secondary/50 focus:ring-neon-secondary/30"
+                      placeholder="member@example.com"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {!forgotSuccess && (
+                <button
+                  type="submit"
+                  disabled={isLoading || !forgotEmail}
+                  className="w-full bg-neon-secondary hover:bg-neon-secondary/80 text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 flex items-center justify-center shadow-[0_0_15px_rgba(176,38,255,0.3)] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? (
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : (
+                    <span className="font-outfit text-lg tracking-wide">Send Reset Link</span>
+                  )}
+                </button>
+              )}
+
+              <div className="text-center mt-4">
+                <button 
+                  type="button" 
+                  onClick={() => setIsForgotPassword(false)}
+                  className="text-text-muted hover:text-white text-sm transition-colors"
+                >
+                  Back to Login
+                </button>
+              </div>
+            </motion.form>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-text-muted mb-2 font-inter">Mobile No. or Member ID</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <UserCheck className="h-5 w-5 text-text-muted" />
@@ -108,6 +194,15 @@ export default function MemberLoginPage() {
                   placeholder="••••••••"
                 />
               </div>
+              <div className="text-right mt-2">
+                <button 
+                  type="button" 
+                  onClick={() => setIsForgotPassword(true)}
+                  className="text-sm text-text-muted hover:text-neon-secondary transition-colors"
+                >
+                  Forgot Password?
+                </button>
+              </div>
             </div>
 
             <button
@@ -122,6 +217,7 @@ export default function MemberLoginPage() {
               )}
             </button>
           </form>
+          )}
         </motion.div>
       </div>
     </div>

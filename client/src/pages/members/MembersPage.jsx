@@ -103,18 +103,7 @@ function RegisterDrawer({ open, onClose, onSuccess, editMember }) {
         setError('Username must be at least 3 characters.');
         return;
       }
-
-      const hasNoPassword = !isEdit || !editMember?.hasPassword;
-      if (hasNoPassword && !fields.password) {
-        setError('Password is required when setting up login access.');
-        return;
-      }
-      if (fields.password && fields.password.length < 6) {
-        setError('Password must be at least 6 characters.');
-        return;
-      }
     }
-
     setLoading(true);
     try {
       const dto = {
@@ -189,15 +178,18 @@ function RegisterDrawer({ open, onClose, onSuccess, editMember }) {
               className="w-full bg-bg-3 border border-border text-text rounded-lg px-3 py-2.5 text-sm font-mono tracking-wider focus:border-accent focus:ring-1 focus:ring-accent transition-all placeholder:text-text-3"
             />
           </div>
-          <div>
-            <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-1.5">Email <span className="normal-case font-normal">(optional)</span></label>
-            <input
-              type="email"
-              value={fields.email}
-              onChange={e => set('email', e.target.value)}
-              placeholder="rahul@example.com"
-              className="w-full bg-bg-3 border border-border text-text rounded-lg px-3 py-2.5 text-sm focus:border-accent focus:ring-1 focus:ring-accent transition-all placeholder:text-text-3"
-            />
+          <div className="form-group">
+            <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-1.5">Email *</label>
+            <div className="relative">
+              <input
+                type="email"
+                required
+                value={fields.email}
+                onChange={e => set('email', e.target.value)}
+                placeholder="rahul@example.com"
+                className="w-full bg-bg-3 border border-border text-text rounded-lg px-3 py-2.5 text-sm focus:border-accent focus:ring-1 focus:ring-accent transition-all placeholder:text-text-3"
+              />
+            </div>
           </div>
 
           {/* ── Login credentials toggle ── */}
@@ -248,33 +240,6 @@ function RegisterDrawer({ open, onClose, onSuccess, editMember }) {
                       placeholder="e.g. rahul123"
                       className="w-full bg-bg-3 border border-border text-text rounded-lg pl-9 pr-3 py-2.5 text-sm font-mono focus:border-neon-blue focus:ring-1 focus:ring-neon-blue transition-all placeholder:text-text-3"
                     />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-1.5">
-                    Password {isEdit && editMember?.hasPassword
-                      ? <span className="normal-case font-normal text-text-3">(leave blank to keep current)</span>
-                      : <span className="normal-case font-normal text-text-3">(min 6 chars)</span>
-                    }
-                  </label>
-                  <div className="relative">
-                    <KeyRound className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-3" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      autoComplete="new-password"
-                      value={fields.password}
-                      onChange={e => set('password', e.target.value)}
-                      placeholder={isEdit && editMember?.hasPassword ? '••••••• (unchanged)' : 'Set a password'}
-                      className="w-full bg-bg-3 border border-border text-text rounded-lg pl-9 pr-10 py-2.5 text-sm font-mono focus:border-neon-blue focus:ring-1 focus:ring-neon-blue transition-all placeholder:text-text-3"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(p => !p)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-text-3 hover:text-text transition-colors"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
                   </div>
                 </div>
               </div>
@@ -517,7 +482,7 @@ function DeleteConfirmModal({ member, onClose, onConfirm }) {
           </button>
           <button
             onClick={handleDelete} disabled={loading}
-            className="flex-[2] py-2.5 rounded-lg bg-neon-red/10 border border-neon-red/50 text-neon-red text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2 hover:bg-neon-red/20 transition-colors disabled:opacity-50"
+            className="flex-[2] py-2.5 rounded-lg bg-neon-red/10 border border-neon-red/50 text-neon-red text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2 hover:neon-red/20 transition-colors disabled:opacity-50"
           >
             {loading
               ? <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
@@ -601,7 +566,13 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onRefresh, onDelete }) {
         <div className="mx-4 mb-3 bg-bg-3 border border-border rounded-xl px-3 py-2.5">
           <p className="text-[9px] text-text-3 uppercase tracking-widest font-bold mb-1">Phone Number</p>
           <p className="font-mono text-text font-bold">{member.mobileNumber}</p>
-          {member.email && <p className="text-[11px] text-text-3 mt-0.5">{member.email}</p>}
+          {member.email ? (
+            <p className="text-[11px] text-text-3 mt-0.5">{member.email}</p>
+          ) : (
+            <p className="text-[11px] text-yellow-500 mt-0.5 flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" /> Missing Email
+            </p>
+          )}
           <p className="text-[10px] text-text-3 mt-1">
             Joined {relTime(member.joinDate)} · Last visit {relTime(member.lastVisit)}
           </p>

@@ -35,8 +35,9 @@ public class RegisterMemberDto
     [RegularExpression(@"^\d{10}$", ErrorMessage = "Invalid mobile number format.")]
     public string MobileNumber { get; set; } = null!;
 
+    [Required]
     [EmailAddress]
-    public string? Email { get; set; }
+    public string Email { get; set; } = null!;
 
     // Optional login credentials — set by operator at registration
     [StringLength(30, MinimumLength = 3)]

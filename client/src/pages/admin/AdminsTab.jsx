@@ -340,26 +340,17 @@ export default function AdminsTab() {
       >
         <form onSubmit={handleChangeCredentials} className="form-stack">
           <div className="mb-4 text-xs text-text-2">
-            Change the email or password for this account. Leave password blank if you only want to change the email.
+            Change the email address for this admin account. If they need to reset their password, they can use the "Forgot Password" link on the login portal.
           </div>
           <div className="form-group">
-            <label>New Email (Optional)</label>
+            <label>New Email</label>
             <input 
               type="email"
               name="email" 
               defaultValue={credentialsDrawer.data?.email || ''} 
               className="form-control" 
               placeholder="admin@example.com"
-            />
-          </div>
-          
-          <div className="form-group">
-            <label>New Password (Optional)</label>
-            <input 
-              type="password"
-              name="password" 
-              className="form-control" 
-              placeholder="Leave blank to keep current"
+              required
             />
           </div>
           

@@ -105,7 +105,7 @@ export default function CashRegisterPage() {
           onClick={() => setIsAddTxModalOpen(true)}
           className="btn-primary flex items-center gap-2 shadow-lg shadow-accent/20"
         >
-          <Plus className="w-5 h-5" /> Append Ledger
+          <Plus className="w-5 h-5" /> Add Entry
         </button>
       </div>
 

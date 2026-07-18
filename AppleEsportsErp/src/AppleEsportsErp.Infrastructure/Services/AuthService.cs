@@ -828,13 +828,7 @@ public class AuthService : IAuthService
             </div>
         </div>";
 
-        string targetEmail = email;
-        if (email == "admin@appleesports.com")
-        {
-            targetEmail = "harshalparekh40@gmail.com";
-        }
-
-        await _emailService.SendEmailAsync(targetEmail, subject, htmlBody);
+        await _emailService.SendEmailAsync(email, subject, htmlBody);
     }
 
     public async Task<IEnumerable<AvailableAdminDto>> GetAvailableAdminsForSwitchAsync()

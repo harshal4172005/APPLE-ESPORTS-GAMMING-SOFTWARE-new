@@ -81,6 +81,17 @@ public class MemberService : IMemberService
         if (exists)
             throw new AppException("A member with this mobile number already exists.");
 
+        // Email uniqueness check
+        if (!string.IsNullOrWhiteSpace(dto.Email))
+        {
+            var emailTaken = await _unitOfWork.Repository<Member>().Query()
+                .AnyAsync(m => m.Email == dto.Email.Trim().ToLowerInvariant());
+            if (emailTaken)
+                throw new AppException($"Email '{dto.Email}' is already registered to another member.");
+            
+            dto.Email = dto.Email.Trim().ToLowerInvariant();
+        }
+
         // Username uniqueness check
         if (!string.IsNullOrWhiteSpace(dto.Username))
         {
@@ -89,10 +100,6 @@ public class MemberService : IMemberService
             if (usernameTaken)
                 throw new AppException($"Username '{dto.Username}' is already taken.");
         }
-
-        // Require password when username is set
-        if (!string.IsNullOrWhiteSpace(dto.Username) && string.IsNullOrWhiteSpace(dto.Password))
-            throw new AppException("A password is required when setting a username.");
 
         // Generate member number: MEM-YYMM-XXXX
         var count = await _unitOfWork.Repository<Member>().Query().CountAsync() + 1;
@@ -183,6 +190,17 @@ public class MemberService : IMemberService
         if (duplicate)
             throw new AppException("The specified mobile number is already in use by another member.");
 
+        // Check if email belongs to someone else
+        if (!string.IsNullOrWhiteSpace(dto.Email))
+        {
+            var emailTaken = await _unitOfWork.Repository<Member>().Query()
+                .AnyAsync(m => m.Email == dto.Email.Trim().ToLowerInvariant() && m.Id != id);
+            if (emailTaken)
+                throw new AppException($"Email '{dto.Email}' is already registered to another member.");
+                
+            dto.Email = dto.Email.Trim().ToLowerInvariant();
+        }
+
         member.FullName = dto.FullName;
         member.MobileNumber = dto.MobileNumber;
         member.Email = dto.Email;
@@ -203,16 +221,13 @@ public class MemberService : IMemberService
                     .AnyAsync(m => m.Username == newUsername && m.Id != id);
                 if (usernameTaken)
                     throw new AppException($"Username '{dto.Username}' is already taken.");
+
                 member.Username = newUsername;
             }
 
             // Update password if provided
             if (!string.IsNullOrWhiteSpace(dto.Password))
                 member.PasswordHash = BCryptNet.HashPassword(dto.Password);
-
-            // Safety check: require password hash if username is assigned
-            if (member.Username != null && string.IsNullOrWhiteSpace(member.PasswordHash))
-                throw new AppException("A password is required when setting a username.");
         }
 
         _unitOfWork.Repository<Member>().Update(member);
@@ -293,21 +308,15 @@ public class MemberService : IMemberService
     {
         try 
         {
-            var config = await _unitOfWork.Repository<SystemConfig>().Query()
-                .FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
-            if (config != null && !string.IsNullOrEmpty(config.ConfigValue))
+            var superAdmins = await _unitOfWork.Repository<Operator>().Query()
+                .Where(o => o.IsGlobalAdmin && o.Status == OperatorStatus.Active)
+                .ToListAsync();
+
+            foreach (var admin in superAdmins)
             {
-                var doc = System.Text.Json.JsonDocument.Parse(config.ConfigValue);
-                if (doc.RootElement.TryGetProperty("emailNotifications", out var emailNode))
+                if (!string.IsNullOrWhiteSpace(admin.Email))
                 {
-                    if (emailNode.TryGetProperty("receivers", out var receiversNode))
-                    {
-                        var receivers = receiversNode.GetString();
-                        if (!string.IsNullOrWhiteSpace(receivers))
-                        {
-                            await _emailService.SendEmailAsync(receivers, subject, body);
-                        }
-                    }
+                    await _emailService.SendEmailAsync(admin.Email, subject, body);
                 }
             }
         }

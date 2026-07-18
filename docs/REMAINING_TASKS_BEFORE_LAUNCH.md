@@ -11,6 +11,7 @@ This checklist tracks all pending development and configuration tasks that must 
 
 ## 3. Network & Configuration
 - [ ] **Dynamic IP Setup**: Remove hardcoded localhost:5016 references in the React/Electron frontend. Ensure the .exe can point to the Local Server's IP address (e.g., 192.168.1.100) via an .env file or config.
+- [ ] **Dynamic Email Links**: Replace hardcoded `http://localhost:5173` in backend email templates (Welcome Email, Password Reset) with a dynamic `FRONTEND_URL` environment variable for when the app is deployed to the Oracle server.
 - [ ] **Cloudflare Tunnel Setup**: Install and configure the free Cloudflare Tunnel on the Counter PC so the Super Admin can view the dashboard from home.
 
 ## 4. Distributed Sync Engine (MVP)

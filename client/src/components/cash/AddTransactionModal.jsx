@@ -4,10 +4,10 @@ import { X, ArrowDownRight, ArrowUpRight, AlertTriangle, HelpCircle } from 'luci
 import api from '../../config/api';
 
 const TX_TYPES = {
-  inward: { label: 'Inward Cash', icon: ArrowDownRight, color: 'text-neon-blue', polarity: 1 },
-  petty_expense: { label: 'Petty Expense', icon: ArrowUpRight, color: 'text-neon-orange', polarity: -1 },
-  withdrawal: { label: 'Owner Withdrawal', icon: ArrowUpRight, color: 'text-neon-red', polarity: -1 },
-  adjustment: { label: 'Adjustment', icon: HelpCircle, color: 'text-neon-purple', polarity: 'both' } // Special case: can be + or - depending on what they are fixing. Wait, the prompt says "operator enters positive amount only". We can ask if adjustment is addition or deduction.
+  inward: { label: 'Cash In', icon: ArrowDownRight, color: 'text-neon-blue', polarity: 1 },
+  petty_expense: { label: 'Expense', icon: ArrowUpRight, color: 'text-neon-orange', polarity: -1 },
+  withdrawal: { label: 'Owner Takeout', icon: ArrowUpRight, color: 'text-neon-red', polarity: -1 },
+  adjustment: { label: 'Correction', icon: HelpCircle, color: 'text-neon-purple', polarity: 'both' }
 };
 
 export default function AddTransactionModal({ register, onClose, onTransactionAdded }) {
@@ -148,7 +148,7 @@ export default function AddTransactionModal({ register, onClose, onTransactionAd
             {/* Reason */}
             <div className="mb-6">
               <label className="text-xs uppercase tracking-wider font-bold text-text-2 mb-1.5 block">
-                Reason / Note {(type === 'petty_expense' || type === 'adjustment') && <span className="text-neon-red">*</span>}
+                Reason / Note <span className="text-neon-red">*</span>
               </label>
               <input
                 type="text"
@@ -188,9 +188,9 @@ export default function AddTransactionModal({ register, onClose, onTransactionAd
           <div className="p-4 border-t border-border bg-bg-3">
             <button
               onClick={handleSubmit}
-              disabled={loading || amount <= 0}
+              disabled={loading || amount <= 0 || !reason.trim()}
               className={`w-full py-3.5 rounded-lg text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all ${
-                amount > 0 && !loading
+                amount > 0 && reason.trim() && !loading
                   ? 'bg-accent/10 border border-accent text-accent hover:bg-accent/20' 
                   : 'bg-bg-2 border border-border text-text-3 cursor-not-allowed'
               }`}
@@ -198,7 +198,7 @@ export default function AddTransactionModal({ register, onClose, onTransactionAd
               {loading ? (
                 <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin" />
               ) : (
-                <>✓ Append Ledger</>
+                <>✓ Add Entry</>
               )}
             </button>
           </div>

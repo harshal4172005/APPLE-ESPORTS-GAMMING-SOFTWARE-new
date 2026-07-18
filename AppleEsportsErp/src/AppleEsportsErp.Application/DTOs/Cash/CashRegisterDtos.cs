@@ -52,6 +52,6 @@ public class AddCashTransactionDto
     
     [Required]
     public string TransactionType { get; set; } = null!; // petty_expense, withdrawal, inward
-    
-    public string? Reason { get; set; }
+    [Required(ErrorMessage = "Reason is mandatory for manual cash transactions.")]
+    public string Reason { get; set; } = null!;
 }

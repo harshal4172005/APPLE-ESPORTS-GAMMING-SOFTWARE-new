@@ -23,6 +23,11 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  
+  // Forgot Password state
+  const [isForgotPassword, setIsForgotPassword] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotSuccess, setForgotSuccess] = useState(false);
 
   // Redirect if already authenticated (page refresh / revisit)
   useEffect(() => {
@@ -99,6 +104,29 @@ export default function LoginPage() {
     }
   };
 
+  const handleForgotPassword = async (e) => {
+    e.preventDefault();
+    if (!forgotEmail) {
+      setError('Please enter your email address.');
+      return;
+    }
+    try {
+      setError('');
+      setIsLoading(true);
+      await authAPI.forgotPassword(forgotEmail);
+      setForgotSuccess(true);
+      setTimeout(() => {
+        setIsForgotPassword(false);
+        setForgotSuccess(false);
+        setForgotEmail('');
+      }, 5000);
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Failed to send reset link.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-bg flex items-center justify-center p-4 overflow-hidden relative">
       {/* Background glow effects */}
@@ -139,7 +167,7 @@ export default function LoginPage() {
             <User className="w-4 h-4" /> Operator
           </button>
           <button
-            onClick={() => { setActiveTab('admin'); setError(''); }}
+            onClick={() => { setActiveTab('admin'); setError(''); setIsForgotPassword(false); }}
             className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-md transition-all ${
               activeTab === 'admin' ? 'bg-bg shadow text-accent' : 'text-text-2 hover:text-text'
             }`}
@@ -149,7 +177,64 @@ export default function LoginPage() {
         </div>
 
         <AnimatePresence mode="wait">
-          {activeTab === 'operator' ? (
+          {isForgotPassword ? (
+            <motion.form 
+              key="forgotPassword"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.2 }}
+              onSubmit={handleForgotPassword}
+              className="space-y-4"
+            >
+              <div className="text-center mb-4">
+                <h3 className="text-text font-bold text-lg mb-1">Reset Password</h3>
+                <p className="text-text-2 text-xs">Enter your email and we'll send a reset link.</p>
+              </div>
+
+              {forgotSuccess ? (
+                <div className="bg-green-500/10 border border-green-500/30 text-green-500 text-xs p-3 rounded text-center">
+                  Link sent! Please check your inbox.
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-xs text-text-2 mb-1.5 ml-1">Account Email</label>
+                    <div className="relative">
+                      <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-3" />
+                      <input 
+                        type="email" 
+                        value={forgotEmail}
+                        onChange={(e) => setForgotEmail(e.target.value)}
+                        className="input w-full pl-10"
+                        placeholder="admin@appleesports.com"
+                        autoFocus
+                      />
+                    </div>
+                  </div>
+                  {error && <p className="text-neon-red text-xs mt-2 text-center">{error}</p>}
+
+                  <button 
+                    type="submit" 
+                    disabled={isLoading}
+                    className="btn-primary w-full mt-4 flex items-center justify-center gap-2 shadow-[0_0_15px_rgba(220,38,38,0.3)]"
+                  >
+                    {isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Send Reset Link'}
+                  </button>
+                </>
+              )}
+              
+              <div className="text-center mt-4">
+                <button 
+                  type="button" 
+                  onClick={() => { setIsForgotPassword(false); setError(''); }}
+                  className="text-text-2 hover:text-accent text-xs transition-colors"
+                >
+                  Back to Login
+                </button>
+              </div>
+            </motion.form>
+          ) : activeTab === 'operator' ? (
             <motion.form 
               key="operator"
               initial={{ opacity: 0, x: -10 }}
@@ -212,6 +297,15 @@ export default function LoginPage() {
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
                 </div>
+                <div className="text-right mt-1.5">
+                  <button 
+                    type="button" 
+                    onClick={() => { setIsForgotPassword(true); setError(''); setForgotEmail(username); }}
+                    className="text-[11px] text-text-3 hover:text-accent transition-colors"
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
               </div>
 
               {error && <p className="text-neon-red text-xs mt-2 text-center">{error}</p>}
@@ -266,6 +360,15 @@ export default function LoginPage() {
                     tabIndex="-1"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <div className="text-right mt-1.5">
+                  <button 
+                    type="button" 
+                    onClick={() => { setIsForgotPassword(true); setError(''); setForgotEmail(email); }}
+                    className="text-[11px] text-text-3 hover:text-accent transition-colors"
+                  >
+                    Forgot Password?
                   </button>
                 </div>
               </div>
