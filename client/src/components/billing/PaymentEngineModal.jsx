@@ -4,6 +4,7 @@ import { X, AlertTriangle, Receipt, Wallet, CreditCard, Banknote, Gamepad2, Coff
 import { processPayment, getMemberById } from '../../api/billing.api';
 import { memberLogin, getMembers } from '../../api/members.api';
 import { useToast } from '../ui/Toast';
+import { formatMoney } from '../../utils/money';
 
 // Quick-tender presets for cash (common Indian denominations)
 const QUICK_TENDER = [20, 50, 100, 200, 500, 1000, 2000];
@@ -253,22 +254,22 @@ export default function PaymentEngineModal({ bill, onClose, onPaymentSuccess }) 
             <div className="bg-bg-3 border border-border rounded-xl p-4 space-y-2">
               <div className="flex justify-between items-center text-xs text-text-2">
                 <span className="flex items-center gap-1.5"><Gamepad2 className="w-3.5 h-3.5 text-neon-purple" /> Gaming</span>
-                <span className="font-mono">₹{bill.gamingAmount}</span>
+                <span className="font-mono">₹{formatMoney(bill.gamingAmount)}</span>
               </div>
               <div className="flex justify-between items-center text-xs text-text-2">
                 <span className="flex items-center gap-1.5"><Coffee className="w-3.5 h-3.5 text-neon-orange" /> Food & Drink</span>
-                <span className="font-mono">₹{bill.foodAmount}</span>
+                <span className="font-mono">₹{formatMoney(bill.foodAmount)}</span>
               </div>
               {bill.discountAmount > 0 && (
                 <div className="flex justify-between items-center text-xs text-neon-purple">
                   <span>Discount</span>
-                  <span className="font-mono">−₹{bill.discountAmount}</span>
+                  <span className="font-mono">−₹{formatMoney(bill.discountAmount)}</span>
                 </div>
               )}
               <div className="flex justify-between items-center pt-2 border-t border-border">
                 <span className="font-bold text-text uppercase tracking-wider text-sm">Grand Total</span>
                 <span className="font-mono font-bold text-2xl text-accent drop-shadow-[0_0_8px_rgba(255,51,102,0.3)]">
-                  ₹{total}
+                  ₹{formatMoney(total)}
                 </span>
               </div>
             </div>
@@ -344,7 +345,7 @@ export default function PaymentEngineModal({ bill, onClose, onPaymentSuccess }) 
               {changeReturned > 0 && (
                 <div className="flex justify-between items-center pt-2 border-t border-border text-neon-orange font-bold">
                   <span className="text-sm uppercase tracking-wider">Return Change</span>
-                  <span className="font-mono text-xl">₹{changeReturned}</span>
+                  <span className="font-mono text-xl">₹{formatMoney(changeReturned)}</span>
                 </div>
               )}
             </div>
@@ -379,7 +380,7 @@ export default function PaymentEngineModal({ bill, onClose, onPaymentSuccess }) 
                   </label>
                   {selectedMember && memberWallet != null && (
                     <p className="text-[10px] text-text-3 font-mono mt-0.5">
-                      G: <span className="text-neon-blue font-bold">₹{memberWallet.gamingBalance?.toFixed(2) ?? '0.00'}</span> | F: <span className="text-neon-orange font-bold">₹{memberWallet.foodBalance?.toFixed(2) ?? '0.00'}</span>
+                      G: <span className="text-neon-blue font-bold">₹{formatMoney(memberWallet.gamingBalance || 0)}</span> | F: <span className="text-neon-orange font-bold">₹{formatMoney(memberWallet.foodBalance || 0)}</span>
                     </p>
                   )}
                 </div>

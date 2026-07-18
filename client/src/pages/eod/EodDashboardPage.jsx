@@ -268,8 +268,8 @@ export default function EodDashboardPage() {
                         </thead>
                         <tbody className="divide-y divide-border/40 font-mono">
                           {pcBills.map(bill => {
-                            const startStr = bill.sessionStartTime ? new Date(bill.sessionStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-';
-                            const endStr = bill.sessionEndTime ? new Date(bill.sessionEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-';
+                            const startStr = bill.sessionStartTime ? new Date(bill.sessionStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
+                            const endStr = bill.sessionEndTime ? new Date(bill.sessionEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
                             const durationMinutes = Math.floor(bill.sessionDurationMinutes || 0);
                             const h = Math.floor(durationMinutes / 60);
                             const m = durationMinutes % 60;

@@ -48,7 +48,10 @@ public class SessionConfiguration : IEntityTypeConfiguration<Session>
         builder.Property(e => e.State).HasMaxLength(20).HasDefaultValue(SessionState.Active)
             .HasConversion(v => v.ToString().ToLowerInvariant().Replace("awaitingbilling", "awaiting_billing"),
                            v => Enum.Parse<SessionState>(v.Replace("awaiting_billing", "AwaitingBilling"), true));
-        builder.Property(e => e.GamingType).HasMaxLength(50).HasDefaultValue("standard");
+        // 50 chars was too tight — real package names ("Postpaid (240Hz Tier)") plus the
+        // buffer-cancellation / extension suffixes appended at Stop/Extend time regularly
+        // pushed past it, causing the whole Stop transaction to fail with a DB error.
+        builder.Property(e => e.GamingType).HasMaxLength(150).HasDefaultValue("standard");
         builder.Property(e => e.Notes).HasColumnType("text");
         builder.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
         builder.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");

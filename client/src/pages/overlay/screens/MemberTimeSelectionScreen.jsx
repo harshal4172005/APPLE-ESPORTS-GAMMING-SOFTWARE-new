@@ -62,7 +62,7 @@ export default function MemberTimeSelectionScreen() {
           pcId: pcId,
           memberId: profile.memberId,
           customerName: profile.fullName,
-          durationMinutes: selectedPlan.duration > 0 ? selectedPlan.duration : null,
+          durationMinutes: selectedPlan.duration > 0 ? selectedPlan.duration : 0,
           packageName: selectedPlan.name,
           expectedAmount: selectedPlan.price,
         },

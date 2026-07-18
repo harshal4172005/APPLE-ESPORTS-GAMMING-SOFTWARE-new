@@ -4,9 +4,10 @@ import { useBranch } from '../../contexts/BranchContext';
 import { useSocket } from '../../contexts/SocketContext';
 import api from '../../config/api';
 import PageHeader from '../../components/layout/PageHeader';
+import { formatMoney } from '../../utils/money';
 
 function useElapsedTime(startTimeIso) {
-  const [elapsed, setElapsed] = useState({ h: 0, m: 0 });
+  const [elapsed, setElapsed] = useState({ h: 0, m: 0, s: 0 });
 
   useEffect(() => {
     if (!startTimeIso) return;
@@ -15,17 +16,19 @@ function useElapsedTime(startTimeIso) {
       const totalSec = Math.max(0, Math.floor(diffMs / 1000));
       setElapsed({
         h: Math.floor(totalSec / 3600),
-        m: Math.floor((totalSec % 3600) / 60)
+        m: Math.floor((totalSec % 3600) / 60),
+        s: totalSec % 60
       });
     };
     update();
-    const id = setInterval(update, 10000); // update every 10s is enough for read-only
+    const id = setInterval(update, 1000);
     return () => clearInterval(id);
   }, [startTimeIso]);
 
-  if (!startTimeIso) return '0h 0m';
-  if (elapsed.h > 0) return `${elapsed.h}h ${elapsed.m}m`;
-  return `${elapsed.m}m`;
+  if (!startTimeIso) return '0h 0m 0s';
+  if (elapsed.h > 0) return `${elapsed.h}h ${elapsed.m}m ${elapsed.s}s`;
+  if (elapsed.m > 0) return `${elapsed.m}m ${elapsed.s}s`;
+  return `${elapsed.s}s`;
 }
 
 // Separate component to handle individual PC logic and ticking
@@ -55,15 +58,14 @@ const AdminPcCard = ({ pc }) => {
     bgClass = 'bg-bg-2/60 opacity-75';
   }
 
-  // Calculate live charge
-  let liveCharge = 0;
-  if (pc.sessionEndTime) {
-    liveCharge = pc.totalAmount || 0;
-  } else if (pc.sessionStartTime && pc.ratePerHour > 0) {
+  // Live charge — same formula as the backend (SessionPricingCalculator): free during the
+  // branch's buffer window, then billed for exact elapsed time at the PC's real rate.
+  let liveCharge = pc.totalAmount || 0;
+  if (!pc.sessionEndTime && pc.sessionStartTime && pc.ratePerHour > 0) {
+    const bufferMinutes = pc.bufferMinutes ?? 10;
     const elapsedMin = Math.max(0, (Date.now() - new Date(pc.sessionStartTime).getTime()) / 60000);
-    liveCharge = (pc.totalAmount || 0) + Math.ceil((elapsedMin / 60) * pc.ratePerHour);
-  } else if (pc.totalAmount > 0) {
-    liveCharge = pc.totalAmount;
+    const gamingCharge = elapsedMin <= bufferMinutes ? 0 : Number(((elapsedMin / 60) * pc.ratePerHour).toFixed(2));
+    liveCharge = gamingCharge + (pc.foodAmount || 0);
   }
 
   const showCharge = (isActive || isAwaiting) && liveCharge > 0;
@@ -109,7 +111,7 @@ const AdminPcCard = ({ pc }) => {
               <div className="flex justify-between items-center">
                 <span className="text-text-3 font-mono">Accrued:</span>
                 <span className="font-mono font-bold text-text">
-                  ₹{liveCharge}
+                  ₹{formatMoney(liveCharge)}
                 </span>
               </div>
             )}
@@ -125,7 +127,7 @@ const AdminPcCard = ({ pc }) => {
             <div className="flex justify-between items-center">
               <span className="text-text-3 font-mono">Time:</span>
               <span className="font-mono font-bold text-pc-reserved">
-                {pc.nextReservationTime ? new Date(pc.nextReservationTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}
+                {pc.nextReservationTime ? new Date(pc.nextReservationTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '—'}
               </span>
             </div>
           </>

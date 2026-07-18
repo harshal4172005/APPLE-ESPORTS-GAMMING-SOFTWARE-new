@@ -44,6 +44,7 @@ export default function PricingProfilesTab() {
     const payload = {
       name: formData.get('name'),
       baseHourlyRate: Number(formData.get('baseHourlyRate')),
+      bufferMinutes: Number(formData.get('bufferMinutes')),
       isActive: formData.get('isActive') === 'on',
       branchId: selectedBranchId,
       refreshRate: formData.get('refreshRate') || null,
@@ -94,6 +95,12 @@ export default function PricingProfilesTab() {
             <div className="form-group">
               <label>Base Hourly Rate (₹) *</label>
               <input type="number" step="1" name="baseHourlyRate" required defaultValue={drawer.data?.baseHourlyRate} className="form-control" placeholder="e.g. 80" />
+            </div>
+
+            <div className="form-group">
+              <label>Free Buffer / Grace Period (minutes) *</label>
+              <input type="number" step="1" min="0" name="bufferMinutes" required defaultValue={drawer.data?.bufferMinutes ?? 10} className="form-control" placeholder="e.g. 10" />
+              <p className="text-[10px] text-text-3 mt-1">Customers who end their session within this many minutes are charged ₹0. Applies live everywhere — session, PC cards, billing counter, member overlay.</p>
             </div>
 
             <div className="form-group">
@@ -179,6 +186,7 @@ export default function PricingProfilesTab() {
               <tr className="border-b border-border">
                 <th>Zone / Profile Name</th>
                 <th>Hourly Base Rate</th>
+                <th>Free Buffer</th>
                 <th>Refresh Rate (Hz)</th>
                 <th>System Specs</th>
                 <th>Status</th>
@@ -190,6 +198,7 @@ export default function PricingProfilesTab() {
                 <tr key={p.id} className="hover:bg-bg-3/50 transition-colors group">
                   <td className="font-medium text-text">{p.name}</td>
                   <td className="font-mono text-accent">₹{p.baseHourlyRate.toFixed(2)}/hr</td>
+                  <td className="text-text-2 font-mono">{p.bufferMinutes ?? 10}m free</td>
                   <td className="text-text-2">{p.refreshRate || '-'}</td>
                   <td className="text-text-2">{p.systemSpecs || '-'}</td>
                   <td>

@@ -14,7 +14,7 @@ public class SessionStartValidator : AbstractValidator<SessionStartDto>
             .WithMessage("Either Customer Name or Member ID must be provided.");
 
         RuleFor(x => x.DurationMinutes)
-            .GreaterThan(0).WithMessage("Duration must be greater than 0 minutes.");
+            .GreaterThanOrEqualTo(0).WithMessage("Duration must be greater than or equal to 0 minutes.");
 
         RuleFor(x => x.PackageName).NotEmpty().WithMessage("Package Name is required.");
         RuleFor(x => x.ExpectedAmount).GreaterThanOrEqualTo(0).WithMessage("Expected amount cannot be negative.");

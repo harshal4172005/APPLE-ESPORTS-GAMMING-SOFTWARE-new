@@ -9,6 +9,7 @@ public interface IHubNotificationService
     Task BroadcastFoodOrderUpdateAsync(Guid branchId, Guid orderId);
     Task BroadcastCashRegisterUpdateAsync(Guid branchId, Guid registerId);
     Task BroadcastPcManagementUpdateAsync(Guid branchId, Guid pcId, string action);
+    Task BroadcastPricingProfileUpdateAsync(Guid branchId);
     Task SendUnlockCommandToAgentAsync(Guid pcId, int durationMinutes, string? customerName);
     Task SendLockCommandToAgentAsync(Guid pcId);
     Task TriggerDashboardRefreshAsync();

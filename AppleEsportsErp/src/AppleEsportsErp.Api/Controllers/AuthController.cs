@@ -220,7 +220,7 @@ public class AuthController : ControllerBase
 
     /// <summary>SOP §22: Admin Quick-Switch Out</summary>
     [HttpPost("admin-switch/out")]
-    [Authorize(Roles = "Admin")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> AdminSwitchOut()
     {
         var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);

@@ -46,12 +46,12 @@ public class PcManagementService : IPcManagementService
         if (existing != null)
             throw new AppException($"PC with number {dto.PcNumber} already exists in this branch.");
 
-        if (dto.PricingProfileId.HasValue)
-        {
-            var profile = await _unitOfWork.Repository<PricingProfile>().GetByIdAsync(dto.PricingProfileId.Value);
-            if (profile == null || profile.BranchId != branchId)
-                throw new AppException("Invalid or inaccessible Pricing Profile.");
-        }
+        if (!dto.PricingProfileId.HasValue)
+            throw new AppException("A Pricing Profile is required. Select one (or create one in Settings → Pricing Profiles first) before adding this PC.");
+
+        var profile = await _unitOfWork.Repository<PricingProfile>().GetByIdAsync(dto.PricingProfileId.Value);
+        if (profile == null || profile.BranchId != branchId)
+            throw new AppException("Invalid or inaccessible Pricing Profile.");
 
         var pc = new Pc
         {
@@ -218,8 +218,8 @@ public class PcManagementService : IPcManagementService
         }
         else
         {
-            if (pc.State == PcState.UnderMaintenance)
-                pc.State = PcState.Offline; // or Idle, defaulting to Offline allows operator to wake it up
+            if (pc.State == PcState.UnderMaintenance || pc.State == PcState.Offline)
+                pc.State = PcState.Idle;
         }
         
         pc.UpdatedAt = DateTimeOffset.UtcNow;

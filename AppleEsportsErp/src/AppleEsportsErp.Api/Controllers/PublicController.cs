@@ -106,7 +106,7 @@ public class PublicController : ControllerBase
             : null as double?;
 
         var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
-        decimal defaultBaseRate = 100m;
+        decimal defaultBaseRate = 0m; // No fabricated fallback — PC must have a Pricing Profile assigned
         Dictionary<string, decimal> hzPricing = new();
         if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
         {
@@ -137,6 +137,17 @@ public class PublicController : ControllerBase
             ratePerHour = hrRate;
         }
 
+        int bufferMinutes = AppleEsportsErp.Application.Services.SessionPricingCalculator.DefaultBufferMinutes;
+        if (pc.PricingProfile != null)
+        {
+            // The PC's assigned Branch-Wise Pricing Profile always wins over the global fallback,
+            // matching the rate used everywhere else (session start, billing, operator PC card).
+            ratePerHour = pc.PricingProfile.BaseHourlyRate;
+            bufferMinutes = pc.PricingProfile.BufferMinutes;
+        }
+
+        decimal liveGamingCharges = AppleEsportsErp.Application.Services.SessionPricingCalculator.CalculateGamingAmount(ratePerHour, bufferMinutes, (decimal)elapsedMinutes);
+
         decimal? walletBalance = null;
         decimal? gamingBalance = null;
         decimal? foodBalance = null;
@@ -162,13 +173,14 @@ public class PublicController : ControllerBase
             remainingTime = remainingSeconds.HasValue ? (int)remainingSeconds.Value : (int?)null,
             plannedDurationMin = session.PlannedDurationMin,
             ratePerHour = ratePerHour,
-            gamingCharges = session.GamingAmount,
+            bufferMinutes = bufferMinutes,
+            gamingCharges = liveGamingCharges,
             foodCharges,
             foodItems = session.FoodOrders
                 .SelectMany(fo => fo.Items)
                 .Select(i => new { i.ItemName, i.Quantity, i.UnitPrice })
                 .ToList(),
-            totalBill = session.GamingAmount + foodCharges,
+            totalBill = liveGamingCharges + foodCharges,
             sessionStatus = session.State.ToString().ToLowerInvariant(),
             memberId = session.MemberId?.ToString(),
             walletBalance = walletBalance,
@@ -194,7 +206,7 @@ public class PublicController : ControllerBase
         if (pc == null)
             return Ok(new { success = false, error = "PC not found" });
 
-        decimal rate = pc.PricingProfile?.BaseHourlyRate ?? 100m;
+        decimal rate = pc.PricingProfile?.BaseHourlyRate ?? 0m;
 
         return Ok(ApiResponse<object>.Ok(new { id = pc.Id, name = pc.PcName ?? pc.PcNumber, branchId = pc.BranchId, branchName = pc.Branch?.Name, monitorHz = pc.MonitorHz, ratePerHour = rate }));
     }
@@ -229,7 +241,7 @@ public class PublicController : ControllerBase
         if (pc == null)
             return Ok(new { success = false, error = "PC not found" });
 
-        decimal ratePerHour = pc.PricingProfile?.BaseHourlyRate ?? 100m;
+        decimal ratePerHour = pc.PricingProfile?.BaseHourlyRate ?? 0m;
 
         var plans = new List<object>();
         string planName = string.IsNullOrEmpty(pc.MonitorHz) ? "Standard" : $"{pc.MonitorHz}Hz Tier";
@@ -269,7 +281,7 @@ public class PublicController : ControllerBase
         foreach (var tier in uniqueTiers)
         {
             var pcWithTier = branch.Pcs.FirstOrDefault(p => (string.IsNullOrWhiteSpace(p.MonitorHz) ? "Standard" : p.MonitorHz) == tier);
-            decimal ratePerHour = pcWithTier?.PricingProfile?.BaseHourlyRate ?? 100m;
+            decimal ratePerHour = pcWithTier?.PricingProfile?.BaseHourlyRate ?? 0m;
             string planNameTier = tier == "Standard" ? "Standard Tier" : $"{tier}Hz Tier";
             string monitorHzVal = tier == "Standard" ? "" : tier;
 
@@ -365,7 +377,7 @@ public class PublicController : ControllerBase
 
             // Build session from reservation
             var durationMin = pendingReservation.DurationMin ?? 60;
-            var ratePerHour = pc.PricingProfile?.BaseHourlyRate ?? 100m;
+            var ratePerHour = pc.PricingProfile?.BaseHourlyRate ?? 0m;
             var expectedAmount = pendingReservation.DurationMin.HasValue ? (durationMin / 60m) * ratePerHour : 0m; // 0 for member-only (postpaid)
 
             var session = new Session

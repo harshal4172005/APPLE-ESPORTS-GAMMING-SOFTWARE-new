@@ -8,6 +8,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { applyDiscount, processPayment, getMemberById, removeBillItem, requestWalletApproval } from '../../api/billing.api';
 import { useSocket } from '../../contexts/SocketContext';
 import { useToast } from '../ui/Toast';
+import { formatMoney } from '../../utils/money';
 
 const DENOMINATIONS = [20, 50, 100, 200, 500, 1000, 2000];
 const DISC_PRESETS   = [0, 5, 10, 15, 20];
@@ -44,7 +45,7 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
     setSplitCash('');
     setSplitUpi('');
     setPayError(null);
-    setPayMethod(defaultPaymentMethod || 'cash');
+    setPayMethod(defaultPaymentMethod || (bill?.memberId ? 'wallet' : 'cash'));
     setWalletWaiting(false);
     setCustomerName(bill?.customerName || '');
     setCustomerPhone(bill?.customerPhone || '');
@@ -266,7 +267,7 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
         <span>{bill.customerName || 'Walk-in Guest'}</span>
         <span className="opacity-60">
           {bill.createdAt
-            ? new Date(bill.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            ? new Date(bill.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })
             : ''}
         </span>
       </div>
@@ -352,19 +353,21 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
               Total Amount Due
             </span>
             <span className="font-mono font-bold text-2xl text-neon-orange drop-shadow-[0_0_8px_rgba(255,153,0,0.3)]">
-              ₹{total}
+              ₹{formatMoney(total)}
             </span>
           </div>
 
-          {/* Payment method grid */}
+          {/* Payment method grid — a member's bill can only be settled from their wallet */}
           <div className="grid grid-cols-3 gap-2">
-            {[
+            {(bill.memberId ? [
+              { id: 'wallet', label: 'Wallet', Icon: Wallet        },
+            ] : [
               { id: 'cash',   label: 'Cash',   Icon: Banknote      },
               { id: 'upi',    label: 'UPI',    Icon: Smartphone    },
               { id: 'split',  label: 'Split',  Icon: ArrowLeftRight},
               { id: 'wallet', label: 'Wallet', Icon: Wallet        },
               { id: 'credit', label: 'Credit', Icon: Clock         },
-            ].map(({ id, label, Icon }) => (
+            ]).map(({ id, label, Icon }) => (
               <button
                 key={id}
                 onClick={() => {
@@ -474,7 +477,7 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
             <div className="bg-bg-2 border border-neon-purple/30 rounded-lg p-4 text-center space-y-2">
               <CreditCard className="w-8 h-8 text-neon-purple mx-auto" />
               <div className="font-bold text-neon-purple uppercase tracking-wider text-sm">UPI / Online Gateway</div>
-              <div className="font-mono font-bold text-3xl text-neon-orange">₹{total}</div>
+              <div className="font-mono font-bold text-3xl text-neon-orange">₹{formatMoney(total)}</div>
               <p className="text-[11px] text-text-3">
                 Verify funds cleared on bank account before saving
               </p>
@@ -638,10 +641,10 @@ function ItemSection({ icon, label, items, accentCls, canRemove, onRemove }) {
           >
             <div>
               <div className="text-text">{item.itemName}</div>
-              <div className="text-[10px] text-text-3 font-mono">{item.quantity} × ₹{item.unitPrice}</div>
+              <div className="text-[10px] text-text-3 font-mono">{item.quantity} × ₹{formatMoney(item.unitPrice)}</div>
             </div>
             <div className="flex items-center gap-3">
-              <span className="font-mono text-text font-bold">₹{item.totalPrice}</span>
+              <span className="font-mono text-text font-bold">₹{formatMoney(item.totalPrice)}</span>
               {canRemove && (
                 <button
                   onClick={() => onRemove?.(item.id)}

@@ -91,10 +91,26 @@ public class PcsController : ControllerBase
 
         if (exists) return BadRequest(ApiResponse<object>.Fail("PC number already exists in this branch"));
 
-        // Find standard pricing profile for this branch
-        var pricingProfile = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.PricingProfile>()
-            .Query()
-            .FirstOrDefaultAsync(p => p.BranchId == dto.BranchId && p.IsActive);
+        // A PC must have a Pricing Profile — either the one explicitly chosen, or (if none
+        // was chosen) this branch's only/first active profile as a convenience default.
+        AppleEsportsErp.Domain.Entities.PricingProfile? pricingProfile = null;
+        if (dto.PricingProfileId.HasValue)
+        {
+            pricingProfile = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.PricingProfile>()
+                .Query()
+                .FirstOrDefaultAsync(p => p.Id == dto.PricingProfileId.Value && p.BranchId == dto.BranchId);
+            if (pricingProfile == null)
+                return BadRequest(ApiResponse<object>.Fail("Invalid or inaccessible Pricing Profile."));
+        }
+        else
+        {
+            pricingProfile = await _unitOfWork.Repository<AppleEsportsErp.Domain.Entities.PricingProfile>()
+                .Query()
+                .FirstOrDefaultAsync(p => p.BranchId == dto.BranchId && p.IsActive);
+        }
+
+        if (pricingProfile == null)
+            return BadRequest(ApiResponse<object>.Fail("This branch has no Pricing Profile yet. Create one in Settings → Pricing Profiles before adding a PC."));
 
         var pc = new AppleEsportsErp.Domain.Entities.Pc
         {

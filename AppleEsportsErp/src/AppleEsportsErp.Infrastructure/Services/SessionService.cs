@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using AppleEsportsErp.Application.Constants;
@@ -6,6 +5,7 @@ using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.DTOs.Sessions;
 using AppleEsportsErp.Application.Exceptions;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Application.Services;
 using AppleEsportsErp.Domain.Entities;
 using AppleEsportsErp.Domain.Enums;
 using AppleEsportsErp.Infrastructure.Data;
@@ -82,6 +82,9 @@ public class SessionService : ISessionService
             var pc = await _db.Pcs.FindAsync(dto.PcId);
             if (pc == null || pc.BranchId != branchId)
                 throw new NotFoundException("PC not found or does not belong to this branch", "PC_NOT_FOUND");
+
+            if (pc.PricingProfileId == null)
+                throw new AppException($"{pc.PcNumber} has no Pricing Profile assigned. Ask a Super Admin to assign one in Settings → Pricing Profiles before starting a session on this PC.", System.Net.HttpStatusCode.BadRequest, "NO_PRICING_PROFILE");
 
             if (pc.State != PcState.Idle)
             {
@@ -235,79 +238,46 @@ public class SessionService : ISessionService
             
             var bill = session.Bills.FirstOrDefault();
 
-            // 1. Calculate ratePerHour
-            decimal ratePerHour = 100m; // Fallback
-            
-            if (session.Pc?.PricingProfile != null)
-            {
-                ratePerHour = session.Pc.PricingProfile.BaseHourlyRate;
-            }
-            else
-            {
-                var globalConfig = await _db.SystemConfigs.FirstOrDefaultAsync(c => c.ConfigKey == "global_system_rules");
-                Dictionary<string, decimal> hzPricing = new();
-                if (globalConfig != null && !string.IsNullOrEmpty(globalConfig.ConfigValue))
-                {
-                    try
-                    {
-                        using var doc = JsonDocument.Parse(globalConfig.ConfigValue);
-                        if (doc.RootElement.TryGetProperty("pricing", out var pricing))
-                        {
-                            if (pricing.TryGetProperty("baseRate", out var br))
-                                ratePerHour = br.GetDecimal();
-                                
-                            if (pricing.TryGetProperty("hzPricing", out var hzObj))
-                            {
-                                foreach (var prop in hzObj.EnumerateObject())
-                                {
-                                    if (prop.Value.ValueKind == JsonValueKind.Number)
-                                        hzPricing[prop.Name] = prop.Value.GetDecimal();
-                                }
-                            }
-                        }
-                    }
-                    catch { /* fallback */ }
-                }
+            // 1. Rate comes solely from the PC's assigned Pricing Profile — Start blocks any
+            // session on a PC without one, so this should always be set. ₹0 (never a fabricated
+            // guess) is the honest fallback for legacy sessions that predate that enforcement.
+            decimal ratePerHour = session.Pc?.PricingProfile?.BaseHourlyRate ?? SessionPricingCalculator.DefaultRatePerHour;
 
-                if (!string.IsNullOrEmpty(session.Pc?.MonitorHz) && hzPricing.TryGetValue(session.Pc.MonitorHz, out var hrRate))
-                {
-                    ratePerHour = hrRate;
-                }
-            }
+            // 2. Apply the branch's buffer/grace period & bill for exact elapsed time.
+            // Applies to every session type (fixed package or open/PAYG) — a customer who
+            // ends early is only charged for time actually used, per the branch's live rate.
+            int bufferMinutes = session.Pc?.PricingProfile?.BufferMinutes ?? SessionPricingCalculator.DefaultBufferMinutes;
+            session.GamingAmount = SessionPricingCalculator.CalculateGamingAmount(ratePerHour, bufferMinutes, session.ActualDurationMin!.Value);
 
-            // 2. Apply 10-minute Buffer & Calculate Final Amount
-            if (session.ActualDurationMin <= 10)
+            if (session.ActualDurationMin <= bufferMinutes)
             {
-                // Under 10 minutes buffer time, session is free
-                session.GamingAmount = 0;
                 if (!session.GamingType.Contains("Cancelled"))
                 {
-                    session.GamingType += " (Cancelled - Under 10m Buffer)";
-                }
-            }
-            else
-            {
-                if (session.PlannedDurationMin == null)
-                {
-                    // Open Session: Exact time-based cost based on PricingProfile rate
-                    decimal hours = Math.Max((decimal)session.ActualDurationMin.Value / 60m, 1m / 60m); 
-                    session.GamingAmount = Math.Round(hours * ratePerHour, 2);
-                }
-                else
-                {
-                    // Fixed Session: They are charged the FULL package price originally set. No downward prorating.
-                    // We keep session.GamingAmount as it was.
+                    var suffix = $" (Cancelled - Under {bufferMinutes}m Buffer)";
+                    // Defensive cap — GamingType is a bounded DB column; never let a long
+                    // package name + suffix silently fail the whole Stop transaction again.
+                    const int maxLen = 150;
+                    session.GamingType = (session.GamingType + suffix).Length > maxLen
+                        ? session.GamingType.Substring(0, Math.Max(0, maxLen - suffix.Length)) + suffix
+                        : session.GamingType + suffix;
                 }
             }
 
-            session.TotalAmount = session.GamingAmount + session.FoodAmount;
+            // Food orders update bill.FoodAmount directly when delivered (FoodOrderService) —
+            // session.FoodAmount is never touched, so it must NOT be used as the source of
+            // truth here. Reading it (always 0) would silently erase any food already billed.
+            decimal foodAmount = bill?.FoodAmount ?? session.FoodAmount;
+            session.FoodAmount = foodAmount;
+            session.TotalAmount = session.GamingAmount + foodAmount;
 
             if (bill != null)
             {
                 bill.GamingAmount = session.GamingAmount;
-                bill.Subtotal = session.TotalAmount;
-                bill.TotalAmount = session.TotalAmount;
-                
+                bill.FoodAmount = foodAmount;
+                bill.Subtotal = session.GamingAmount + foodAmount;
+                // Preserve any discount already applied to the bill instead of wiping it out.
+                bill.TotalAmount = Math.Max(0, bill.Subtotal - bill.DiscountAmount);
+
                 var gamingItem = bill.Items.FirstOrDefault(i => i.ItemType == "gaming");
                 if (gamingItem != null)
                 {
@@ -317,9 +287,17 @@ public class SessionService : ISessionService
                 }
             }
 
+            // A ₹0 bill (free buffer, or a fully-discounted session) has nothing to collect —
+            // auto-close it so the operator isn't forced to process a ₹0 "payment" and the PC
+            // frees up immediately, matching the whole point of a free grace period.
+            if (bill != null && bill.TotalAmount == 0 && bill.Status != BillStatus.Completed)
+            {
+                bill.Status = BillStatus.Completed;
+            }
+
             // 2. Wallet Deduction for Members is now handled manually via Overlay Approval
             // The session goes to Completed, bill stays Pending, PC goes to AwaitingBilling.
-            
+
             var pc = session.Pc!;
 
             var hasUnpaidBill = session.Bills.Any(b => b.Status != BillStatus.Completed);
@@ -440,9 +418,9 @@ public class SessionService : ISessionService
             session.TotalAmount += dto.AdditionalAmount;
             
             var newGamingType = $"{session.GamingType} + {dto.PackageName}";
-            if (newGamingType.Length > 50)
+            if (newGamingType.Length > 150)
             {
-                newGamingType = newGamingType.Substring(0, 47) + "...";
+                newGamingType = newGamingType.Substring(0, 147) + "...";
             }
             session.GamingType = newGamingType;
             

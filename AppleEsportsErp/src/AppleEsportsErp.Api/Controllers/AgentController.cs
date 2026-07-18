@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Application.Constants;
 using AppleEsportsErp.Infrastructure.Identity;
 using System.Security.Claims;
 
@@ -28,7 +29,7 @@ public class AgentController : ControllerBase
 
     /// <summary>Generate a long-lived machine JWT for a specific Gaming PC agent</summary>
     [HttpPost("token/{pcId:guid}")]
-    [Authorize(Roles = "SuperAdmin")]
+    [Authorize(Roles = Roles.SuperAdmin)]
     public async Task<IActionResult> GenerateAgentToken(Guid pcId)
     {
         var pc = await _unitOfWork.Repository<Domain.Entities.Pc>()
@@ -60,7 +61,7 @@ public class AgentController : ControllerBase
 
     /// <summary>Get agent connection status for all PCs in a branch</summary>
     [HttpGet("status/{branchId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin,Operator")]
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     public async Task<IActionResult> GetAgentStatuses(Guid branchId)
     {
         var pcs = await _unitOfWork.Repository<Domain.Entities.Pc>()
@@ -112,7 +113,7 @@ public class AgentController : ControllerBase
 
     /// <summary>Remote start a session on a Cloud Mode PC — Admin/SuperAdmin only</summary>
     [HttpPost("remote-start/{pcId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     public async Task<IActionResult> RemoteStartSession(Guid pcId, [FromBody] RemoteStartDto dto)
     {
         var pc = await _unitOfWork.Repository<Domain.Entities.Pc>()

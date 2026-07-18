@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Utensils, Check } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useSocket, SIGNALR_HUBS } from '../../contexts/SocketContext';
 import { useBranch } from '../../contexts/BranchContext';
 import { useAuth } from '../../contexts/AuthContext';
@@ -28,9 +29,10 @@ export const playNotificationSound = () => {
 
 export default function GlobalFoodOrderListener() {
   const { subscribe, connected } = useSocket();
-  const { activeBranch } = useBranch();
+  const { activeBranch, switchBranch } = useBranch();
   const { isSuperAdmin, user } = useAuth();
-  
+  const navigate = useNavigate();
+
   const targetBranchId = isSuperAdmin ? activeBranch?.id : user?.branchId;
   const prevPendingCount = useRef(0);
   const [newOrderAlerts, setNewOrderAlerts] = useState([]);
@@ -104,7 +106,18 @@ export default function GlobalFoodOrderListener() {
   }, [connected, targetBranchId, subscribe, checkOrders]);
 
   const handleAcknowledge = (orderId) => {
+    const order = newOrderAlerts.find(o => o.id === orderId || o.Id === orderId);
     setNewOrderAlerts(prev => prev.filter(o => o.id !== orderId && o.Id !== orderId));
+
+    // Super Admin's Food Orders page only shows anything once a branch is selected —
+    // without this, "Acknowledge" would silently land on a "Select a Branch" placeholder
+    // instead of the actual order, which looked like the redirect wasn't working at all.
+    const orderBranchId = order?.branchId || order?.BranchId;
+    if (isSuperAdmin && orderBranchId && orderBranchId !== activeBranch?.id) {
+      switchBranch(orderBranchId);
+    }
+
+    navigate('/app/food-orders');
   };
 
   if (newOrderAlerts.length === 0) return null;

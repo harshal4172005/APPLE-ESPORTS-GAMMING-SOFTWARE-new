@@ -25,13 +25,13 @@ export default function GlobalNotificationListener() {
       
       let pcName = data.pcId || data.PcId;
       let branchName = "";
-      let ratePerHour = 100;
+      let ratePerHour = 0;
       try {
         const res = await api.get(`/public/pcs/${pcName}`);
         if (res.data.success) {
           pcName = res.data.data.name;
           branchName = res.data.data.branchName || "";
-          ratePerHour = res.data.data.ratePerHour || 100;
+          ratePerHour = res.data.data.ratePerHour ?? 0;
         }
       } catch (e) {
         // silent fallback to ID
@@ -88,13 +88,13 @@ export default function GlobalNotificationListener() {
     const unsubscribeExtension = subscribe(SIGNALR_HUBS.SESSIONS, 'ExtensionRequested', async (data) => {
       let pcName = data.pcId || data.PcId;
       let branchName = "";
-      let ratePerHour = 100;
+      let ratePerHour = 0;
       try {
         const res = await api.get(`/public/pcs/${pcName}`);
         if (res.data.success) {
             pcName = res.data.data.name;
             branchName = res.data.data.branchName || "";
-            ratePerHour = res.data.data.ratePerHour || 100;
+            ratePerHour = res.data.data.ratePerHour ?? 0;
         }
       } catch (e) { }
 
@@ -131,11 +131,11 @@ export default function GlobalNotificationListener() {
         const sessionId = req.sessionId || req.SessionId;
         
         // Use the resolved rate from PricingProfile, or fetch from session as fallback
-        let ratePerHour = req.resolvedRatePerHour || 100;
+        let ratePerHour = req.resolvedRatePerHour ?? 0;
         try {
             const sessionRes = await api.get(`/public/session/pc/${pcId}`);
             if (sessionRes.data.success && sessionRes.data.data) {
-                ratePerHour = sessionRes.data.data.ratePerHour || ratePerHour;
+                ratePerHour = sessionRes.data.data.ratePerHour ?? ratePerHour;
             }
         } catch (e) {
             console.warn('Failed to fetch session rate, using PricingProfile rate');
@@ -169,7 +169,7 @@ export default function GlobalNotificationListener() {
       
       const actualPcId = pcRes.data.data.id;
       const resolvedBranchId = pcRes.data.data.branchId || req.branchId || req.BranchId;
-      const ratePerHour = pcRes.data.data.ratePerHour || 100;
+      const ratePerHour = pcRes.data.data.ratePerHour ?? 0;
       const expectedAmount = duration ? (duration / 60) * ratePerHour : 0;
 
       // 2. Start Session 

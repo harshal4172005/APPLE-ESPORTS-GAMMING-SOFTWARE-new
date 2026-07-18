@@ -1,5 +1,6 @@
 import { Monitor, CreditCard, Clock } from 'lucide-react';
 import { formatTimeDelta } from '../../utils/timeUtils';
+import { formatMoney } from '../../utils/money';
 import { useEffect, useState } from 'react';
 
 export default function ActiveBillsList({ bills, activeSessions, reservations = [], selectedId, onSelect }) {
@@ -44,7 +45,7 @@ export default function ActiveBillsList({ bills, activeSessions, reservations = 
               >
                 <div className="flex justify-between items-center mb-1.5">
                   <span className="font-heading font-bold text-text">{bill.pcNumber || 'Walk-in'}</span>
-                  <span className="font-mono text-neon-orange font-bold">₹{bill.totalAmount}</span>
+                  <span className="font-mono text-neon-orange font-bold">₹{formatMoney(bill.totalAmount)}</span>
                 </div>
                 <div className="flex justify-between items-center text-[10px] text-text-3 uppercase tracking-wider">
                   <span className="truncate max-w-[120px]">{bill.customerName || 'Guest'}</span>

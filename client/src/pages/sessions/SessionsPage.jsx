@@ -103,6 +103,13 @@ export default function SessionsPage() {
     fetchPcs();
   }, [fetchPcs]);
 
+  // Safety net: refetch periodically so rates/buffer minutes never sit stale for long,
+  // even if a real-time event is ever missed (dropped connection, etc.).
+  useEffect(() => {
+    const interval = setInterval(fetchPcs, 10000);
+    return () => clearInterval(interval);
+  }, [fetchPcs]);
+
   useEffect(() => {
     const handleRefresh = (e) => {
       const pcId = e.detail?.pcId;
@@ -160,6 +167,12 @@ export default function SessionsPage() {
       fetchPcs();
     });
 
+    // Super Admin changed a Pricing Profile (rate or buffer) — refetch instantly so
+    // every open PC card reflects it immediately, not just newly started sessions.
+    const unsubPricing = subscribe(SIGNALR_HUBS.PC_STATUS, 'PricingProfileUpdated', () => {
+      fetchPcs();
+    });
+
     // Immediate delivery via SignalR (polling above provides the fallback)
     const unsubNotification = subscribe(SIGNALR_HUBS.NOTIFICATIONS, 'Alert', (alert) => {
       console.log('[SessionsPage] Received Alert:', alert);
@@ -178,6 +191,7 @@ export default function SessionsPage() {
 
     return () => {
       unsubPcStatus();
+      unsubPricing();
       unsubNotification();
     };
   }, [connected, subscribe, SIGNALR_HUBS.PC_STATUS, SIGNALR_HUBS.NOTIFICATIONS, targetBranchId]);
@@ -254,13 +268,12 @@ export default function SessionsPage() {
     const idleStations = pcs.filter(p => p.state === 'Idle').length;
     const awaitingBilling = pcs.filter(p => p.state === 'AwaitingBilling').length;
 
-    // Live accrued revenue across all active sessions
+    // Live accrued revenue across all active sessions — use the backend's own live
+    // totalAmount (buffer-aware, same formula as the final bill) instead of re-deriving
+    // it here, so this stat can never drift from what the PC cards / billing show.
     const liveRevenue = pcs
-      .filter(p => p.state === 'Active' && p.sessionStartTime && p.ratePerHour > 0)
-      .reduce((sum, p) => {
-        const elapsedMin = (Date.now() - new Date(p.sessionStartTime).getTime()) / 60000;
-        return sum + Math.ceil((elapsedMin / 60) * p.ratePerHour);
-      }, 0);
+      .filter(p => p.state === 'Active')
+      .reduce((sum, p) => sum + (p.totalAmount || 0), 0);
 
     return { activeSessions, idleStations, awaitingBilling, liveRevenue };
   }, [pcs, ticker]);

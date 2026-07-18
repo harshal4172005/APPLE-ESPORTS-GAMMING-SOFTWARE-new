@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import { useToast } from '../../components/ui/Toast';
 import ExtendSessionModal from './ExtendSessionModal';
 import SessionDiscountModal from './SessionDiscountModal';
+import { formatMoney } from '../../utils/money';
 
 // ── Elapsed time from a start ISO string (counting UP) ──
 function useElapsedTime(startTimeIso) {
@@ -33,20 +34,23 @@ function useElapsedTime(startTimeIso) {
 }
 
 // ── Format elapsed as "0h 12m" ──
-function fmtElapsed(h, m) {
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
+function fmtElapsed(h, m, s) {
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
 }
 
 // ── Format time as HH:MM ──
 function fmtTime(isoString) {
   if (!isoString) return '';
   const d = new Date(isoString);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // hour12 forced on so a real clock time (e.g. "12:48 AM") can never be mistaken for a
+  // stopwatch/duration readout like "00:48" — some browsers/locales default to 24h otherwise.
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
 const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReservedSession, onOverrideReservation, onApproveWalkin, onDeclineWalkin, onFlagMaintenance, onCreditClick }) => {
-  const { isSuperAdmin, user } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const toast = useToast();
   const elapsed = useElapsedTime(pc.sessionStartTime);
@@ -58,14 +62,24 @@ const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReserved
   const [isDragOver, setIsDragOver] = useState(false);
   const [isTransferring, setIsTransferring] = useState(false);
 
-  // Live charge: if fixed session, just totalAmount. if open-ended, totalAmount + elapsed rate.
-  let liveCharge = 0;
-  if (pc.sessionEndTime) {
-    liveCharge = pc.totalAmount || 0;
-  } else {
-    const elapsedGamingCharge = pc.ratePerHour > 0 ? Number((Math.max(elapsed.totalMin / 60, 1 / 60) * pc.ratePerHour).toFixed(2)) : 0;
-    liveCharge = (pc.totalAmount || 0) + (elapsed.totalMin <= 10 ? 0 : elapsedGamingCharge);
-  }
+  // Live charge — same formula as the backend (SessionPricingCalculator): free during the
+  // branch's buffer window, then billed for exact elapsed time at the PC's real rate.
+  // Always time-based, whether the session is a fixed package or open/Pay-As-You-Go.
+  const bufferMinutes = pc.bufferMinutes ?? 10;
+  const gamingCharge = elapsed.totalMin <= bufferMinutes
+    ? 0
+    : Number((Math.max(elapsed.totalMin / 60, 1 / 60) * (pc.ratePerHour || 0)).toFixed(2));
+  const liveCharge = gamingCharge + (pc.foodAmount || 0);
+
+  // Remaining time until the planned end (fixed-duration sessions only) — ticks live off the
+  // same per-second re-render the elapsed-time hook above already drives.
+  const remainingMs = pc.sessionEndTime ? new Date(pc.sessionEndTime).getTime() - Date.now() : 0;
+  const remainingTotalSec = Math.max(0, Math.floor(remainingMs / 1000));
+  const remaining = {
+    h: Math.floor(remainingTotalSec / 3600),
+    m: Math.floor((remainingTotalSec % 3600) / 60),
+    s: remainingTotalSec % 60,
+  };
 
   const isActive = pc.state === 'Active';
   const isIdle = pc.state === 'Idle';
@@ -263,25 +277,34 @@ const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReserved
         </div>
 
         {/* Time + Charge row */}
-        <div className="grid grid-cols-2 gap-2 bg-bg-3 rounded p-2.5 border border-border">
+        <div className={`grid ${pc.sessionEndTime ? 'grid-cols-3' : 'grid-cols-2'} gap-2 bg-bg-3 rounded p-2.5 border border-border`}>
           <div>
             <div className="text-[9px] text-text-3 font-mono uppercase tracking-widest mb-0.5">
               {pc.sessionEndTime ? 'Ends At' : 'Elapsed'}
             </div>
             <div className="font-mono font-bold text-pc-active text-sm">
-              {pc.sessionEndTime ? fmtTime(pc.sessionEndTime) : fmtElapsed(elapsed.h, elapsed.m)}
+              {pc.sessionEndTime ? fmtTime(pc.sessionEndTime) : fmtElapsed(elapsed.h, elapsed.m, elapsed.s)}
             </div>
           </div>
+          {pc.sessionEndTime && (
+            <div>
+              <div className="text-[9px] text-text-3 font-mono uppercase tracking-widest mb-0.5">Remaining</div>
+              <div className={`font-mono font-bold text-sm ${remainingMs <= 0 ? 'text-neon-red' : 'text-pc-active'}`}>
+                {remainingMs <= 0 ? 'Overdue' : fmtElapsed(remaining.h, remaining.m, remaining.s)}
+              </div>
+            </div>
+          )}
           <div>
             <div className="text-[9px] text-text-3 font-mono uppercase tracking-widest mb-0.5">Live Charge</div>
             <div className="font-mono font-bold text-neon-orange text-sm">
-              ₹{liveCharge}
+              ₹{formatMoney(liveCharge)}
             </div>
           </div>
         </div>
 
-        {/* Action Buttons Row 1: Stop + Extend */}
-        <div className="grid grid-cols-3 gap-1.5">
+        {/* Action Buttons Row 1: Stop + Extend (Extend only makes sense for a fixed-duration
+            session with a slot to extend — Pay-As-You-Go already bills continuously with no cap) */}
+        <div className={`grid ${pc.sessionEndTime ? 'grid-cols-3' : 'grid-cols-2'} gap-1.5`}>
           <ActionBtn
             color="red"
             icon={<Square className="w-3 h-3" />}
@@ -303,23 +326,18 @@ const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReserved
               }
             }}
           />
-          <ActionBtn
-            color="blue"
-            icon={<RefreshCw className="w-3 h-3" />}
-            label="Extend"
-            onClick={() => setShowExtendModal(true)}
-          />
+          {pc.sessionEndTime && (
+            <ActionBtn
+              color="blue"
+              icon={<RefreshCw className="w-3 h-3" />}
+              label="Extend"
+              onClick={() => setShowExtendModal(true)}
+            />
+          )}
         </div>
 
-        {/* Action Buttons Row 2: Bill + Food + Promo */}
-        <div className={`grid ${isSuperAdmin ? 'grid-cols-3' : 'grid-cols-2'} gap-1.5`}>
-          <ActionBtn
-            color="orange"
-            icon={<Receipt className="w-3 h-3" />}
-            label="Bill"
-            onClick={() => navigate('/app/billing', { state: { autoSelectPcId: pc.id } })}
-            small
-          />
+        {/* Action Buttons Row 2: Food + Promo */}
+        <div className={`grid ${(user?.role === 'super_admin' || (user?.role === 'admin' && user?.dashboardPermissions?.discount === true)) ? 'grid-cols-2' : 'grid-cols-1'} gap-1.5`}>
           <ActionBtn
             color="green"
             icon={<Coffee className="w-3 h-3" />}
@@ -477,12 +495,18 @@ const PcCard = memo(({ pc, walkinReq, onStartSession, onRefresh, onStartReserved
     <motion.div
       initial={{ opacity: 0, scale: 0.97 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="relative rounded-lg border border-border/30 bg-bg-2/40 p-4 flex flex-col gap-3 opacity-40"
+      className="relative rounded-lg border border-border/30 bg-bg-2/40 p-4 flex flex-col gap-3 opacity-75"
     >
       <div className="flex items-center justify-between">
         <span className="font-heading font-bold text-text-3 text-sm tracking-wider">{pc.name}</span>
         <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-border text-text-3 rounded">OFFLINE</span>
       </div>
+      <button
+        onClick={() => onFlagMaintenance?.(pc, false)}
+        className="mt-1 w-full py-1.5 rounded border border-pc-active/40 bg-pc-active/10 text-pc-active text-[11px] font-bold uppercase tracking-widest hover:bg-pc-active/20 transition-colors flex items-center justify-center gap-1"
+      >
+        <RefreshCw className="w-3 h-3" /> RESTORE PC
+      </button>
     </motion.div>
   );
 });

@@ -65,12 +65,16 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
     return () => clearInterval(timer);
   }, [pcId, isMockMode]);
 
-  const fetchSession = async () => {
+  const fetchSession = async ({ silent = false } = {}) => {
     if (!pcId || isMockMode) return;
     try {
-      setSessionLoading(true);
-      
-      let pcRatePerHour = 100;
+      // Background refreshes (the periodic safety-net poll) must NOT toggle sessionLoading —
+      // doing so briefly flips the top-level screen gate in UserOverlayApp away from whatever
+      // pre-session screen (e.g. mid Member Login) the user is on and back, remounting it and
+      // wiping its local state. Only the very first, real fetch should show a loading state.
+      if (!silent) setSessionLoading(true);
+
+      let pcRatePerHour = 0;
       try {
         const pcRes = await api.get(`/public/pcs/${pcId}`);
         if (pcRes.data.success && pcRes.data.data) {
@@ -96,7 +100,8 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
           sessionStart: d.sessionStart,
           remainingTime: d.remainingTime,
           plannedDurationMin: d.plannedDurationMin,
-          ratePerHour: d.ratePerHour || pcRatePerHour,
+          ratePerHour: d.ratePerHour ?? pcRatePerHour,
+          bufferMinutes: d.bufferMinutes ?? 10,
           gamingCharges: d.gamingCharges,
           foodCharges: d.foodCharges,
           foodItems: d.foodItems || [],
@@ -115,13 +120,23 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
     } catch (err) {
       console.error('[Overlay] Failed to fetch session:', err);
     } finally {
-      setSessionLoading(false);
+      if (!silent) setSessionLoading(false);
     }
   };
 
   // ── REAL MODE: Fetch initial session from REST API ──
   useEffect(() => {
     fetchSession();
+  }, [pcId, isMockMode]);
+
+  // Safety net: re-pull the rate/buffer (and session state) every 10s so a Super Admin's
+  // pricing change reaches an already-open customer overlay without needing a manual refresh.
+  // Runs silently (no loading-state toggle) so it never disturbs a pre-session screen the
+  // customer is actively using, like Member Login.
+  useEffect(() => {
+    if (isMockMode) return;
+    const interval = setInterval(() => fetchSession({ silent: true }), 10000);
+    return () => clearInterval(interval);
   }, [pcId, isMockMode]);
 
   // ── Helper to play beep & voice alert ──
@@ -153,38 +168,91 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
     }
   };
 
+  // Tracks which time-remaining alerts have already fired for the current session, so a
+  // resync (the periodic silent refresh, a SignalR update, an Extend) that nudges
+  // remainingTime back up past a threshold can never re-trigger the same alert.
+  const firedAlertsRef = useRef({ sessionId: null, fired: new Set() });
+
+  // Tracks whether the wallet-exhausted auto-checkout has already fired for the current
+  // session, so it can only ever trigger once (and can't double-fire from a fast tick).
+  const autoCheckoutRef = useRef({ sessionId: null, triggered: false });
+
   // ── REAL MODE: Live countdown from remainingTime ──
+  // Runs at the provider level (not inside a screen component) so it keeps ticking — and a
+  // member's wallet-exhausted auto-checkout keeps working — no matter which overlay screen
+  // (Food, Extend, Call, Bill) the customer is currently looking at.
   useEffect(() => {
     if (isMockMode || !sessionData?.sessionId || sessionData.sessionStatus !== 'active') return;
 
+    if (autoCheckoutRef.current.sessionId !== sessionData.sessionId) {
+      autoCheckoutRef.current = { sessionId: sessionData.sessionId, triggered: false };
+    }
+
     const timer = setInterval(() => {
+      let shouldAutoCheckout = false;
+      let checkoutSessionId = null;
+
       setSessionData(prev => {
         if (!prev) return prev;
+
+        if (firedAlertsRef.current.sessionId !== prev.sessionId) {
+          firedAlertsRef.current = { sessionId: prev.sessionId, fired: new Set() };
+        }
+        const fired = firedAlertsRef.current.fired;
 
         const isPrepaid = prev.plannedDurationMin != null;
 
         let nextTime = prev.remainingTime;
         if (isPrepaid && prev.remainingTime > 0) {
           nextTime = prev.remainingTime - 1;
-          if (nextTime === 600) playTimeAlert(10);
-          else if (nextTime === 300) playTimeAlert(5);
-          else if (nextTime === 60) playTimeAlert(1);
+          if (nextTime <= 600 && !fired.has(600)) { fired.add(600); playTimeAlert(10); }
+          else if (nextTime <= 300 && !fired.has(300)) { fired.add(300); playTimeAlert(5); }
+          else if (nextTime <= 60 && !fired.has(60)) { fired.add(60); playTimeAlert(1); }
         }
 
+        // Live-tick the gaming charge for every session type — free during the branch's
+        // buffer window, then billed for exact elapsed time. Same formula the backend uses.
         let nextGamingCharges = prev.gamingCharges;
-        if (!isPrepaid && prev.sessionStart) {
+        if (prev.sessionStart) {
           const elapsedMs = Date.now() - new Date(prev.sessionStart).getTime();
-          const elapsedHours = elapsedMs / (1000 * 60 * 60);
-          nextGamingCharges = elapsedHours * (prev.ratePerHour || 0);
+          const elapsedMin = elapsedMs / (1000 * 60);
+          const bufferMinutes = prev.bufferMinutes ?? 10;
+          nextGamingCharges = elapsedMin <= bufferMinutes ? 0 : (elapsedMin / 60) * (prev.ratePerHour || 0);
         }
 
-        return { 
-          ...prev, 
+        // A member's session must stop the instant their gaming wallet balance is used up —
+        // this has to live here (not in a screen component) so it can't be skipped just
+        // because the customer navigated to Food/Extend/Call/Bill.
+        if (
+          prev.memberLinked &&
+          prev.gamingBalance != null &&
+          nextGamingCharges >= prev.gamingBalance &&
+          !autoCheckoutRef.current.triggered
+        ) {
+          autoCheckoutRef.current.triggered = true;
+          shouldAutoCheckout = true;
+          checkoutSessionId = prev.sessionId;
+        }
+
+        return {
+          ...prev,
           remainingTime: nextTime,
           gamingCharges: nextGamingCharges,
           totalBill: nextGamingCharges + (prev.foodCharges || 0)
         };
       });
+
+      if (shouldAutoCheckout && checkoutSessionId) {
+        localStorage.setItem('walletEmptyAlert', 'true');
+        memberCheckout(checkoutSessionId).then(res => {
+          if (res?.success) {
+            fetchSession();
+          } else {
+            // Let it retry on the next tick if the checkout call itself failed.
+            autoCheckoutRef.current.triggered = false;
+          }
+        });
+      }
     }, 1000);
 
     return () => clearInterval(timer);

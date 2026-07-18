@@ -87,6 +87,14 @@ export default function BillingCounterPage() {
     fetchDashboardData();
   }, [fetchDashboardData]);
 
+  // Safety net: real-time hub events normally keep this list fresh, but if one is ever
+  // missed (dropped connection, etc.) this guarantees the Active Sessions list self-heals
+  // within 15s instead of showing stale elapsed times indefinitely.
+  useEffect(() => {
+    const interval = setInterval(fetchDashboardData, 10000);
+    return () => clearInterval(interval);
+  }, [fetchDashboardData]);
+
   // ── 2. Real-Time Hubs ──
   useEffect(() => {
     if (!connected || !targetBranchId) return;
@@ -101,6 +109,11 @@ export default function BillingCounterPage() {
 
     // Listen to PC Status changes
     const unsubPcStatus = subscribe(SIGNALR_HUBS.PC_STATUS, 'PcStatusChanged', () => {
+      fetchDashboardData();
+    });
+
+    // Super Admin changed a Pricing Profile — refetch instantly
+    const unsubPricing = subscribe(SIGNALR_HUBS.PC_STATUS, 'PricingProfileUpdated', () => {
       fetchDashboardData();
     });
 
@@ -129,6 +142,7 @@ export default function BillingCounterPage() {
     return () => {
       unsubBilling();
       unsubPcStatus();
+      unsubPricing();
       unsubReservations();
       unsubSummary();
       unsubNotification();
@@ -165,12 +179,16 @@ export default function BillingCounterPage() {
 
   const handleApproveWalkin = async (req) => {
     try {
+      // Use the PC's real assigned rate (Branch-Wise Pricing Profile), not a guessed flat rate.
+      const { data: pcInfo } = await api.get(`/public/pcs/${req.pcId}`);
+      const ratePerHour = pcInfo?.data?.ratePerHour ?? 0;
+
       const payload = {
         pcId: req.pcId,
         customerName: req.customerName,
         durationMinutes: req.duration,
         packageName: req.packageName || 'Walk-in Session',
-        expectedAmount: (req.duration / 60) * 100, // Assuming 100/hr default
+        expectedAmount: (req.duration / 60) * ratePerHour,
         notes: 'Walk-in approved from dashboard'
       };
       const res = await api.post('/sessions/start', payload);
@@ -213,7 +231,7 @@ export default function BillingCounterPage() {
         badge="LIVE"
       />
 
-      <div className="grid grid-cols-4 gap-2 mt-4">
+      <div className="grid grid-cols-3 gap-2 mt-4">
         <div className="bg-bg-2 border border-border rounded-xl p-2.5 px-3 shadow-sm">
           <div className="text-[10px] text-text-2 mb-0.5 uppercase tracking-wide">Active PCs</div>
           <div className="font-mono text-base font-bold text-accent">{summary?.totalActivePcs || 0}</div>
@@ -225,10 +243,6 @@ export default function BillingCounterPage() {
         <div className="bg-bg-2 border border-border rounded-xl p-2.5 px-3 shadow-sm">
           <div className="text-[10px] text-text-2 mb-0.5 uppercase tracking-wide">Today Revenue</div>
           <div className="font-mono text-[13px] font-bold text-accent">₹{summary?.totalRevenueToday?.toLocaleString() || '0'}</div>
-        </div>
-        <div className="bg-bg-2 border border-border rounded-xl p-2.5 px-3 shadow-sm">
-          <div className="text-[10px] text-text-2 mb-0.5 uppercase tracking-wide">Rate Mode</div>
-          <div className="font-mono text-[13px] font-bold text-accent">STD ₹40</div>
         </div>
       </div>
 

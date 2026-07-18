@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using AppleEsportsErp.Application.DTOs.PcStatus;
 using AppleEsportsErp.Application.Exceptions;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Application.Services;
 using AppleEsportsErp.Domain.Entities;
 using AppleEsportsErp.Domain.Enums;
 using AppleEsportsErp.Infrastructure.Data;
@@ -64,10 +65,12 @@ public class PcStatusService : IPcStatusService
 
         foreach (var pc in pcs)
         {
-            decimal calculatedRate = 100m;
+            decimal calculatedRate = SessionPricingCalculator.DefaultRatePerHour;
+            int bufferMinutes = SessionPricingCalculator.DefaultBufferMinutes;
             if (pc.PricingProfile != null)
             {
                 calculatedRate = pc.PricingProfile.BaseHourlyRate;
+                bufferMinutes = pc.PricingProfile.BufferMinutes;
             }
 
             var dto = new PcStatusDto
@@ -80,6 +83,7 @@ public class PcStatusService : IPcStatusService
                 Zone = pc.Zone ?? "Standard",
                 MonitorHz = pc.MonitorHz,
                 RatePerHour = calculatedRate,
+                BufferMinutes = bufferMinutes,
                 IsAgentOnline = pc.IsAgentOnline,
                 ConnectionMode = pc.ConnectionMode
             };
@@ -93,7 +97,22 @@ public class PcStatusService : IPcStatusService
                 dto.CustomerType = session.MemberId.HasValue ? "Member" : "Walk-in";
                 var activeBill = session.Bills.FirstOrDefault();
                 dto.ActiveBillId = activeBill?.Id;
-                dto.TotalAmount = activeBill?.TotalAmount ?? session.TotalAmount;
+                dto.FoodAmount = session.FoodAmount;
+
+                if (session.State == SessionState.Active)
+                {
+                    // Still running — compute the live charge with the exact same formula
+                    // StopSessionAsync will use, so this number never diverges from the real bill.
+                    decimal elapsedMinutes = (decimal)(now - session.StartTime).TotalMinutes;
+                    decimal liveGamingAmount = SessionPricingCalculator.CalculateGamingAmount(calculatedRate, bufferMinutes, elapsedMinutes);
+                    dto.TotalAmount = liveGamingAmount + session.FoodAmount;
+                }
+                else
+                {
+                    // Already stopped (Awaiting Billing) — amount is final, just display it.
+                    dto.TotalAmount = activeBill?.TotalAmount ?? session.TotalAmount;
+                }
+
                 if (session.EndTime.HasValue)
                     dto.SessionEndTime = session.EndTime;
             }

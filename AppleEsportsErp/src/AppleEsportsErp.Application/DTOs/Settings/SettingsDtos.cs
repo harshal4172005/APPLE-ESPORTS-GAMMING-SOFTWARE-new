@@ -97,6 +97,7 @@ public class CreatePcDto
     public string? Specs { get; set; }
     public string? Zone { get; set; }
     public string? HardwareNotes { get; set; }
+    public Guid? PricingProfileId { get; set; }
 }
 
 public class UpdatePcDto

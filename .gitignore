@@ -47,3 +47,8 @@ desktop.ini
 bin/
 obj/
 .vs/
+
+# Stray debug dumps (docker logs, ad-hoc API responses saved to disk while debugging)
+api_logs.txt
+pcs.json
+*.debug.json

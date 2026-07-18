@@ -63,11 +63,12 @@ public class BillingService : IBillingService
         var bill = await _unitOfWork.Repository<Bill>().Query()
             .Include(b => b.Items)
             .Include(b => b.Payments)
-            .Include(b => b.Pc)
+            .Include(b => b.Pc).ThenInclude(p => p!.PricingProfile)
+            .Include(b => b.Session)
             .FirstOrDefaultAsync(b => b.Id == id && b.BranchId == branchId)
             ?? throw new NotFoundException("Bill not found.");
 
-        return MapToDto(bill);
+        return MapToDtoWithLiveAmount(bill);
     }
 
     public async Task<BillDto> GetBillByNumberAsync(Guid branchId, string billNumber)
@@ -75,11 +76,44 @@ public class BillingService : IBillingService
         var bill = await _unitOfWork.Repository<Bill>().Query()
             .Include(b => b.Items)
             .Include(b => b.Payments)
-            .Include(b => b.Pc)
+            .Include(b => b.Pc).ThenInclude(p => p!.PricingProfile)
+            .Include(b => b.Session)
             .FirstOrDefaultAsync(b => b.BillNumber == billNumber && b.BranchId == branchId)
             ?? throw new NotFoundException("Bill not found.");
 
-        return MapToDto(bill);
+        return MapToDtoWithLiveAmount(bill);
+    }
+
+    /// <summary>
+    /// Same mapping as MapToDto, except while the session is still Active it recomputes the
+    /// gaming charge live (same formula as the operator PC card / member overlay) instead of
+    /// returning the stale amount stored at session start — this is what keeps the Billing
+    /// Counter's bill panel from showing a different number than everywhere else.
+    /// </summary>
+    private static BillDto MapToDtoWithLiveAmount(Bill bill)
+    {
+        var dto = MapToDto(bill);
+
+        if (bill.Session != null && bill.Session.State == Domain.Enums.SessionState.Active)
+        {
+            decimal ratePerHour = bill.Pc?.PricingProfile?.BaseHourlyRate ?? Application.Services.SessionPricingCalculator.DefaultRatePerHour;
+            int bufferMinutes = bill.Pc?.PricingProfile?.BufferMinutes ?? Application.Services.SessionPricingCalculator.DefaultBufferMinutes;
+            decimal elapsedMinutes = (decimal)(DateTimeOffset.UtcNow - bill.Session.StartTime).TotalMinutes;
+            decimal liveGamingAmount = Application.Services.SessionPricingCalculator.CalculateGamingAmount(ratePerHour, bufferMinutes, elapsedMinutes);
+
+            dto.GamingAmount = liveGamingAmount;
+            dto.Subtotal = liveGamingAmount + dto.FoodAmount;
+            dto.TotalAmount = Math.Max(0, dto.Subtotal - dto.DiscountAmount);
+
+            var gamingItem = dto.Items.FirstOrDefault(i => i.ItemType == "gaming");
+            if (gamingItem != null)
+            {
+                gamingItem.UnitPrice = liveGamingAmount;
+                gamingItem.TotalPrice = liveGamingAmount;
+            }
+        }
+
+        return dto;
     }
 
     public async Task<BillDto> ApplyDiscountAsync(Guid branchId, Guid superAdminId, Guid id, ApplyDiscountDto dto)

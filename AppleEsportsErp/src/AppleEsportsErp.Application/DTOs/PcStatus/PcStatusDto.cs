@@ -22,7 +22,9 @@ public class PcStatusDto
     public string? CustomerName { get; set; }
     public string? CustomerType { get; set; }  // "Walk-in" | "Member"
     public decimal RatePerHour { get; set; }   // For live charge calculation on frontend
-    public decimal TotalAmount { get; set; }   // Actual total accumulated charge for the session
+    public int BufferMinutes { get; set; }     // Free grace period before billing starts (from PricingProfile)
+    public decimal TotalAmount { get; set; }   // Actual total accumulated charge for the session (gaming + food), live for Active sessions
+    public decimal FoodAmount { get; set; }    // Food/add-on portion of TotalAmount, so the frontend can tick the gaming portion between polls without drifting
     public string? Zone { get; set; }           // Standard / VIP / Console / Streaming
     public string? MonitorHz { get; set; }
     

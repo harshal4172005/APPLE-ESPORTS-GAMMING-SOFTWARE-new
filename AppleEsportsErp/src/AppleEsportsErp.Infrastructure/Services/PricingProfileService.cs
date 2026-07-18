@@ -1,4 +1,5 @@
 using AppleEsportsErp.Application.DTOs.Settings;
+using AppleEsportsErp.Application.Interfaces;
 using AppleEsportsErp.Domain.Entities;
 using AppleEsportsErp.Infrastructure.Data;
 using AppleEsportsErp.Application.Exceptions;
@@ -9,10 +10,12 @@ namespace AppleEsportsErp.Infrastructure.Services;
 public class PricingProfileService : IPricingProfileService
 {
     private readonly AppDbContext _db;
+    private readonly IHubNotificationService _hubNotifier;
 
-    public PricingProfileService(AppDbContext db)
+    public PricingProfileService(AppDbContext db, IHubNotificationService hubNotifier)
     {
         _db = db;
+        _hubNotifier = hubNotifier;
     }
 
     public async Task<IEnumerable<PricingProfileDto>> GetAllByBranchAsync(Guid branchId)
@@ -27,6 +30,7 @@ public class PricingProfileService : IPricingProfileService
             Id = p.Id,
             Name = p.Name,
             BaseHourlyRate = p.BaseHourlyRate,
+            BufferMinutes = p.BufferMinutes,
             BranchId = p.BranchId,
             IsActive = p.IsActive,
             CreatedAt = p.CreatedAt,
@@ -43,6 +47,7 @@ public class PricingProfileService : IPricingProfileService
             Id = Guid.NewGuid(),
             Name = dto.Name,
             BaseHourlyRate = dto.BaseHourlyRate,
+            BufferMinutes = dto.BufferMinutes,
             BranchId = dto.BranchId,
             IsActive = dto.IsActive,
             RefreshRate = dto.RefreshRate,
@@ -53,12 +58,14 @@ public class PricingProfileService : IPricingProfileService
 
         _db.PricingProfiles.Add(profile);
         await _db.SaveChangesAsync();
+        await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);
 
         return new PricingProfileDto
         {
             Id = profile.Id,
             Name = profile.Name,
             BaseHourlyRate = profile.BaseHourlyRate,
+            BufferMinutes = profile.BufferMinutes,
             BranchId = profile.BranchId,
             IsActive = profile.IsActive,
             CreatedAt = profile.CreatedAt,
@@ -75,18 +82,21 @@ public class PricingProfileService : IPricingProfileService
 
         profile.Name = dto.Name;
         profile.BaseHourlyRate = dto.BaseHourlyRate;
+        profile.BufferMinutes = dto.BufferMinutes;
         profile.IsActive = dto.IsActive;
         profile.RefreshRate = dto.RefreshRate;
         profile.SystemSpecs = dto.SystemSpecs;
         profile.UpdatedAt = DateTimeOffset.UtcNow;
 
         await _db.SaveChangesAsync();
+        await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);
 
         return new PricingProfileDto
         {
             Id = profile.Id,
             Name = profile.Name,
             BaseHourlyRate = profile.BaseHourlyRate,
+            BufferMinutes = profile.BufferMinutes,
             BranchId = profile.BranchId,
             IsActive = profile.IsActive,
             CreatedAt = profile.CreatedAt,
@@ -104,7 +114,8 @@ public class PricingProfileService : IPricingProfileService
         // Soft delete so historical session data isn't affected
         profile.IsActive = false;
         profile.UpdatedAt = DateTimeOffset.UtcNow;
-        
+
         await _db.SaveChangesAsync();
+        await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);
     }
 }

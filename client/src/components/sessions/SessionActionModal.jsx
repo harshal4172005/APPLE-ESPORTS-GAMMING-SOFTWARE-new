@@ -112,7 +112,7 @@ export default function SessionActionModal({ pc, onClose, onActionSuccess }) {
         pcId: pc.id,
         customerName: form.customerName.trim(),
         customerType: form.customerType,
-        durationMinutes: selectedPlan.duration > 0 ? selectedPlan.duration : null,
+        durationMinutes: selectedPlan.duration > 0 ? selectedPlan.duration : 0,
         packageName: selectedPlan.name,
         expectedAmount: selectedPlan.price,
         isOverride: isSuperAdmin,

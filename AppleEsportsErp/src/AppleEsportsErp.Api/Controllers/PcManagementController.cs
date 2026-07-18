@@ -4,6 +4,7 @@ using AppleEsportsErp.Api.Extensions;
 using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.DTOs.PcManagement;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Application.Constants;
 using System.Security.Claims;
 
 namespace AppleEsportsErp.Api.Controllers;
@@ -23,7 +24,7 @@ public class PcManagementController : ControllerBase
     private Guid GetSuperAdminId() => Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
 
     [HttpGet("branch/{branchId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     public async Task<IActionResult> GetPcsByBranch(Guid branchId, [FromQuery] bool includeDeleted = false)
     {
         var result = await _pcManagementService.GetPcsByBranchAsync(branchId, includeDeleted);
@@ -31,7 +32,7 @@ public class PcManagementController : ControllerBase
     }
 
     [HttpPost("branch/{branchId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     public async Task<IActionResult> AddPc(Guid branchId, [FromBody] CreatePcDto dto)
     {
         var result = await _pcManagementService.AddPcAsync(branchId, GetSuperAdminId(), dto);
@@ -39,7 +40,7 @@ public class PcManagementController : ControllerBase
     }
 
     [HttpPut("{pcId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     public async Task<IActionResult> UpdatePc(Guid pcId, [FromBody] UpdatePcDto dto)
     {
         var result = await _pcManagementService.UpdatePcAsync(pcId, GetSuperAdminId(), dto);
@@ -47,7 +48,7 @@ public class PcManagementController : ControllerBase
     }
 
     [HttpPost("{pcId:guid}/transfer/{newBranchId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     public async Task<IActionResult> TransferPc(Guid pcId, Guid newBranchId)
     {
         var result = await _pcManagementService.TransferPcAsync(pcId, newBranchId, GetSuperAdminId());
@@ -55,7 +56,7 @@ public class PcManagementController : ControllerBase
     }
 
     [HttpPost("{pcId:guid}/maintenance")]
-    [Authorize(Roles = "SuperAdmin,Admin,Operator")]
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin + "," + Roles.Operator)]
     public async Task<IActionResult> MarkMaintenance(Guid pcId, [FromQuery] bool enable)
     {
         var result = await _pcManagementService.MarkMaintenanceAsync(pcId, GetSuperAdminId(), enable);
@@ -63,7 +64,7 @@ public class PcManagementController : ControllerBase
     }
 
     [HttpDelete("{pcId:guid}")]
-    [Authorize(Roles = "SuperAdmin,Admin")]
+    [Authorize(Roles = Roles.SuperAdmin + "," + Roles.Admin)]
     public async Task<IActionResult> DeletePc(Guid pcId)
     {
         await _pcManagementService.DeletePcAsync(pcId, GetSuperAdminId());

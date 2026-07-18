@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useOverlaySocket } from '../../../contexts/OverlaySocketContext';
 import { MonitorPlay, Clock, IndianRupee, User, AlertTriangle, LogOut, CheckCircle2, X } from 'lucide-react';
 import { format } from 'date-fns';
+import { formatMoney } from '../../../utils/money';
 
 export default function SessionInfoScreen() {
   const { sessionData, pcId, connectionStatus, memberCheckout } = useOverlaySocket();
@@ -17,37 +18,20 @@ export default function SessionInfoScreen() {
 
   const { liveGamingCharge, liveTotalBill } = React.useMemo(() => {
     if (!sessionData) return { liveGamingCharge: 0, liveTotalBill: 0 };
-    const isPayAsYouGo = !sessionData.plannedDurationMin || sessionData.plannedDurationMin === 0;
-    if (isPayAsYouGo) {
-      const elapsedSeconds = Math.max(0, Math.floor((now - new Date(sessionData.sessionStart).getTime()) / 1000));
-      const elapsedMin = elapsedSeconds / 60;
-      const ratePerHour = sessionData.ratePerHour || 100;
-      const hours = Math.max(elapsedMin / 60, 1 / 60);
-      const gaming = elapsedMin <= 10 ? 0 : Number((hours * ratePerHour).toFixed(2));
-      return { liveGamingCharge: gaming, liveTotalBill: (sessionData.foodCharges || 0) + gaming };
-    }
-    return { liveGamingCharge: sessionData.gamingCharges || 0, liveTotalBill: sessionData.totalBill || 0 };
+    // Free during the branch's buffer window, then billed for exact elapsed time —
+    // for every session type (fixed package or Pay-As-You-Go), same as the backend.
+    const elapsedSeconds = Math.max(0, Math.floor((now - new Date(sessionData.sessionStart).getTime()) / 1000));
+    const elapsedMin = elapsedSeconds / 60;
+    const ratePerHour = sessionData.ratePerHour ?? 0;
+    const bufferMinutes = sessionData.bufferMinutes ?? 10;
+    const hours = Math.max(elapsedMin / 60, 1 / 60);
+    const gaming = elapsedMin <= bufferMinutes ? 0 : Number((hours * ratePerHour).toFixed(2));
+    return { liveGamingCharge: gaming, liveTotalBill: (sessionData.foodCharges || 0) + gaming };
   }, [sessionData, now]);
 
-  useEffect(() => {
-    if (sessionData?.memberLinked && sessionData?.gamingBalance != null) {
-      // Auto-close ONLY if gaming balance is exhausted
-      if (liveGamingCharge >= sessionData.gamingBalance && !isCheckingOut && !checkoutLoading) {
-        setIsCheckingOut(true);
-        setCheckoutLoading(true);
-        setCheckoutError("Gaming Balance exhausted! Session ended.");
-        localStorage.setItem('walletEmptyAlert', 'true');
-        
-        memberCheckout(sessionData.sessionId).then(res => {
-          if (!res?.success) {
-            setCheckoutError(`Gaming Balance exhausted! (${res?.error || 'Failed to checkout'})`);
-            setCheckoutLoading(false);
-            setTimeout(() => window.location.reload(), 3000);
-          }
-        });
-      }
-    }
-  }, [liveGamingCharge, sessionData, isCheckingOut, checkoutLoading, memberCheckout]);
+  // Wallet-exhausted auto-checkout itself now runs at the OverlaySocketContext provider
+  // level (see there) so it keeps working no matter which overlay screen is open — this
+  // component just reacts to sessionData going null / walletEmptyAlert being set afterward.
 
   const formatTime = (seconds) => {
     if (seconds <= 0) return '00:00:00';
@@ -171,11 +155,11 @@ export default function SessionInfoScreen() {
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col bg-bg-2 p-3 rounded-lg border border-border/50">
               <span className="text-text-3 text-[11px] uppercase tracking-wider font-bold mb-1">Gaming Balance</span>
-              <span className="text-neon-green font-mono font-bold text-lg">₹{Math.max(0, (sessionData.gamingBalance || 0) - liveGamingCharge).toFixed(2)}</span>
+              <span className="text-neon-green font-mono font-bold text-lg">₹{formatMoney(Math.max(0, (sessionData.gamingBalance || 0) - liveGamingCharge))}</span>
             </div>
             <div className="flex flex-col bg-bg-2 p-3 rounded-lg border border-border/50">
               <span className="text-text-3 text-[11px] uppercase tracking-wider font-bold mb-1">Food Balance</span>
-              <span className="text-neon-orange font-mono font-bold text-lg">₹{Math.max(0, (sessionData.foodBalance || 0) - (sessionData.foodCharges || 0)).toFixed(2)}</span>
+              <span className="text-neon-orange font-mono font-bold text-lg">₹{formatMoney(Math.max(0, (sessionData.foodBalance || 0) - (sessionData.foodCharges || 0)))}</span>
             </div>
           </div>
         </div>
@@ -197,15 +181,15 @@ export default function SessionInfoScreen() {
             <div className="space-y-4 mb-8">
               <div className="flex justify-between items-center p-3 rounded-lg bg-bg-2 border border-border">
                 <span className="text-text-2 font-body">Gaming Charges</span>
-                <span className="text-text font-mono font-bold">₹{(liveGamingCharge).toFixed(2)}</span>
+                <span className="text-text font-mono font-bold">₹{formatMoney(liveGamingCharge)}</span>
               </div>
               <div className="flex justify-between items-center p-3 rounded-lg bg-bg-2 border border-border">
                 <span className="text-text-2 font-body">Food Orders</span>
-                <span className="text-text font-mono font-bold">₹{sessionData.foodCharges?.toFixed(2) || '0.00'}</span>
+                <span className="text-text font-mono font-bold">₹{formatMoney(sessionData.foodCharges || 0)}</span>
               </div>
               <div className="flex justify-between items-center p-4 rounded-xl bg-accent/5 border border-accent/20 mt-4">
                 <span className="text-accent font-heading font-bold uppercase tracking-wider">Grand Total</span>
-                <span className="text-accent font-mono text-2xl font-bold">₹{liveTotalBill.toFixed(2)}</span>
+                <span className="text-accent font-mono text-2xl font-bold">₹{formatMoney(liveTotalBill)}</span>
               </div>
             </div>
 
@@ -266,7 +250,7 @@ export default function SessionInfoScreen() {
             <IndianRupee className="w-4 h-4 text-text-2" />
           </div>
           <div className="font-mono text-2xl font-bold text-text">
-            ₹{liveTotalBill.toFixed(2)}
+            ₹{formatMoney(liveTotalBill)}
           </div>
         </div>
 

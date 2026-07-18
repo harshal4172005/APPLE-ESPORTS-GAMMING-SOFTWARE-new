@@ -156,6 +156,19 @@ public class HubNotificationService : IHubNotificationService
         await InvalidateDashboardCacheAsync(branchId);
     }
 
+    public async Task BroadcastPricingProfileUpdateAsync(Guid branchId)
+    {
+        // Rate/buffer changed for this branch — push every connected screen (operator PC
+        // cards, billing counter, member overlays) to refetch immediately instead of waiting
+        // for their next poll, so pricing changes feel instant everywhere.
+        var payload = new { branchId };
+        await _pcStatusHub.Clients.Group($"branch:{branchId}")
+            .SendAsync("PricingProfileUpdated", new EventEnvelope<object>(payload));
+        await _pcStatusHub.Clients.Group("admin:all")
+            .SendAsync("PricingProfileUpdated", new EventEnvelope<object>(payload));
+        await InvalidateDashboardCacheAsync(branchId);
+    }
+
     public async Task SendUnlockCommandToAgentAsync(Guid pcId, int durationMinutes, string? customerName)
     {
         await _pcStatusHub.Clients.Group($"agent:{pcId}").SendAsync("UnlockSession", new

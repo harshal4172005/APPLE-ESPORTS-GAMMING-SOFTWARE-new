@@ -4,16 +4,20 @@ import { Home, Coffee, Clock, PhoneCall, Receipt } from 'lucide-react';
 import { useOverlaySocket } from '../../../contexts/OverlaySocketContext';
 
 export default function OverlayNavBar() {
-  const { emitActivity, pcId } = useOverlaySocket();
+  const { emitActivity, pcId, sessionData } = useOverlaySocket();
 
   const handleNavClick = (tabName) => {
     emitActivity(`nav_clicked_${tabName}`);
   };
 
+  // Extend only makes sense for a fixed-duration session with a slot to extend —
+  // Pay-As-You-Go already bills continuously for real time with no cap.
+  const isPayAsYouGo = !sessionData?.plannedDurationMin;
+
   const navItems = [
     { path: '', label: 'Home', icon: <Home className="w-5 h-5" />, name: 'home' },
     { path: 'food', label: 'Food', icon: <Coffee className="w-5 h-5" />, name: 'food' },
-    { path: 'extend', label: 'Extend', icon: <Clock className="w-5 h-5" />, name: 'extend' },
+    ...(isPayAsYouGo ? [] : [{ path: 'extend', label: 'Extend', icon: <Clock className="w-5 h-5" />, name: 'extend' }]),
     { path: 'call', label: 'Call', icon: <PhoneCall className="w-5 h-5" />, name: 'call' },
     { path: 'bill', label: 'Bill', icon: <Receipt className="w-5 h-5" />, name: 'bill' },
   ];

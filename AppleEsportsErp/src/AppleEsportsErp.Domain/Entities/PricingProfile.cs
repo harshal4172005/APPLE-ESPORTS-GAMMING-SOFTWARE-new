@@ -6,6 +6,7 @@ public class PricingProfile
     public Guid Id { get; set; }
     public string Name { get; set; } = null!;
     public decimal BaseHourlyRate { get; set; }
+    public int BufferMinutes { get; set; } = 10;
     public Guid BranchId { get; set; }
     public bool IsActive { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; }
