@@ -255,18 +255,27 @@ client/src/
 ### Option 1: Docker Compose (Recommended)
 
 ```bash
-# Clone the repository
-git clone https://github.com/MeetMoliya06/APPLE-ESPORTS-GAMMING-SOFTWARE-new.git
+# Clone the repository (always use this repo — not a teammate's older fork)
+git clone https://github.com/harshal4172005/APPLE-ESPORTS-GAMMING-SOFTWARE-new.git
 cd APPLE-ESPORTS-GAMMING-SOFTWARE-new
 
-# Start all services
-docker compose up -d
+# Create your environment file and fill in real values (DB password, JWT secrets, SMTP creds)
+cp .env.example .env
+
+# Build and start all services — always include --build so you get the CURRENT
+# code, not a stale cached image left over from a previous run
+docker compose up -d --build
 
 # Access the application
-# Frontend:  http://localhost:5173
+# Frontend:  http://localhost:8081        (served via nginx)
 # API:       http://localhost:5016
 # Swagger:   http://localhost:5016/swagger
 ```
+
+> **Getting "old version" or missing-feature behavior after a `git pull`?**
+> It's almost always one of these two things:
+> 1. You ran `docker compose up -d` without `--build` — Docker reused the old image instead of rebuilding from the new code. Always redeploy with `docker compose up -d --build`.
+> 2. You (or whoever set up your clone) are on the wrong remote — double-check `git remote -v` and make sure `origin`/`new-origin` points at `harshal4172005/APPLE-ESPORTS-GAMMING-SOFTWARE-new`, not an older fork.
 
 ### Option 2: Local Development
 
@@ -287,11 +296,11 @@ npm run dev
 
 ### First-Time Setup
 
-On first launch, the system auto-seeds:
+On first launch, the system auto-seeds (password for every seeded account is **`12345`** — change these before any real/public deployment):
 - **SuperAdmin account** — `admin@appleesports.com`
 - **4 Branches** — Adajan, Citylight, Katargam, Varachha
 - **106 Gaming PCs** — with zone assignments and pricing profiles
-- **8 Operators** — 2 per branch with branch-locked access
+- **8 Operators** — 2 per branch with branch-locked access (e.g. `ankur_adajan`)
 - **Test Member** — with pre-loaded wallet balance
 
 ---
