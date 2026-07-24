@@ -46,14 +46,14 @@ const NAV_ITEMS = [
     section: 'Finance',
     items: [
       {
-        label: 'Cash Register',
+        label: 'Cash Desk',
         route: '/app/cash-register',
         dashboard: DASHBOARDS.CASH_REGISTER,
         roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.OPERATOR],
         icon: 'M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z',
       },
       {
-        label: 'Cash Desk',
+        label: 'Cash Register',
         route: '/app/cash-desk',
         dashboard: DASHBOARDS.CASH_DESK,
         roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.OPERATOR],

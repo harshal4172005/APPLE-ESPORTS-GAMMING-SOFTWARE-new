@@ -16,14 +16,35 @@ public class MemberDto
 
     public decimal GamingBalance { get; set; }
     public decimal FoodBalance { get; set; }
+    public decimal TotalGamingTopUps { get; set; }
+    public decimal TotalGamingBonusEarned { get; set; }
+    public decimal TotalGamingSpend { get; set; }
+    public decimal TotalFoodSpend { get; set; }
     public int GamingPoints { get; set; }
     public int FoodPoints { get; set; }
     public int TotalPoints { get; set; }
 
     public DateTimeOffset JoinDate { get; set; }
     public DateTimeOffset? LastVisit { get; set; }
-    
+
     public string? HomeBranchName { get; set; }
+}
+
+/// <summary>Super Admin only: direct override of any value on a member's profile.
+/// Every field is optional — only the ones provided get changed. Balance changes
+/// (Gaming/Food) also create a "Correction" wallet transaction so there's an audit trail.</summary>
+public class AdminEditMemberValuesDto
+{
+    public decimal? GamingBalance { get; set; }
+    public decimal? FoodBalance { get; set; }
+    public decimal? TotalGamingTopUps { get; set; }
+    public decimal? TotalGamingBonusEarned { get; set; }
+    public decimal? TotalGamingSpend { get; set; }
+    public decimal? TotalFoodSpend { get; set; }
+    public int? GamingPoints { get; set; }
+    public int? FoodPoints { get; set; }
+    public int? TotalPoints { get; set; }
+    public string? Reason { get; set; }
 }
 
 public class RegisterMemberDto

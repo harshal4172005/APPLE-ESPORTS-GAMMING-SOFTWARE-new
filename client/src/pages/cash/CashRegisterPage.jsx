@@ -65,7 +65,7 @@ export default function CashRegisterPage() {
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
         <Calculator className="w-12 h-12 text-text-3 mb-4" />
         <h2 className="text-xl font-heading font-bold text-text mb-2">Select a Branch</h2>
-        <p className="text-text-2">You must select a branch to view the Cash Register.</p>
+        <p className="text-text-2">You must select a branch to view the Cash Desk.</p>
       </div>
     );
   }
@@ -95,7 +95,7 @@ export default function CashRegisterPage() {
     <div className="h-full flex flex-col">
       <div className="flex justify-between items-start mb-6">
         <PageHeader
-          title="Cash Register"
+          title="Cash Desk"
           subtitle="Live Cash Flow Control Center"
           icon="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"
           badge="LIVE"

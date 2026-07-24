@@ -23,6 +23,12 @@ public class Member
     public decimal GamingBalance { get; set; }
     public decimal FoodBalance { get; set; }
 
+    // Lifetime running counters (never decrease on spend) — for the "how much of my balance
+    // is real money vs bonus" breakdown shown in the Members UI. GamingBalance itself is the
+    // one spendable pool and always shrinks on spend, same as before.
+    public decimal TotalGamingTopUps { get; set; }
+    public decimal TotalGamingBonusEarned { get; set; }
+
     // SOP §15: Loyalty Point System — gaming/food separated
     public int GamingPoints { get; set; }
     public int FoodPoints { get; set; }

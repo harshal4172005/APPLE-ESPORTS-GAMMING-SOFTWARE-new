@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using AppleEsportsErp.Application.Constants;
 using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.DTOs.Wallets;
@@ -11,6 +12,11 @@ namespace AppleEsportsErp.Infrastructure.Services;
 
 public class WalletService : IWalletService
 {
+    // Fallback defaults, used only if Super Admin has never saved custom Wallet Settings.
+    // Live values are editable via WalletSettingsController → SystemConfig["wallet_topup_rules"].
+    private const decimal DefaultMinGamingTopUp = 500m;
+    private const decimal DefaultBonusPercent = 10m;
+
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
     private readonly IEmailService _emailService;
@@ -22,22 +28,71 @@ public class WalletService : IWalletService
         _emailService = emailService;
     }
 
-    public async Task<WalletTransactionDto> TopUpWalletAsync(Guid branchId, Guid operatorId, Guid shiftId, Guid memberId, TopUpWalletDto dto)
+    private async Task<(decimal minGamingTopUp, decimal defaultBonusPercent)> GetTopUpRulesAsync()
+    {
+        var config = await _unitOfWork.Repository<SystemConfig>().Query()
+            .FirstOrDefaultAsync(c => c.ConfigKey == SystemConfigKeys.WalletTopUpRules);
+
+        if (config == null)
+            return (DefaultMinGamingTopUp, DefaultBonusPercent);
+
+        try
+        {
+            var rules = JsonSerializer.Deserialize<WalletTopUpRulesDto>(config.ConfigValue);
+            return rules != null
+                ? (rules.MinGamingTopUp, rules.DefaultBonusPercent)
+                : (DefaultMinGamingTopUp, DefaultBonusPercent);
+        }
+        catch
+        {
+            return (DefaultMinGamingTopUp, DefaultBonusPercent);
+        }
+    }
+
+    public async Task<WalletTransactionDto> TopUpWalletAsync(Guid branchId, Guid operatorId, Guid shiftId, Guid memberId, TopUpWalletDto dto, bool isSuperAdmin)
     {
         if (dto.Amount <= 0)
             throw new AppException("Top-up amount must be greater than zero.");
 
+        var (minGamingTopUp, defaultBonusPercent) = await GetTopUpRulesAsync();
+
+        var isGaming = dto.TargetWallet == WalletType.Gaming;
+
+        if (isGaming && dto.Amount < minGamingTopUp)
+            throw new AppException($"Minimum Gaming wallet top-up is ₹{minGamingTopUp:0}.");
+
+        var isSplit = dto.PaymentType.Equals("Split", StringComparison.OrdinalIgnoreCase);
+        if (isSplit)
+        {
+            var splitTotal = (dto.CashAmount ?? 0) + (dto.OnlineAmount ?? 0);
+            if (Math.Abs(splitTotal - dto.Amount) > 0.01m)
+                throw new AppException("Split cash + online amounts must add up to the total top-up amount.");
+        }
+
         var member = await _unitOfWork.Repository<Member>().GetByIdAsync(memberId)
             ?? throw new NotFoundException("Member not found.");
 
-        var isGaming = dto.TargetWallet == WalletType.Gaming;
+        // Gaming top-ups earn a bonus (gaming-only, no equivalent for Food) — the admin-configured
+        // default rate, unless Super Admin overrides it for this specific top-up.
+        var bonusRate = (isSuperAdmin && dto.BonusPercentOverride.HasValue)
+            ? dto.BonusPercentOverride.Value / 100m
+            : defaultBonusPercent / 100m;
+        var bonusAmount = isGaming ? Math.Round(dto.Amount * bonusRate, 2) : 0m;
+        var totalCredit = dto.Amount + bonusAmount;
+
         var balanceBefore = isGaming ? member.GamingBalance : member.FoodBalance;
-        
+
         if (isGaming)
-            member.GamingBalance += dto.Amount;
+        {
+            member.GamingBalance += totalCredit;
+            member.TotalGamingTopUps += dto.Amount;
+            member.TotalGamingBonusEarned += bonusAmount;
+        }
         else
-            member.FoodBalance += dto.Amount;
-            
+        {
+            member.FoodBalance += totalCredit;
+        }
+
         var balanceAfter = isGaming ? member.GamingBalance : member.FoodBalance;
 
         _unitOfWork.Repository<Member>().Update(member);
@@ -53,8 +108,9 @@ public class WalletService : IWalletService
             BalanceBefore = balanceBefore,
             BalanceAfter = balanceAfter,
             PaymentType = dto.PaymentType,
-            CashAmount = dto.PaymentType.Equals("Cash", StringComparison.OrdinalIgnoreCase) ? dto.Amount : 0,
-            OnlineAmount = dto.PaymentType.Equals("Online", StringComparison.OrdinalIgnoreCase) ? dto.Amount : 0,
+            CashAmount = isSplit ? (dto.CashAmount ?? 0) : (dto.PaymentType.Equals("Cash", StringComparison.OrdinalIgnoreCase) ? dto.Amount : 0),
+            OnlineAmount = isSplit ? (dto.OnlineAmount ?? 0) : (dto.PaymentType.Equals("Online", StringComparison.OrdinalIgnoreCase) ? dto.Amount : 0),
+            BonusAmount = bonusAmount,
             Reason = dto.Reason ?? "Manual Top-Up",
             CreatedAt = DateTimeOffset.UtcNow
         };
@@ -233,6 +289,7 @@ public class WalletService : IWalletService
             Action = t.Action,
             TargetWallet = t.TargetWallet,
             Amount = t.Amount,
+            BonusAmount = t.BonusAmount,
             BalanceBefore = t.BalanceBefore,
             BalanceAfter = t.BalanceAfter,
             PaymentType = t.PaymentType,

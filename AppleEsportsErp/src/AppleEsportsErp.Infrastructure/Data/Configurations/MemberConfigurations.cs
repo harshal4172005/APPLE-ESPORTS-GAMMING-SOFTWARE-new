@@ -17,7 +17,9 @@ public class MemberConfiguration : IEntityTypeConfiguration<Member>
         builder.HasIndex(e => e.MemberNumber).IsUnique();
         builder.Property(e => e.FullName).HasMaxLength(100).IsRequired();
         builder.Property(e => e.MobileNumber).HasMaxLength(20).IsRequired();
-        builder.HasIndex(e => e.MobileNumber).IsUnique().HasDatabaseName("idx_members_mobile");
+        // Not unique: household members can share the same phone number as long as their name differs
+        // (uniqueness of name+phone+email is enforced in MemberService, not at the DB level).
+        builder.HasIndex(e => e.MobileNumber).HasDatabaseName("idx_members_mobile");
         builder.Property(e => e.Email).HasMaxLength(255);
         builder.Property(e => e.Username).HasMaxLength(50);
         builder.HasIndex(e => e.Username).IsUnique().HasFilter("\"Username\" IS NOT NULL").HasDatabaseName("IX_members_Username");
@@ -27,6 +29,8 @@ public class MemberConfiguration : IEntityTypeConfiguration<Member>
                            v => Enum.Parse<MemberStatus>(v, true));
         builder.Property(e => e.GamingBalance).HasPrecision(10, 2).HasDefaultValue(0m);
         builder.Property(e => e.FoodBalance).HasPrecision(10, 2).HasDefaultValue(0m);
+        builder.Property(e => e.TotalGamingTopUps).HasPrecision(10, 2).HasDefaultValue(0m);
+        builder.Property(e => e.TotalGamingBonusEarned).HasPrecision(10, 2).HasDefaultValue(0m);
         builder.Property(e => e.TotalGamingSpend).HasPrecision(10, 2).HasDefaultValue(0m);
         builder.Property(e => e.TotalFoodSpend).HasPrecision(10, 2).HasDefaultValue(0m);
         builder.Property(e => e.JoinDate).HasDefaultValueSql("NOW()");
@@ -64,6 +68,7 @@ public class WalletTransactionConfiguration : IEntityTypeConfiguration<WalletTra
         builder.Property(e => e.PaymentType).HasMaxLength(20);
         builder.Property(e => e.CashAmount).HasPrecision(10, 2).HasDefaultValue(0m);
         builder.Property(e => e.OnlineAmount).HasPrecision(10, 2).HasDefaultValue(0m);
+        builder.Property(e => e.BonusAmount).HasPrecision(10, 2).HasDefaultValue(0m);
         builder.Property(e => e.Reason).HasColumnType("text");
         builder.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
 

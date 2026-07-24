@@ -181,7 +181,7 @@ export default function OverlayMemberLoginScreen() {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-text-2 mb-1.5 font-body tracking-wide">MOBILE OR ID</label>
+              <label className="block text-xs font-medium text-text-2 mb-1.5 font-body tracking-wide">USERNAME OR EMAIL</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <UserCheck className="h-4 w-4 text-text-3" />
@@ -192,7 +192,7 @@ export default function OverlayMemberLoginScreen() {
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 className="input w-full pl-9 py-2 text-sm focus:border-accent focus:ring-accent/30 bg-bg-3"
-                placeholder="e.g. 9876543210"
+                placeholder="e.g. rahul123 or member@example.com"
               />
             </div>
           </div>

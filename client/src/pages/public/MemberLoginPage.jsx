@@ -52,7 +52,7 @@ export default function MemberLoginPage() {
     try {
       // Direct API call to the new Member login endpoint
       const response = await axios.post('/api/members/login', {
-        identifier: identifier, // The backend handles resolving if it's Mobile or MemberNumber
+        identifier: identifier, // Username or Email — backend matches by password if shared
         password
       });
 
@@ -164,7 +164,7 @@ export default function MemberLoginPage() {
           ) : (
             <form onSubmit={handleSubmit} className="space-y-6">
               <div>
-                <label className="block text-sm font-medium text-text-muted mb-2 font-inter">Mobile No. or Member ID</label>
+                <label className="block text-sm font-medium text-text-muted mb-2 font-inter">Username or Email</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <UserCheck className="h-5 w-5 text-text-muted" />
@@ -175,7 +175,7 @@ export default function MemberLoginPage() {
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
                   className="input w-full pl-10 bg-black/20 border-glass-border focus:border-neon-secondary/50 focus:ring-neon-secondary/30"
-                  placeholder="e.g. 9876543210 or MEM-2606-0001"
+                  placeholder="e.g. rahul123 or member@example.com"
                 />
               </div>
             </div>

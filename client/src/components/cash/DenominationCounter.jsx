@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { Calculator, AlertTriangle, ShieldCheck } from 'lucide-react';
 import api from '../../config/api';
+import { generateIdempotencyKey } from '../../utils/idempotency';
 
 const DENOMINATIONS = [
   { key: 'notes2000', label: '₹2000', value: 2000, type: 'note' },
@@ -66,7 +67,7 @@ export default function DenominationCounter({ expectedTotal, onVerified }) {
       };
 
       await api.post('/cash-desk/denominations', payload, {
-        headers: { 'X-Idempotency-Key': crypto.randomUUID() }
+        headers: { 'X-Idempotency-Key': generateIdempotencyKey() }
       });
       onVerified();
     } catch (err) {

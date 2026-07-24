@@ -522,7 +522,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
     }
     try {
       const endpoint = approved ? 'approve-wallet' : 'decline-wallet';
-      const res = await axios.post(`/api/public/bills/${billId}/${endpoint}`, {
+      const res = await api.post(`/public/bills/${billId}/${endpoint}`, {
         approvalToken: walletApprovalRequest.approvalToken
       });
       // If approved successfully, delay clearing the session to show a success message
@@ -546,7 +546,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
     if (!token) return { success: false, error: 'Not logged in' };
 
     try {
-      const response = await axios.post(`/api/public/sessions/${sessionId}/member-checkout`, {}, {
+      const response = await api.post(`/public/sessions/${sessionId}/member-checkout`, {}, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

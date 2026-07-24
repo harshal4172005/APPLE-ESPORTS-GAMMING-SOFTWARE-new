@@ -15,7 +15,9 @@ public static class Dashboards
     public const string PcStatus = "pc_status";
     public const string Eod = "eod";
     public const string Settings = "settings";
+    public const string WalletSettings = "wallet_settings";
+    public const string MemberValueEdit = "member_value_edit";
 
     /// <summary>SOP §19: Super Admin-only dashboards</summary>
-    public static readonly string[] AdminOnly = { PcStatus, Settings };
+    public static readonly string[] AdminOnly = { PcStatus, Settings, WalletSettings, MemberValueEdit };
 }

@@ -3,9 +3,10 @@ import api from '../config/api';
 const generateIdempotencyKey = () =>
   Math.random().toString(36).substring(2) + Date.now().toString(36);
 
-export const getMembers = (branchId, search, page = 1, pageSize = 50) => {
+export const getMembers = (branchId, search, page = 1, pageSize = 50, includeDeleted = false) => {
   const params = { page, pageSize };
   if (search) params.search = search;
+  if (includeDeleted) params.includeDeleted = true;
   // BranchIsolation filter: SuperAdmin needs branchId query param; operators get it from JWT
   if (branchId) params.branchId = branchId;
   return api.get('/members', { params }).then(r => r.data?.data);
@@ -22,6 +23,9 @@ export const registerMember = (dto) =>
 
 export const updateMember = (id, dto) =>
   api.put(`/members/${id}`, dto).then(r => r.data?.data);
+
+export const adminEditMemberValues = (id, dto) =>
+  api.put(`/members/${id}/admin-edit`, dto).then(r => r.data?.data);
 
 export const getWalletHistory = (memberId, page = 1, pageSize = 30) =>
   api.get(`/wallets/${memberId}`, { params: { page, pageSize } }).then(r => r.data?.data);

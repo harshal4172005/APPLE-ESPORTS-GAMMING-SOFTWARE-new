@@ -27,11 +27,14 @@ public class MemberService : IMemberService
         _emailService = emailService;
     }
 
-    public async Task<PaginatedResult<MemberDto>> GetMembersAsync(Guid branchId, string? search, int page = 1, int pageSize = 50)
+    public async Task<PaginatedResult<MemberDto>> GetMembersAsync(Guid branchId, string? search, int page = 1, int pageSize = 50, bool includeDeleted = false)
     {
         var query = _unitOfWork.Repository<Member>().Query()
             .Include(m => m.HomeBranch)
-            .Where(m => m.Status != MemberStatus.Suspended);
+            .AsQueryable();
+
+        if (!includeDeleted)
+            query = query.Where(m => m.Status != MemberStatus.Suspended);
 
         if (!string.IsNullOrWhiteSpace(search))
         {
@@ -75,28 +78,25 @@ public class MemberService : IMemberService
 
     public async Task<MemberDto> RegisterMemberAsync(Guid branchId, Guid operatorId, RegisterMemberDto dto)
     {
-        var exists = await _unitOfWork.Repository<Member>().Query()
-            .AnyAsync(m => m.MobileNumber == dto.MobileNumber);
-
-        if (exists)
-            throw new AppException("A member with this mobile number already exists.");
-
-        // Email uniqueness check
         if (!string.IsNullOrWhiteSpace(dto.Email))
-        {
-            var emailTaken = await _unitOfWork.Repository<Member>().Query()
-                .AnyAsync(m => m.Email == dto.Email.Trim().ToLowerInvariant());
-            if (emailTaken)
-                throw new AppException($"Email '{dto.Email}' is already registered to another member.");
-            
             dto.Email = dto.Email.Trim().ToLowerInvariant();
-        }
 
-        // Username uniqueness check
+        // Full Name must be unique among ACTIVE members — phone/email can be shared freely
+        // (e.g. a sibling with no phone of their own uses a family member's phone + email).
+        // Deleted (Suspended) members free up their name for reuse by a new member.
+        var normalizedName = dto.FullName.Trim().ToLowerInvariant();
+        var nameTaken = await _unitOfWork.Repository<Member>().Query()
+            .AnyAsync(m => m.Status != MemberStatus.Suspended && m.FullName.ToLower() == normalizedName);
+
+        if (nameTaken)
+            throw new AppException($"A member named '{dto.FullName}' already exists. If this is meant to be a different person, use a different name.");
+
+        // Username uniqueness check — deleted (Suspended) members had their Username cleared
+        // on delete (see DeleteMemberAsync), so this only ever matches active members anyway.
         if (!string.IsNullOrWhiteSpace(dto.Username))
         {
             var usernameTaken = await _unitOfWork.Repository<Member>().Query()
-                .AnyAsync(m => m.Username == dto.Username.Trim().ToLowerInvariant());
+                .AnyAsync(m => m.Status != MemberStatus.Suspended && m.Username == dto.Username.Trim().ToLowerInvariant());
             if (usernameTaken)
                 throw new AppException($"Username '{dto.Username}' is already taken.");
         }
@@ -183,23 +183,16 @@ public class MemberService : IMemberService
         var member = await _unitOfWork.Repository<Member>().GetByIdAsync(id)
             ?? throw new NotFoundException("Member not found.");
 
-        // Check if new mobile belongs to someone else
-        var duplicate = await _unitOfWork.Repository<Member>().Query()
-            .AnyAsync(m => m.MobileNumber == dto.MobileNumber && m.Id != id);
-
-        if (duplicate)
-            throw new AppException("The specified mobile number is already in use by another member.");
-
-        // Check if email belongs to someone else
         if (!string.IsNullOrWhiteSpace(dto.Email))
-        {
-            var emailTaken = await _unitOfWork.Repository<Member>().Query()
-                .AnyAsync(m => m.Email == dto.Email.Trim().ToLowerInvariant() && m.Id != id);
-            if (emailTaken)
-                throw new AppException($"Email '{dto.Email}' is already registered to another member.");
-                
             dto.Email = dto.Email.Trim().ToLowerInvariant();
-        }
+
+        // Same rule as registration: Full Name must be unique among active members.
+        var normalizedName = dto.FullName.Trim().ToLowerInvariant();
+        var nameTaken = await _unitOfWork.Repository<Member>().Query()
+            .AnyAsync(m => m.Id != id && m.Status != MemberStatus.Suspended && m.FullName.ToLower() == normalizedName);
+
+        if (nameTaken)
+            throw new AppException($"A member named '{dto.FullName}' already exists. If this is meant to be a different person, use a different name.");
 
         member.FullName = dto.FullName;
         member.MobileNumber = dto.MobileNumber;
@@ -218,7 +211,7 @@ public class MemberService : IMemberService
             {
                 var newUsername = dto.Username.Trim().ToLowerInvariant();
                 var usernameTaken = await _unitOfWork.Repository<Member>().Query()
-                    .AnyAsync(m => m.Username == newUsername && m.Id != id);
+                    .AnyAsync(m => m.Status != MemberStatus.Suspended && m.Username == newUsername && m.Id != id);
                 if (usernameTaken)
                     throw new AppException($"Username '{dto.Username}' is already taken.");
 
@@ -257,6 +250,10 @@ public class MemberService : IMemberService
         // Soft delete: set status to Suspended
         member.Status = MemberStatus.Suspended;
         member.UpdatedAt = DateTimeOffset.UtcNow;
+        // Free up the Username for reuse immediately (there's a real DB-level unique constraint
+        // on Username, not just the app-level check) — a deleted member also shouldn't retain login access.
+        member.Username = null;
+        member.PasswordHash = null;
 
         _unitOfWork.Repository<Member>().Update(member);
 
@@ -304,6 +301,87 @@ public class MemberService : IMemberService
         await SendNotificationAsync($"Member Suspended/Deleted: {member.FullName} (ID: {member.MemberNumber})", emailBody);
     }
 
+    /// <summary>Super Admin only: direct override of any value on a member's profile.
+    /// Gaming/Food balance changes also create a "Correction" wallet transaction for an audit trail;
+    /// every other field just changes directly, with a single audit log entry summarizing the edit.</summary>
+    public async Task<MemberDto> AdminEditValuesAsync(Guid branchId, Guid adminId, Guid id, AdminEditMemberValuesDto dto)
+    {
+        var member = await _unitOfWork.Repository<Member>().GetByIdAsync(id)
+            ?? throw new NotFoundException("Member not found.");
+
+        var changes = new Dictionary<string, object>();
+
+        async Task ApplyBalanceChangeAsync(WalletType wallet, decimal? newValue)
+        {
+            if (!newValue.HasValue) return;
+            var before = wallet == WalletType.Gaming ? member.GamingBalance : member.FoodBalance;
+            if (newValue.Value == before) return;
+
+            if (wallet == WalletType.Gaming) member.GamingBalance = newValue.Value;
+            else member.FoodBalance = newValue.Value;
+
+            changes[$"{wallet}Balance"] = new { before, after = newValue.Value };
+
+            await _unitOfWork.Repository<WalletTransaction>().AddAsync(new WalletTransaction
+            {
+                MemberId = id,
+                BranchId = branchId,
+                AdminId = adminId,
+                Action = WalletAction.Correction,
+                TargetWallet = wallet,
+                Amount = newValue.Value - before,
+                BalanceBefore = before,
+                BalanceAfter = newValue.Value,
+                PaymentType = "Admin Edit",
+                CashAmount = 0,
+                OnlineAmount = 0,
+                BonusAmount = 0,
+                Reason = dto.Reason ?? "Super Admin direct balance edit",
+                CreatedAt = DateTimeOffset.UtcNow
+            });
+        }
+
+        await ApplyBalanceChangeAsync(WalletType.Gaming, dto.GamingBalance);
+        await ApplyBalanceChangeAsync(WalletType.Food, dto.FoodBalance);
+
+        void ApplyFieldChange<T>(string name, T? newValue, Action<T> setter, T currentValue) where T : struct
+        {
+            if (!newValue.HasValue || EqualityComparer<T>.Default.Equals(newValue.Value, currentValue)) return;
+            changes[name] = new { before = currentValue, after = newValue.Value };
+            setter(newValue.Value);
+        }
+
+        ApplyFieldChange("TotalGamingTopUps", dto.TotalGamingTopUps, v => member.TotalGamingTopUps = v, member.TotalGamingTopUps);
+        ApplyFieldChange("TotalGamingBonusEarned", dto.TotalGamingBonusEarned, v => member.TotalGamingBonusEarned = v, member.TotalGamingBonusEarned);
+        ApplyFieldChange("TotalGamingSpend", dto.TotalGamingSpend, v => member.TotalGamingSpend = v, member.TotalGamingSpend);
+        ApplyFieldChange("TotalFoodSpend", dto.TotalFoodSpend, v => member.TotalFoodSpend = v, member.TotalFoodSpend);
+        ApplyFieldChange("GamingPoints", dto.GamingPoints, v => member.GamingPoints = v, member.GamingPoints);
+        ApplyFieldChange("FoodPoints", dto.FoodPoints, v => member.FoodPoints = v, member.FoodPoints);
+        ApplyFieldChange("TotalPoints", dto.TotalPoints, v => member.TotalPoints = v, member.TotalPoints);
+
+        if (changes.Count == 0)
+            return MapToDto(member);
+
+        member.UpdatedAt = DateTimeOffset.UtcNow;
+        _unitOfWork.Repository<Member>().Update(member);
+
+        await _auditService.LogAsync(new AuditEntry
+        {
+            OperatorId = adminId,
+            UserRole = "SuperAdmin",
+            UserName = "System",
+            Action = "admin_member_value_edit",
+            BranchId = branchId,
+            TargetType = "member",
+            TargetId = member.Id,
+            Details = new { MemberNumber = member.MemberNumber, Changes = changes, Reason = dto.Reason }
+        });
+
+        await _unitOfWork.CommitTransactionAsync();
+
+        return MapToDto(member);
+    }
+
     private async Task SendNotificationAsync(string subject, string body)
     {
         try 
@@ -329,19 +407,23 @@ public class MemberService : IMemberService
     public async Task<MemberLoginResponseDto> LoginMemberAsync(MemberLoginDto dto)
     {
         var identifier = dto.Identifier.Trim().ToLowerInvariant();
-        var member = await _unitOfWork.Repository<Member>().Query()
-            .FirstOrDefaultAsync(m => (m.Username != null && m.Username.ToLower() == identifier) || 
-                                      (m.MobileNumber != null && m.MobileNumber == identifier) || 
-                                      (m.Email != null && m.Email.ToLower() == identifier));
 
-        if (member == null || string.IsNullOrEmpty(member.PasswordHash))
+        // Login is by Username or Email + password only (no phone number — phone/email can
+        // now be shared between household members, so the password is what disambiguates
+        // which exact account this is).
+        var candidates = await _unitOfWork.Repository<Member>().Query()
+            .Where(m => (m.Username != null && m.Username.ToLower() == identifier) ||
+                        (m.Email != null && m.Email.ToLower() == identifier))
+            .ToListAsync();
+
+        var member = candidates.FirstOrDefault(m =>
+            !string.IsNullOrEmpty(m.PasswordHash) && BCryptNet.Verify(dto.Password, m.PasswordHash));
+
+        if (member == null)
             throw new AuthenticationException("Invalid username or password.", "INVALID_CREDENTIALS");
 
         if (member.Status != MemberStatus.Active)
             throw new AuthorizationException("Member account is inactive.", "ACCOUNT_INACTIVE");
-
-        if (!BCryptNet.Verify(dto.Password, member.PasswordHash))
-            throw new AuthenticationException("Invalid username or password.", "INVALID_CREDENTIALS");
 
         var claims = new Dictionary<string, string>
         {
@@ -378,6 +460,10 @@ public class MemberService : IMemberService
             Status = m.Status,
             GamingBalance = m.GamingBalance,
             FoodBalance = m.FoodBalance,
+            TotalGamingTopUps = m.TotalGamingTopUps,
+            TotalGamingBonusEarned = m.TotalGamingBonusEarned,
+            TotalGamingSpend = m.TotalGamingSpend,
+            TotalFoodSpend = m.TotalFoodSpend,
             GamingPoints = m.GamingPoints,
             FoodPoints = m.FoodPoints,
             TotalPoints = m.TotalPoints,

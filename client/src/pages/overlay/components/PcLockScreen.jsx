@@ -395,7 +395,7 @@ export default function PcLockScreen() {
 
       <form onSubmit={handleLogin} className="space-y-6">
         <div>
-          <label className="block text-sm font-medium text-text-2 mb-2 font-body tracking-wide">MOBILE NO. OR ID</label>
+          <label className="block text-sm font-medium text-text-2 mb-2 font-body tracking-wide">USERNAME OR EMAIL</label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <UserCheck className="h-5 w-5 text-text-3" />
@@ -406,7 +406,7 @@ export default function PcLockScreen() {
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
               className="input w-full pl-10 focus:border-accent focus:ring-accent/30"
-              placeholder="e.g. 9876543210"
+              placeholder="e.g. rahul123 or member@example.com"
             />
           </div>
         </div>

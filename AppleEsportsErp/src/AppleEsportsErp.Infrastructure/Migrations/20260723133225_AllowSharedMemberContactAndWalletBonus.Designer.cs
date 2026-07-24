@@ -3,6 +3,7 @@ using System;
 using AppleEsportsErp.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace AppleEsportsErp.Infrastructure.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260723133225_AllowSharedMemberContactAndWalletBonus")]
+    partial class AllowSharedMemberContactAndWalletBonus
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1369,19 +1372,7 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .HasColumnType("numeric(10,2)")
                         .HasDefaultValue(0m);
 
-                    b.Property<decimal>("TotalGamingBonusEarned")
-                        .ValueGeneratedOnAdd()
-                        .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)")
-                        .HasDefaultValue(0m);
-
                     b.Property<decimal>("TotalGamingSpend")
-                        .ValueGeneratedOnAdd()
-                        .HasPrecision(10, 2)
-                        .HasColumnType("numeric(10,2)")
-                        .HasDefaultValue(0m);
-
-                    b.Property<decimal>("TotalGamingTopUps")
                         .ValueGeneratedOnAdd()
                         .HasPrecision(10, 2)
                         .HasColumnType("numeric(10,2)")

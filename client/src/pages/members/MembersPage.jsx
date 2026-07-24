@@ -4,15 +4,16 @@ import {
   X, Banknote, CreditCard, AlertTriangle,
   UserPlus, Edit2, Check, ArrowUpRight, ArrowDownRight,
   Gamepad2, Coffee, RefreshCw, Trash2, Receipt, Eye, EyeOff,
-  KeyRound, User as UserIcon, ShieldCheck, ShieldAlert,
+  KeyRound, User as UserIcon, ShieldCheck, ShieldAlert, Gift, SlidersHorizontal, Download,
 } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import { useToast } from '../../components/ui/Toast';
 import {
   getMembers, getMemberById, registerMember, updateMember,
-  getWalletHistory, topUpWallet, deleteMember,
+  getWalletHistory, topUpWallet, adminEditMemberValues, deleteMember,
 } from '../../api/members.api';
+import { getWalletTopUpRules } from '../../api/settings.api';
 
 const TOPUP_PRESETS = [200, 500, 1000, 2000, 5000];
 
@@ -272,17 +273,41 @@ function RegisterDrawer({ open, onClose, onSuccess, editMember }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // TopUpModal
 // ═══════════════════════════════════════════════════════════════════════════════
-function TopUpModal({ member, onClose, onSuccess }) {
+const BONUS_PRESETS = [10, 15, 20, 25, 30];
+
+function TopUpModal({ member, isSuperAdmin, onClose, onSuccess }) {
   const toast = useToast();
   const [amount, setAmount] = useState('');
   const [paymentType, setPaymentType] = useState('Cash');
+  const [splitCash, setSplitCash] = useState('');
+  const [splitOnline, setSplitOnline] = useState('');
   const [walletType, setWalletType] = useState(member?.tempTarget || 'Gaming');
+  const [topUpRules, setTopUpRules] = useState({ minGamingTopUp: 500, defaultBonusPercent: 10 });
+  const [bonusPercent, setBonusPercent] = useState(10);
+  const [isCustomBonus, setIsCustomBonus] = useState(false);
+  const [customBonusInput, setCustomBonusInput] = useState('');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  useEffect(() => {
+    getWalletTopUpRules()
+      .then(res => {
+        if (res?.data) {
+          setTopUpRules(res.data);
+          setBonusPercent(res.data.defaultBonusPercent);
+        }
+      })
+      .catch(() => {}); // fall back to the 500/10 defaults already in state
+  }, []);
+
   const numAmount = parseFloat(amount) || 0;
-  const isValid = numAmount >= 10;
+  const numSplitCash = parseFloat(splitCash) || 0;
+  const numSplitOnline = parseFloat(splitOnline) || 0;
+  const splitRemaining = numAmount - numSplitCash - numSplitOnline;
+  const minAmount = walletType === 'Gaming' ? topUpRules.minGamingTopUp : 10;
+  const isValid = numAmount >= minAmount && (paymentType !== 'Split' || Math.abs(splitRemaining) < 0.01);
+  const effectiveBonusPercent = walletType === 'Gaming' ? bonusPercent : 0;
 
   const handleTopUp = async () => {
     if (!isValid) return;
@@ -293,6 +318,8 @@ function TopUpModal({ member, onClose, onSuccess }) {
         targetWallet: walletType,
         amount: numAmount,
         paymentType,
+        ...(paymentType === 'Split' && { cashAmount: numSplitCash, onlineAmount: numSplitOnline }),
+        ...(isSuperAdmin && walletType === 'Gaming' && bonusPercent !== topUpRules.defaultBonusPercent && { bonusPercentOverride: bonusPercent }),
         reason: reason.trim() || 'Manual top-up',
       });
       toast.success(`₹${numAmount} added to ${member.fullName}'s ${walletType} wallet`);
@@ -331,17 +358,20 @@ function TopUpModal({ member, onClose, onSuccess }) {
           )}
 
           <div>
-            <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-2">Amount (₹)</label>
+            <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-2">Amount (₹) · Min ₹{minAmount}</label>
             <div className="relative">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 font-bold">₹</span>
               <input
-                type="number" min="10"
+                type="number" min={minAmount}
                 value={amount}
                 onChange={e => setAmount(e.target.value)}
                 placeholder="0"
                 className="w-full bg-bg-3 border border-border text-text rounded-lg pl-7 pr-3 py-2.5 font-mono text-xl focus:border-neon-blue focus:ring-1 focus:ring-neon-blue transition-all placeholder:text-text-3"
               />
             </div>
+            {numAmount > 0 && numAmount < minAmount && (
+              <p className="text-[11px] text-neon-red mt-1.5">Minimum {walletType} top-up is ₹{minAmount}</p>
+            )}
 
             <div className="flex gap-2 mt-3">
               <label className="flex items-center gap-1.5 text-xs text-text-2 cursor-pointer">
@@ -373,10 +403,11 @@ function TopUpModal({ member, onClose, onSuccess }) {
 
           <div>
             <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-2">Payment Method</label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {[
                 { val: 'Cash',   Icon: Banknote,   active: 'bg-neon-blue/15 border-neon-blue text-neon-blue' },
                 { val: 'Online', Icon: CreditCard, active: 'bg-neon-purple/15 border-neon-purple text-neon-purple' },
+                { val: 'Split',  Icon: ArrowUpRight, active: 'bg-neon-orange/15 border-neon-orange text-neon-orange' },
               ].map(({ val, Icon, active }) => (
                 <button
                   key={val}
@@ -389,7 +420,89 @@ function TopUpModal({ member, onClose, onSuccess }) {
                 </button>
               ))}
             </div>
+
+            {paymentType === 'Split' && (
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <div>
+                  <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-1.5">Cash (₹)</label>
+                  <input
+                    type="number" min="0"
+                    value={splitCash}
+                    onChange={e => setSplitCash(e.target.value)}
+                    placeholder="0"
+                    className="w-full bg-bg-3 border border-border text-text rounded-lg px-3 py-2 font-mono text-sm focus:border-neon-blue focus:ring-1 focus:ring-neon-blue transition-all placeholder:text-text-3"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-1.5">Online (₹)</label>
+                  <input
+                    type="number" min="0"
+                    value={splitOnline}
+                    onChange={e => setSplitOnline(e.target.value)}
+                    placeholder="0"
+                    className="w-full bg-bg-3 border border-border text-text rounded-lg px-3 py-2 font-mono text-sm focus:border-neon-purple focus:ring-1 focus:ring-neon-purple transition-all placeholder:text-text-3"
+                  />
+                </div>
+                {Math.abs(splitRemaining) >= 0.01 && (
+                  <p className="col-span-2 text-[11px] text-neon-orange font-mono">
+                    {splitRemaining > 0 ? `₹${splitRemaining.toFixed(0)} remaining` : `₹${Math.abs(splitRemaining).toFixed(0)} over the total`}
+                  </p>
+                )}
+              </div>
+            )}
           </div>
+
+          {/* Bonus % override — SuperAdmin only, Gaming wallet only */}
+          {isSuperAdmin && walletType === 'Gaming' && (
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-[10px] text-text-3 font-bold uppercase tracking-widest flex items-center gap-1">
+                  <Gift className="w-3 h-3" /> Bonus Boost
+                  <span className="text-accent/60 ml-1 normal-case">(Admin Only)</span>
+                </span>
+                {bonusPercent !== topUpRules.defaultBonusPercent && (
+                  <span className="text-neon-orange text-[10px] font-bold font-mono">{bonusPercent}% applied</span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {BONUS_PRESETS.map(pct => (
+                  <button
+                    key={pct}
+                    onClick={() => { setIsCustomBonus(false); setBonusPercent(pct); }}
+                    className={`px-3 py-1 rounded border text-[11px] font-bold uppercase tracking-wider transition-all ${
+                      !isCustomBonus && bonusPercent === pct
+                        ? 'bg-neon-orange/20 border-neon-orange text-neon-orange'
+                        : 'bg-bg-3 border-border text-text-3 hover:border-neon-orange/50 hover:text-neon-orange/80'
+                    }`}
+                  >
+                    {pct}% {pct === topUpRules.defaultBonusPercent ? '(Default)' : ''}
+                  </button>
+                ))}
+                <button
+                  onClick={() => { setIsCustomBonus(true); if (customBonusInput) setBonusPercent(parseFloat(customBonusInput) || 0); }}
+                  className={`px-3 py-1 rounded border text-[11px] font-bold uppercase tracking-wider transition-all ${
+                    isCustomBonus
+                      ? 'bg-neon-orange/20 border-neon-orange text-neon-orange'
+                      : 'bg-bg-3 border-border text-text-3 hover:border-neon-orange/50 hover:text-neon-orange/80'
+                  }`}
+                >
+                  Custom
+                </button>
+              </div>
+              {isCustomBonus && (
+                <div className="relative mt-2">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-text-3 font-bold">%</span>
+                  <input
+                    type="number" min="0" step="0.1" autoFocus
+                    value={customBonusInput}
+                    onChange={e => { setCustomBonusInput(e.target.value); setBonusPercent(parseFloat(e.target.value) || 0); }}
+                    placeholder="e.g. 12.5"
+                    className="w-full bg-bg-3 border border-border text-text rounded-lg pl-7 pr-3 py-2 font-mono text-sm focus:border-neon-orange focus:ring-1 focus:ring-neon-orange transition-all placeholder:text-text-3"
+                  />
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-2">Reason <span className="normal-case font-normal">(optional)</span></label>
@@ -403,11 +516,19 @@ function TopUpModal({ member, onClose, onSuccess }) {
           </div>
 
           {numAmount > 0 && (
-            <div className="bg-neon-blue/5 border border-neon-blue/20 rounded-lg p-3 flex justify-between items-center">
-              <span className="text-sm text-text-2">New {walletType} Balance</span>
-              <span className="font-mono font-bold text-neon-blue text-lg">
-                ₹{((walletType === 'Food' ? parseFloat(member.foodBalance || 0) : parseFloat(member.gamingBalance || 0)) + numAmount).toFixed(0)}
-              </span>
+            <div className="bg-neon-blue/5 border border-neon-blue/20 rounded-lg p-3 space-y-1.5">
+              {walletType === 'Gaming' && (
+                <div className="flex justify-between items-center text-xs text-text-2">
+                  <span>Top-Up ₹{numAmount} + Bonus ({effectiveBonusPercent}%) ₹{(numAmount * effectiveBonusPercent / 100).toFixed(0)}</span>
+                  <span className="font-mono font-bold text-neon-orange">= ₹{(numAmount * (1 + effectiveBonusPercent / 100)).toFixed(0)} credited</span>
+                </div>
+              )}
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-text-2">New {walletType} Balance</span>
+                <span className="font-mono font-bold text-neon-blue text-lg">
+                  ₹{((walletType === 'Food' ? parseFloat(member.foodBalance || 0) : parseFloat(member.gamingBalance || 0)) + numAmount * (1 + effectiveBonusPercent / 100)).toFixed(0)}
+                </span>
+              </div>
             </div>
           )}
         </div>
@@ -431,6 +552,138 @@ function TopUpModal({ member, onClose, onSuccess }) {
             {loading
               ? <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
               : <><ArrowUpRight className="w-4 h-4" /> Add ₹{numAmount || '–'}</>
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AdminEditValuesModal — direct override of a member's wallet balances/lifetime stats.
+// Gated behind the "member_value_edit" permission (Super Admin always has it; an Admin only
+// if explicitly granted via Settings → Admins).
+// ═══════════════════════════════════════════════════════════════════════════════
+const EDITABLE_FIELDS = [
+  { key: 'gamingBalance', label: 'Gaming Wallet Balance (₹)', step: '0.01' },
+  { key: 'foodBalance', label: 'Food Wallet Balance (₹)', step: '0.01' },
+  { key: 'totalGamingTopUps', label: 'Total Gaming Top-Ups (₹, lifetime)', step: '0.01' },
+  { key: 'totalGamingBonusEarned', label: 'Total Gaming Bonus Earned (₹, lifetime)', step: '0.01' },
+  { key: 'totalGamingSpend', label: 'Total Gaming Spend (₹, lifetime)', step: '0.01' },
+  { key: 'totalFoodSpend', label: 'Total Food Spend (₹, lifetime)', step: '0.01' },
+  { key: 'gamingPoints', label: 'Gaming Points', step: '1' },
+  { key: 'foodPoints', label: 'Food Points', step: '1' },
+  { key: 'totalPoints', label: 'Total Points', step: '1' },
+];
+
+function AdminEditValuesModal({ member, onClose, onSuccess }) {
+  const toast = useToast();
+  const [values, setValues] = useState(() =>
+    Object.fromEntries(EDITABLE_FIELDS.map(f => [f.key, member[f.key] ?? 0]))
+  );
+  const [reason, setReason] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleChange = (key, val) => setValues(prev => ({ ...prev, [key]: val }));
+
+  const handleSave = async () => {
+    setError(null);
+    setLoading(true);
+    try {
+      const payload = {
+        gamingBalance: Number(values.gamingBalance),
+        foodBalance: Number(values.foodBalance),
+        totalGamingTopUps: Number(values.totalGamingTopUps),
+        totalGamingBonusEarned: Number(values.totalGamingBonusEarned),
+        totalGamingSpend: Number(values.totalGamingSpend),
+        totalFoodSpend: Number(values.totalFoodSpend),
+        gamingPoints: Math.round(Number(values.gamingPoints)),
+        foodPoints: Math.round(Number(values.foodPoints)),
+        totalPoints: Math.round(Number(values.totalPoints)),
+        reason: reason.trim() || undefined,
+      };
+      await adminEditMemberValues(member.id, payload);
+      toast.success(`${member.fullName}'s profile values updated`);
+      onSuccess();
+      onClose();
+    } catch (err) {
+      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to save changes');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="w-full max-w-lg bg-bg-2 border border-neon-orange/30 rounded-xl shadow-2xl overflow-hidden">
+        <div className="p-4 border-b border-border bg-bg-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <SlidersHorizontal className="w-5 h-5 text-neon-orange" />
+            <div>
+              <h2 className="font-heading font-bold text-text uppercase tracking-wider text-sm leading-none">Edit Values (Admin)</h2>
+              <p className="text-[10px] text-text-3 mt-0.5 font-mono">{member.fullName} · {member.memberNumber}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1 text-text-3 hover:text-text rounded transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 max-h-[65vh] overflow-y-auto">
+          <div className="flex items-start gap-2 p-3 bg-neon-orange/10 border border-neon-orange/20 rounded-lg text-neon-orange text-xs">
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <p>These numbers directly override the member's profile. Balance changes are logged as a "Correction" transaction in their history so there's a paper trail.</p>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 p-3 bg-neon-red/10 border border-neon-red/20 rounded-lg text-neon-red text-sm">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /><p>{error}</p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            {EDITABLE_FIELDS.map(f => (
+              <div key={f.key} className="form-group">
+                <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-1.5">{f.label}</label>
+                <input
+                  type="number" step={f.step}
+                  value={values[f.key]}
+                  onChange={e => handleChange(f.key, e.target.value)}
+                  className="w-full bg-bg-3 border border-border text-text rounded-lg px-3 py-2 font-mono text-sm focus:border-neon-orange focus:ring-1 focus:ring-neon-orange transition-all"
+                />
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-2">Reason <span className="normal-case font-normal">(optional)</span></label>
+            <input
+              type="text"
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              placeholder="e.g. Correcting a data entry mistake"
+              className="w-full bg-bg-3 border border-border text-text rounded-lg px-3 py-2.5 text-sm focus:border-neon-orange focus:ring-1 focus:ring-neon-orange transition-all placeholder:text-text-3"
+            />
+          </div>
+        </div>
+
+        <div className="p-4 border-t border-border bg-bg-3 flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-lg border border-border text-text-2 text-sm font-bold uppercase tracking-wider hover:bg-bg-2 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={loading}
+            className="flex-[2] py-2.5 rounded-lg border text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all bg-neon-orange/10 border-neon-orange/50 text-neon-orange hover:bg-neon-orange/20 disabled:opacity-50"
+          >
+            {loading
+              ? <div className="w-4 h-4 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              : <><SlidersHorizontal className="w-4 h-4" /> Save Changes</>
             }
           </button>
         </div>
@@ -498,7 +751,8 @@ function DeleteConfirmModal({ member, onClose, onConfirm }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 // MemberDetailPanel — right side
 // ═══════════════════════════════════════════════════════════════════════════════
-function MemberDetailPanel({ member, onEdit, onTopUp, onRefresh, onDelete }) {
+function MemberDetailPanel({ member, onEdit, onTopUp, onEditValues, onRefresh, onDelete }) {
+  const { hasDashboardAccess } = useAuth();
   const [txHistory, setTxHistory] = useState(null);
   const [txLoading, setTxLoading] = useState(false);
   useEffect(() => {
@@ -523,6 +777,11 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onRefresh, onDelete }) {
           <button onClick={onRefresh} className="p-1.5 text-text-3 hover:text-neon-blue rounded transition-colors" title="Refresh">
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
+          {hasDashboardAccess('member_value_edit') && (
+            <button onClick={() => onEditValues(member)} className="p-1.5 text-text-3 hover:text-neon-orange rounded transition-colors" title="Edit wallet values (Admin)">
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+            </button>
+          )}
           <button onClick={() => onEdit(member)} className="p-1.5 text-text-3 hover:text-neon-purple rounded transition-colors" title="Edit member">
             <Edit2 className="w-3.5 h-3.5" />
           </button>
@@ -553,6 +812,12 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onRefresh, onDelete }) {
             <p className="font-mono font-bold text-2xl text-neon-blue mt-1 drop-shadow-[0_0_10px_rgba(77,166,255,0.4)]">
               ₹{parseFloat(member.gamingBalance || 0).toFixed(0)}
             </p>
+            {parseFloat(member.totalGamingBonusEarned || 0) > 0 && (
+              <p className="text-[9px] text-text-3 font-mono mt-1">
+                ₹{parseFloat(member.totalGamingTopUps || 0).toFixed(0)} topped up
+                <span className="text-neon-orange"> + ₹{parseFloat(member.totalGamingBonusEarned || 0).toFixed(0)} bonus</span>
+              </p>
+            )}
           </div>
           <div className="bg-bg-3 border border-border rounded-xl p-3 text-center">
             <p className="text-[9px] text-text-3 uppercase tracking-widest font-bold">Food Wallet</p>
@@ -641,8 +906,13 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onRefresh, onDelete }) {
                   </div>
                   <div className="text-right shrink-0 ml-2">
                     <p className={`font-mono font-bold text-sm ${tx.action === 'Deduction' ? 'text-neon-red' : 'text-neon-green'}`}>
-                      {tx.action === 'Deduction' ? '−' : '+'}₹{tx.amount}
+                      {tx.action === 'Deduction' ? '−' : '+'}₹{tx.amount + (tx.bonusAmount || 0)}
                     </p>
+                    {tx.bonusAmount > 0 && (
+                      <p className="text-[10px] text-neon-orange font-mono">
+                        {tx.amount > 0 ? `₹${tx.amount} + ` : ''}₹{tx.bonusAmount} bonus
+                      </p>
+                    )}
                     <p className="text-[10px] text-text-3 font-mono">
                       {new Date(tx.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
                     </p>
@@ -693,6 +963,12 @@ function MemberRow({ member, selected, onClick }) {
               <Coffee className="w-3 h-3" /> ₹{parseFloat(member.foodBalance || 0).toFixed(0)}
             </span>
           </div>
+          {parseFloat(member.totalGamingBonusEarned || 0) > 0 && (
+            <p className="text-[9px] text-text-3 font-mono mt-0.5">
+              ₹{parseFloat(member.totalGamingTopUps || 0).toFixed(0)} topped up
+              <span className="text-neon-orange"> + ₹{parseFloat(member.totalGamingBonusEarned || 0).toFixed(0)} bonus</span>
+            </p>
+          )}
         </div>
       </div>
     </button>
@@ -706,16 +982,19 @@ export default function MembersPage() {
   const { isSuperAdmin, user } = useAuth();
   const { activeBranch } = useBranch();
   const targetBranchId = isSuperAdmin ? activeBranch?.id : user?.branchId;
+  const toast = useToast();
 
   const [members, setMembers] = useState([]);
   const [pagination, setPagination] = useState({ page: 1, totalCount: 0, totalPages: 1 });
   const [search, setSearch] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [downloadingReport, setDownloadingReport] = useState(false);
 
   const [selectedMember, setSelectedMember] = useState(null);
   const [showRegister, setShowRegister] = useState(false);
   const [editMember, setEditMember] = useState(null);
   const [topUpMember, setTopUpMember] = useState(null);
+  const [editValuesMember, setEditValuesMember] = useState(null);
   const [deletingMember, setDeletingMember] = useState(null);
 
   const searchTimer = useRef(null);
@@ -759,6 +1038,60 @@ export default function MembersPage() {
     } catch {}
   };
 
+  const csvEscape = (val) => {
+    const s = val === null || val === undefined ? '' : String(val);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+
+  const handleDownloadReport = async () => {
+    setDownloadingReport(true);
+    try {
+      // includeDeleted=true so Super Admin/Admin also get every past (deleted) member in the report
+      const res = await getMembers(targetBranchId, undefined, 1, 100000, true);
+      const rows = res?.items ?? (Array.isArray(res) ? res : []);
+
+      const columns = [
+        ['Member Number', m => m.memberNumber],
+        ['Full Name', m => m.fullName],
+        ['Mobile Number', m => m.mobileNumber],
+        ['Email', m => m.email],
+        ['Username', m => m.username],
+        ['Status', m => m.status],
+        ['Home Branch', m => m.homeBranchName],
+        ['Gaming Balance', m => m.gamingBalance],
+        ['Food Balance', m => m.foodBalance],
+        ['Total Gaming Top-Ups', m => m.totalGamingTopUps],
+        ['Total Gaming Bonus Earned', m => m.totalGamingBonusEarned],
+        ['Total Gaming Spend', m => m.totalGamingSpend],
+        ['Total Food Spend', m => m.totalFoodSpend],
+        ['Gaming Points', m => m.gamingPoints],
+        ['Food Points', m => m.foodPoints],
+        ['Total Points', m => m.totalPoints],
+        ['Join Date', m => m.joinDate ? new Date(m.joinDate).toLocaleString('en-IN') : ''],
+        ['Last Visit', m => m.lastVisit ? new Date(m.lastVisit).toLocaleString('en-IN') : ''],
+      ];
+
+      const header = columns.map(([label]) => csvEscape(label)).join(',');
+      const lines = rows.map(m => columns.map(([, get]) => csvEscape(get(m))).join(','));
+      const csv = [header, ...lines].join('\n');
+
+      const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `members-report-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success(`Report downloaded (${rows.length} members)`);
+    } catch (err) {
+      toast.error('Failed to generate report');
+    } finally {
+      setDownloadingReport(false);
+    }
+  };
+
   if (isSuperAdmin && !targetBranchId) {
     return (
       <div className="flex items-center justify-center h-64 text-text-3 text-sm">
@@ -794,6 +1127,17 @@ export default function MembersPage() {
               className="w-full bg-bg-3 border border-border text-text text-sm rounded-lg pl-8 pr-3 py-2 focus:border-accent focus:ring-1 focus:ring-accent transition-all placeholder:text-text-3"
             />
           </div>
+          <button
+            onClick={handleDownloadReport}
+            disabled={downloadingReport}
+            title="Download a full report of every member (including past/deleted members)"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-bg-3 border border-border text-text-2 text-xs font-bold uppercase tracking-wider hover:border-neon-blue/50 hover:text-neon-blue transition-colors shrink-0 disabled:opacity-50"
+          >
+            {downloadingReport
+              ? <div className="w-3.5 h-3.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              : <Download className="w-3.5 h-3.5" />
+            } Report
+          </button>
           <button
             onClick={() => { setEditMember(null); setShowRegister(true); }}
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-accent/10 border border-accent/40 text-accent text-xs font-bold uppercase tracking-wider hover:bg-accent/20 transition-colors shrink-0"
@@ -836,6 +1180,7 @@ export default function MembersPage() {
             member={selectedMember}
             onEdit={m => { setEditMember(m); setShowRegister(true); }}
             onTopUp={setTopUpMember}
+            onEditValues={setEditValuesMember}
             onRefresh={refreshSelected}
             onDelete={setDeletingMember}
           />
@@ -867,7 +1212,20 @@ export default function MembersPage() {
       {topUpMember && (
         <TopUpModal
           member={topUpMember}
+          isSuperAdmin={isSuperAdmin}
           onClose={() => setTopUpMember(null)}
+          onSuccess={() => {
+            fetchMembers(pagination.page, search);
+            refreshSelected();
+          }}
+        />
+      )}
+
+      {/* Admin Edit Values modal */}
+      {editValuesMember && (
+        <AdminEditValuesModal
+          member={editValuesMember}
+          onClose={() => setEditValuesMember(null)}
           onSuccess={() => {
             fetchMembers(pagination.page, search);
             refreshSelected();

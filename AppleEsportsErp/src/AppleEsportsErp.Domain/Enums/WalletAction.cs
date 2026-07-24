@@ -7,5 +7,6 @@ public enum WalletAction
     DeductionGaming,
     DeductionFood,
     Correction,
-    RewardRedemption
+    RewardRedemption,
+    Bonus
 }

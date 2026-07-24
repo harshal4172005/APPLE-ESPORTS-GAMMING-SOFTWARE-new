@@ -29,9 +29,9 @@ public class MembersController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<IActionResult> GetMembers([FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 50)
+    public async Task<IActionResult> GetMembers([FromQuery] string? search, [FromQuery] int page = 1, [FromQuery] int pageSize = 50, [FromQuery] bool includeDeleted = false)
     {
-        var result = await _memberService.GetMembersAsync(GetBranchId(), search, page, pageSize);
+        var result = await _memberService.GetMembersAsync(GetBranchId(), search, page, pageSize, includeDeleted);
         return Ok(ApiResponse<PaginatedResult<MemberDto>>.Ok(result));
     }
 
@@ -69,6 +69,16 @@ public class MembersController : ControllerBase
     {
         await _memberService.DeleteMemberAsync(GetBranchId(), (await this.GetOperatorIdAsync()), id);
         return Ok(ApiResponse<object>.Ok(null));
+    }
+
+    /// <summary>Super Admin only: directly override any wallet balance / lifetime stat on a member's profile.</summary>
+    [HttpPut("{id:guid}/admin-edit")]
+    [Authorize(Policy = "Dashboard:member_value_edit")]
+    public async Task<IActionResult> AdminEditValues(Guid id, [FromBody] AdminEditMemberValuesDto dto)
+    {
+        var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+        var result = await _memberService.AdminEditValuesAsync(GetBranchId(), adminId, id, dto);
+        return Ok(ApiResponse<MemberDto>.Ok(result));
     }
 
     /// <summary>Member self-login — POST /api/members/login (no auth required)</summary>

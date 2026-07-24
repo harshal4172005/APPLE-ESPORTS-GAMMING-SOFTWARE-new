@@ -165,7 +165,9 @@ export default function AdminsTab() {
       { id: 'pc_status', label: 'Live PC Fleet Overview', desc: 'Monitor active sessions and PC health across all branches' },
       { id: 'members', label: 'Global Member Directory', desc: 'View and edit any customer account from any branch' },
       { id: 'menu_editor', label: 'Café Menu & Pricing Editor', desc: 'Modify food items, inventory, and PC pricing rates' },
-      { id: 'employee_forms', label: 'HR & Employee Records', desc: 'Access employee joining forms and staff directories' }
+      { id: 'employee_forms', label: 'HR & Employee Records', desc: 'Access employee joining forms and staff directories' },
+      { id: 'wallet_settings', label: 'Wallet Top-Up Settings', desc: 'Edit the minimum Gaming top-up amount and default bonus percentage' },
+      { id: 'member_value_edit', label: 'Edit Member Wallet Values', desc: 'Directly override any individual member\'s wallet balance or lifetime stats' }
     ];
 
     return (

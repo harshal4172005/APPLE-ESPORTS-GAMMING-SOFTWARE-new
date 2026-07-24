@@ -5,6 +5,7 @@ import { useBranch } from '../../contexts/BranchContext';
 import api from '../../config/api';
 import PageHeader from '../../components/layout/PageHeader';
 import DenominationCounter from '../../components/cash/DenominationCounter';
+import { generateIdempotencyKey } from '../../utils/idempotency';
 
 export default function CashDeskPage() {
   const { isSuperAdmin, user, logout } = useAuth();
@@ -50,7 +51,7 @@ export default function CashDeskPage() {
     setIsLocking(true);
     try {
       await api.post('/cash-desk/verify-start', {}, {
-        headers: { 'X-Idempotency-Key': crypto.randomUUID() }
+        headers: { 'X-Idempotency-Key': generateIdempotencyKey() }
       });
       await fetchActiveRegister();
     } catch (err) {
@@ -64,7 +65,7 @@ export default function CashDeskPage() {
     setIsClosing(true);
     try {
       await api.post(`/cash-desk/close/${register.id}`, {}, {
-        headers: { 'X-Idempotency-Key': crypto.randomUUID() }
+        headers: { 'X-Idempotency-Key': generateIdempotencyKey() }
       });
       // Shift is closed. In a real system, you might end the operator's session here.
       // For now, we will log them out to simulate shift end.
@@ -80,7 +81,7 @@ export default function CashDeskPage() {
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
         <Lock className="w-12 h-12 text-text-3 mb-4" />
         <h2 className="text-xl font-heading font-bold text-text mb-2">Select a Branch</h2>
-        <p className="text-text-2">You must select a branch to access the Cash Desk.</p>
+        <p className="text-text-2">You must select a branch to access the Cash Register.</p>
       </div>
     );
   }
@@ -108,7 +109,7 @@ export default function CashDeskPage() {
     <div className="h-full flex flex-col max-w-4xl mx-auto">
       <div className="mb-6">
         <PageHeader
-          title="Cash Desk"
+          title="Cash Register"
           subtitle="End of Shift Reconciliation"
           icon="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
           badge="SECURE"

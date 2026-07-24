@@ -112,6 +112,17 @@ export const saveSystemConfig = async (data) => {
   return response.data;
 };
 
+// --- Wallet Top-Up Settings ---
+export const getWalletTopUpRules = async () => {
+  const response = await api.get('/wallet-settings');
+  return response.data;
+};
+
+export const saveWalletTopUpRules = async (data) => {
+  const response = await api.put('/wallet-settings', data);
+  return response.data;
+};
+
 // --- Pricing Profiles ---
 export const getPricingProfiles = async (branchId) => {
   const response = await api.get(`/pricing-profiles?branchId=${branchId}`);

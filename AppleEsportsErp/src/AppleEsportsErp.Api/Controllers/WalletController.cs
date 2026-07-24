@@ -6,7 +6,7 @@ using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.DTOs.Wallets;
 using AppleEsportsErp.Application.Exceptions;
 using AppleEsportsErp.Application.Interfaces;
-using System.Security.Claims;
+using AppleEsportsErp.Application.Constants;
 
 namespace AppleEsportsErp.Api.Controllers;
 
@@ -36,7 +36,8 @@ public class WalletController : ControllerBase
     [Idempotent]
     public async Task<IActionResult> TopUpWallet(Guid memberId, [FromBody] TopUpWalletDto dto)
     {
-        var result = await _walletService.TopUpWalletAsync(GetBranchId(), (await this.GetOperatorIdAsync()), (await this.GetShiftIdAsync()), memberId, dto);
+        var isSuperAdmin = User.IsInRole(Roles.SuperAdmin);
+        var result = await _walletService.TopUpWalletAsync(GetBranchId(), (await this.GetOperatorIdAsync()), (await this.GetShiftIdAsync()), memberId, dto, isSuperAdmin);
         return Ok(ApiResponse<WalletTransactionDto>.Ok(result));
     }
 

@@ -18,6 +18,7 @@ public class WalletTransaction
     public string? PaymentType { get; set; } // cash, online, split
     public decimal CashAmount { get; set; }
     public decimal OnlineAmount { get; set; }
+    public decimal BonusAmount { get; set; } // gaming top-up bonus, or an admin-granted bonus
     public Guid? BillId { get; set; }
     public string? Reason { get; set; }
     public DateTimeOffset CreatedAt { get; set; }

@@ -23,7 +23,38 @@ How to use this file:
 
 ## New Issues (not fixed yet)
 
-(add your entries here)
+```
+### Issue # 9
+- Where: memeber cannot approve the payment there is one error that is "axious is not defined" this is happening on the members pc means members cannot approve it this is the problem !!
+- What I did: i have done members billing and selected pc - 2 that is right now members pc and when i do the billing of that pc and then when i go to billing counter and then do the billing of that pc - 2 and i select wallet and then i send the approve link and that request is comming on pc - 2 and that error pops up and billing is not hapening !!
+- What happened: members billing is not happening fix this and also one more thing right now i can see "choose user type" and this is pc - 2 when operator send the request it directly goes to pc - 2 that is fine but unfortunatelly i am not logged in as an member then also i am getting the past member payment approval request !!
+- What should happen instead: fix all the billing approval and fix this small login related thing check it first understand and then tell me what are you going to do realted this login realted thing 
+- Priority: based on you !!!
+```
+
+---
+
+```
+### Issue # 10
+- Where: in the members database and in the members list section !!
+- What I did: i have tested 2 things here when i write my past email and phone number that member account i have removed from the members list then also the system is not letting me to add that member in the list !!
+- What happened: the system should allow me to add that member in the list because i have deleted that account earlier !!
+- What should happen instead:email and phone number should be same but name should not be same, and also add split option in member top up !!
+- Priority: based on you !!
+```
+
+---
+
+```
+### Issue # 11
+- Where: members !
+- What I did: i will directly tell the issue you need to fix it !!
+- What happened: when member is created then minimum top up value should be 500 rs or above not below than that is allowed and one more thing is that we are giving 10% bonus on gamming top up simple as that so listen understand this how this will work assume new member is created of 500 rs then we will give that member 50 rs bonus amount this bonus amount can only be used in gamming only and this offer is only for gamming and food is different there is no offer for the food and one more thing like all the thing is written in a perfect manner like see i have top up 500 rs then i will get 50 rs bonus for the gamming so we need to mention bonus amount seperately and total is calculated is like 550 rs you got the plan or not ! and another thing here is like in my account i have 10 rs left in my wallet ballacne then only i can play for that 10 rs worth of gamming simple and then automatically billing is done and session is closed and then the warning message comes up like that you need to top - up then only you can play further simple like that and then i will go to the operator and then do top up simple as that !! and super admin want to give more bonus in terms of percentage or in terms of amount then super admin can do from there login and then go to that particular member and then super admin can give extra bonus simple as that !!! 
+- What should happen instead: under stand from the "what happened" part so if any doubt arrise then clear that first and then make the whole thing !!
+- Priority: based on you !
+```
+
+---
 
 ## Fixed (history log)
 

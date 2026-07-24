@@ -602,7 +602,7 @@ export default function ReportsPage() {
                   <th className="py-3 px-4">Shift Date/Time</th>
                   <th className="py-3 px-4">Operator</th>
                   <th className="py-3 px-4 text-right">Expected (Register)</th>
-                  <th className="py-3 px-4 text-right">Physical (Cash Desk)</th>
+                  <th className="py-3 px-4 text-right">Physical (Cash Register)</th>
                   <th className="py-3 px-4 text-center">Status</th>
                   <th className="py-3 px-4 text-center">Denomination Breakdown</th>
                 </tr>
