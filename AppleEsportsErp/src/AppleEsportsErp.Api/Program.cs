@@ -479,8 +479,21 @@ using (var scope = app.Services.CreateScope())
             Log.Information("Database migrations applied ✓");
             AppleEsportsErp.Api.DbUpdater.UpdateSchema(app);
             Log.Information("Database schema patches applied ✓");
-            AppleEsportsErp.Api.DataSeeder.SeedBranchesAsync(db).GetAwaiter().GetResult();
-            Log.Information("Database seeded with default branches and PCs ✓");
+
+            // Convenience data for a developer's own machine - four branches with the same
+            // names real branches actually use, real operator first names, a super_admin under
+            // a personal Gmail. The comment above this block always said "Development"; the
+            // code never checked. It ran unconditionally in Production, guarded only by "does a
+            // branch named Adajan or Citylight already exist" - which is true on every real
+            // Head Office and so silently a no-op there, but false on any freshly provisioned
+            // one. A brand-new Head Office server came up, seeded four fake branches under the
+            // exact names the real production branches use, and would have done so again on
+            // every restart for as long as nothing real shared those names yet.
+            if (app.Environment.IsDevelopment())
+            {
+                AppleEsportsErp.Api.DataSeeder.SeedBranchesAsync(db).GetAwaiter().GetResult();
+                Log.Information("Database seeded with default branches and PCs ✓");
+            }
         }
         else
         {
