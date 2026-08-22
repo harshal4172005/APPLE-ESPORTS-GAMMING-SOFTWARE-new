@@ -477,23 +477,18 @@ using (var scope = app.Services.CreateScope())
             Log.Information("PostgreSQL connection verified ✓");
             await db.Database.MigrateAsync();
             Log.Information("Database migrations applied ✓");
+
+            // The demo seed used to be called from here too, with only an IsDevelopment()
+            // check and no IsHeadOffice() check at all - so a Development-mode BRANCH could
+            // have run it, directly contradicting DbUpdater's own reasoning for why a branch
+            // must never get this data (it invents identifiers Head Office never issued, which
+            // is the exact fault Phase 2's adoption flow exists to prevent). Two call sites
+            // enforcing two different rules for the same "should this seed run" question is how
+            // a case gets missed - which is exactly what happened here. DbUpdater.UpdateSchema
+            // is now the only place that decides, checking both IsHeadOffice() and
+            // IsDevelopment() together.
             AppleEsportsErp.Api.DbUpdater.UpdateSchema(app);
             Log.Information("Database schema patches applied ✓");
-
-            // Convenience data for a developer's own machine - four branches with the same
-            // names real branches actually use, real operator first names, a super_admin under
-            // a personal Gmail. The comment above this block always said "Development"; the
-            // code never checked. It ran unconditionally in Production, guarded only by "does a
-            // branch named Adajan or Citylight already exist" - which is true on every real
-            // Head Office and so silently a no-op there, but false on any freshly provisioned
-            // one. A brand-new Head Office server came up, seeded four fake branches under the
-            // exact names the real production branches use, and would have done so again on
-            // every restart for as long as nothing real shared those names yet.
-            if (app.Environment.IsDevelopment())
-            {
-                AppleEsportsErp.Api.DataSeeder.SeedBranchesAsync(db).GetAwaiter().GetResult();
-                Log.Information("Database seeded with default branches and PCs ✓");
-            }
         }
         else
         {

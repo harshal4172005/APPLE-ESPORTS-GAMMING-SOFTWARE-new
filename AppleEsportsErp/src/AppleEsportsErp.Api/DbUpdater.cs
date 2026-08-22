@@ -144,7 +144,8 @@ ADD COLUMN IF NOT EXISTS ""PhotoDataUrl"" text,
 ADD COLUMN IF NOT EXISTS ""AadharDataUrl"" text;
 ");
 
-        // Seed the four branches, their PCs, pricing and operators — at HEAD OFFICE ONLY.
+        // Seed the four branches, their PCs, pricing and operators — at HEAD OFFICE, in
+        // Development ONLY.
         //
         // A branch must never run this. Its database starts empty, so nothing here would stop
         // it: the guard inside only skips when Adajan or Citylight already exist, and on a
@@ -152,17 +153,26 @@ ADD COLUMN IF NOT EXISTS ""AadharDataUrl"" text;
         // copy of all four branches with its own identifiers — which is precisely the fault that
         // broke sync last time and which Phase 2 exists to prevent. It would also put eight
         // operators with invented email addresses and the password "12345" on the machine, and
-        // insert the owner's personal Gmail as super admin on every till in the business.
+        // insert a personal Gmail address as super admin on every till in the business.
         //
         // A branch gets its identity from Head Office instead, through /api/provisioning/adopt,
         // with Head Office's identifiers. Empty until then is the correct state, and an empty
         // branch is a branch that has not been adopted yet — which is visible, unlike a branch
         // quietly running on records it made up.
-        if (app.Configuration.IsHeadOffice())
+        //
+        // The comment above stopped at "must never run on a branch" and never asked the other
+        // half of the same question: what about a Head Office that is itself freshly
+        // provisioned? IsHeadOffice() alone said yes to that too, and did so unconditionally
+        // in every environment, including Production. A brand-new Head Office server came up
+        // and seeded these same four branches under their real names before anyone had a
+        // chance to point a real branch at it - the identical fault this guard exists to
+        // prevent, arrived at from the other direction. This demo data belongs on a developer's
+        // own machine, never on any server actually running the business, Head Office included.
+        if (app.Configuration.IsHeadOffice() && app.Environment.IsDevelopment())
         {
             DataSeeder.SeedBranchesAsync(db).GetAwaiter().GetResult();
         }
-        else
+        else if (!app.Configuration.IsHeadOffice())
         {
             app.Logger.LogInformation(
                 "Branch instance: skipping the Head Office seed. This database stays empty until " +
