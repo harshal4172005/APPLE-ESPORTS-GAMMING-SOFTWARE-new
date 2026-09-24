@@ -355,6 +355,7 @@ export default function MenuEditorPage() {
               <tbody className="divide-y divide-border/40 font-heading">
                 {items.map(item => {
                   const isLowStock = item.currentStock <= item.minStockLimit;
+                  const isOversold = item.currentStock < 0;
                   const itemStatus = item.status || 'Available';
                   
                   let statusColor = 'text-neon-green bg-neon-green/10';
@@ -390,6 +391,11 @@ export default function MenuEditorPage() {
                         <span className={isLowStock ? 'text-neon-red font-extrabold' : 'text-text'}>
                           {item.currentStock}
                         </span>
+                        {isOversold && (
+                          <div className="text-[9px] font-bold uppercase text-neon-red mt-0.5">
+                            Oversold — recount
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-right font-mono text-text-2 flex justify-end items-center gap-1">
                         <TrendingUp className="w-3.5 h-3.5 text-neon-blue" />

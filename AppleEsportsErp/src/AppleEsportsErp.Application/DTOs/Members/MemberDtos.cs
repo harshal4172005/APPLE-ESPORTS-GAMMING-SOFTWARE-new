@@ -47,6 +47,22 @@ public class AdminEditMemberValuesDto
     public string? Reason { get; set; }
 }
 
+/// <summary>One row of a member's combined history - a gaming session or a wallet
+/// top-up/deduction, whichever it is. PcName/DurationMinutes are set only for a
+/// Session row.</summary>
+public class MemberHistoryEntryDto
+{
+    public Guid Id { get; set; }
+    public string Type { get; set; } = null!; // "Session" | "WalletTopUp" | "WalletDeduction"
+    public DateTimeOffset Timestamp { get; set; }
+    public Guid BranchId { get; set; }
+    public string BranchName { get; set; } = null!;
+    public string? PcName { get; set; }
+    public int? DurationMinutes { get; set; }
+    public decimal Amount { get; set; }
+    public string Description { get; set; } = null!;
+}
+
 public class RegisterMemberDto
 {
     [Required]

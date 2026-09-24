@@ -52,6 +52,13 @@ public class InventoryLogConfiguration : IEntityTypeConfiguration<InventoryLog>
         builder.HasIndex(e => e.InventoryId).HasDatabaseName("idx_inv_logs_item");
         builder.HasIndex(e => e.CreatedAt).HasDatabaseName("idx_inv_logs_date");
 
+        // Lets a redelivered shared-stock relay instruction be recognised and skipped rather
+        // than double-applying the same movement — see InventoryLog.SourceRelayEventId.
+        builder.HasIndex(e => e.SourceRelayEventId)
+            .IsUnique()
+            .HasDatabaseName("idx_inv_logs_relay_event")
+            .HasFilter("\"SourceRelayEventId\" IS NOT NULL");
+
         builder.HasOne(e => e.InventoryItem).WithMany(i => i.Logs)
             .HasForeignKey(e => e.InventoryId).OnDelete(DeleteBehavior.Cascade);
         builder.HasOne(e => e.Branch).WithMany()

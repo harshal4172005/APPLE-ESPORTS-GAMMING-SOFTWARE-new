@@ -174,11 +174,11 @@ public class VersionService : IVersionService
     /// screen; deleting it here is what actually lets the previous version take that place
     /// again.
     ///
-    /// Only removes the database record. The installer file itself is left for the caller to
-    /// delete - this layer has no notion of where releases are stored on disk, and should not
-    /// need one just to remove a row.
+    /// Only removes the database record. The installer and agent files themselves are left for
+    /// the caller to delete - this layer has no notion of where releases are stored on disk, and
+    /// should not need one just to remove a row.
     /// </summary>
-    public async Task<string?> DeleteVersionAsync(int versionInfoId)
+    public async Task<(string? InstallerFileName, string? AgentFileName)> DeleteVersionAsync(int versionInfoId)
     {
         var version = await _unitOfWork.Repository<VersionInfo>()
             .Query()
@@ -187,12 +187,12 @@ public class VersionService : IVersionService
         if (version == null)
             throw new Exception($"Version {versionInfoId} not found");
 
-        var fileName = version.InstallerFileName;
+        var fileNames = (version.InstallerFileName, version.AgentFileName);
 
         _unitOfWork.Repository<VersionInfo>().Remove(version);
         await _unitOfWork.CommitTransactionAsync();
 
-        return fileName;
+        return fileNames;
     }
 
     /// <summary>
@@ -378,7 +378,10 @@ public class VersionService : IVersionService
             // branch anyway, so offering Update Now for one would produce a failure rather than
             // an update.
             HasInstaller = !string.IsNullOrWhiteSpace(version.InstallerFileName)
-                        && !string.IsNullOrWhiteSpace(version.InstallerSha256)
+                        && !string.IsNullOrWhiteSpace(version.InstallerSha256),
+
+            HasAgent = !string.IsNullOrWhiteSpace(version.AgentFileName)
+                    && !string.IsNullOrWhiteSpace(version.AgentSha256)
         };
     }
 

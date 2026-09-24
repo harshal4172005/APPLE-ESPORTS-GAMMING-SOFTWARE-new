@@ -29,6 +29,12 @@ export const processPayment = (id, payload) =>
 export const requestWalletApproval = (id) =>
   api.post(`/bills/${id}/request-wallet-approval`).then(r => r.data);
 
+/** PATCH /bills/:id/payment-method — corrects only the method on a completed bill. */
+export const editPaymentMethod = (id, payload) =>
+  api.patch(`/bills/${id}/payment-method`, payload, {
+    headers: { 'X-Idempotency-Key': generateIdempotencyKey() }
+  }).then(r => r.data?.data);
+
 // ── Member lookup (for wallet balance display) ───────────────────────────────
 
 /** GET /members/:id */

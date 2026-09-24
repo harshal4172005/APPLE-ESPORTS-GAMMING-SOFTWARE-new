@@ -54,6 +54,33 @@ public class BranchConfigDto
     /// balance from a partial history invites exactly the kind of drift this exists to remove.
     /// </summary>
     public List<BranchMemberConfigDto> Members { get; set; } = new();
+
+    /// <summary>
+    /// Every pricing profile this branch has, plus any custom fixed-duration packages on it.
+    ///
+    /// A branch that runs the full local install (its own database, not just a thin agent) has
+    /// its own separate copy of PricingProfiles from Head Office's - created once at adoption
+    /// and never touched again. A profile edited, or a package added, at Head Office's own
+    /// dashboard was invisible at the counter for exactly the same reason the menu editor was:
+    /// two different databases, only one of which anybody was actually looking at.
+    /// </summary>
+    public List<BranchPricingProfileConfigDto> PricingProfiles { get; set; } = new();
+
+    /// <summary>
+    /// Every Admin-level Users-table account, Head Office's own PIN and all.
+    ///
+    /// An Admin created at Head Office never reached any branch at all - not a caching problem,
+    /// nothing to invalidate, because nothing had ever built the pipe in the first place. Quick
+    /// Admin Switch reads a branch's own LOCAL Users table (AuthService.GetAvailableAdminsForSwitchAsync),
+    /// and Users was never one of the things a heartbeat carried down - only Operator promoted
+    /// with IsGlobalAdmin ever made that trip, which is a different, already-working path. An
+    /// Admin made the "right way" at Head Office looked, from the counter, exactly like it did
+    /// not exist, forever, no matter how long anyone waited or how many times they refreshed.
+    ///
+    /// Not scoped to one branch, the same reasoning as Members: an Admin is meant to be reachable
+    /// from any counter's Quick Admin Switch, not just one, so every branch needs the whole list.
+    /// </summary>
+    public List<BranchAdminConfigDto> Admins { get; set; } = new();
 }
 
 /// <summary>
@@ -128,6 +155,17 @@ public class BranchMemberConfigDto
     public string MobileNumber { get; set; } = string.Empty;
     public string? Email { get; set; }
     public string? Username { get; set; }
+
+    /// <summary>
+    /// Without this, a member's password only ever reached the one branch a targeted
+    /// set_member_password command happened to be addressed to - their own HomeBranchId, and
+    /// only when set via a phone reset; a password set directly by Super Admin at Head Office
+    /// reached nowhere at all, ever. Everything else about a member (name, balance, phone)
+    /// already rides down on this same beat to every branch, on the stated reasoning that a
+    /// member who joined at one shop is meant to be able to use their account at any of them -
+    /// the password is the one field that was quietly excluded from that promise.
+    /// </summary>
+    public string? PasswordHash { get; set; }
     public decimal GamingBalance { get; set; }
     public decimal FoodBalance { get; set; }
 
@@ -139,5 +177,61 @@ public class BranchMemberConfigDto
     /// </summary>
     public DateTimeOffset? BalanceAsOf { get; set; }
 
+    public bool IsBlocked { get; set; }
+}
+
+/// <summary>
+/// One pricing profile as Head Office defines it, with its custom packages (if any).
+///
+/// BaseHourlyRate/BufferMinutes/RefreshRate/SystemSpecs plus whichever fixed-duration packages
+/// are attached - everything a branch's own PC-plans screen needs, deliberately excluding
+/// nothing operational: a profile carries no trading state of its own to protect, unlike a
+/// PC or an inventory item.
+/// </summary>
+public class BranchPricingProfileConfigDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public decimal BaseHourlyRate { get; set; }
+    public int BufferMinutes { get; set; }
+    public bool IsActive { get; set; }
+    public string? RefreshRate { get; set; }
+    public string? SystemSpecs { get; set; }
+
+    public List<BranchPricingPackageConfigDto> Packages { get; set; } = new();
+}
+
+/// <summary>One fixed-duration/fixed-price package on a pricing profile - see PricingPackage.</summary>
+public class BranchPricingPackageConfigDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = string.Empty;
+    public int DurationMinutes { get; set; }
+    public decimal Price { get; set; }
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; }
+}
+
+/// <summary>
+/// One Admin-level Users-table account as Head Office defines them.
+///
+/// Enough to create the person locally at a branch that has never heard of them and let them
+/// straight into Quick Admin Switch there, the same closing-the-gap reasoning as
+/// BranchOperatorConfigDto - an Admin made at Head Office could not be switched into at any
+/// counter, ever, ever, which is exactly what "created the right way" was supposed to prevent.
+/// </summary>
+public class BranchAdminConfigDto
+{
+    public Guid Id { get; set; }
+    public string FullName { get; set; } = string.Empty;
+    public string Email { get; set; } = string.Empty;
+
+    /// <summary>The stored hash, never a password - see BranchOperatorConfigDto.PasswordHash.</summary>
+    public string PasswordHash { get; set; } = string.Empty;
+
+    public string? AccessPin { get; set; }
+    public string? DashboardPermissions { get; set; }
+
+    /// <summary>Suspended/disabled at Head Office - see BranchOperatorConfigDto.IsBlocked.</summary>
     public bool IsBlocked { get; set; }
 }

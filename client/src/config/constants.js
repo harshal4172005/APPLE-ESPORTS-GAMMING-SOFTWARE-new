@@ -16,6 +16,7 @@ export const PC_STATES = {
   RESERVED: 'reserved',
   AWAITING_BILLING: 'awaiting_billing',
   OFFLINE: 'offline',
+  AWAITING_SETUP: 'awaitingsetup',
 };
 
 export const SESSION_STATES = {
@@ -71,6 +72,7 @@ export const PC_STATE_COLORS = {
   [PC_STATES.RESERVED]: 'pc-reserved',
   [PC_STATES.AWAITING_BILLING]: 'pc-awaiting',
   [PC_STATES.OFFLINE]: 'pc-offline',
+  [PC_STATES.AWAITING_SETUP]: 'pc-awaitingsetup',
 };
 
 export const PC_STATE_LABELS = {
@@ -79,4 +81,5 @@ export const PC_STATE_LABELS = {
   [PC_STATES.RESERVED]: 'Reserved',
   [PC_STATES.AWAITING_BILLING]: 'Awaiting Bill',
   [PC_STATES.OFFLINE]: 'Shut Down',
+  [PC_STATES.AWAITING_SETUP]: 'Not Set Up',
 };

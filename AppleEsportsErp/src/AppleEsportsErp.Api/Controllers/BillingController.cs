@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using AppleEsportsErp.Api.Extensions;
 using AppleEsportsErp.Api.Filters;
+using AppleEsportsErp.Application.Constants;
 using AppleEsportsErp.Application.DTOs.Billing;
 using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.Exceptions;
@@ -91,6 +92,63 @@ public class BillingController : ControllerBase
         return Ok(ApiResponse<BillDto>.Ok(result));
     }
 
+    /// <summary>
+    /// Removes a bill from the books for good - Admin and Super Admin only, for a genuine
+    /// mistake in the record itself (a duplicate row, a test entry that reached a live branch),
+    /// never for correcting an amount or a payment method, which belong to Discount/Pay instead.
+    ///
+    /// Never silent. A bill leaving Complete Billing Audit Logs with nothing said anywhere is
+    /// exactly the kind of gap this whole system exists to close - so the deletion itself is
+    /// written to the audit trail, with who did it and everything the bill held, before the row
+    /// is actually gone. What was deleted stays answerable even though the bill itself no longer
+    /// does.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    [Authorize(Roles = $"{Roles.Admin},{Roles.SuperAdmin}")]
+    public async Task<IActionResult> DeleteBillPermanently(Guid id, [FromServices] IAuditService audit)
+    {
+        var branchId = GetBranchId();
+        var bill = await _db.Bills
+            .Include(b => b.Items)
+            .FirstOrDefaultAsync(b => b.Id == id && b.BranchId == branchId);
+
+        if (bill is null)
+            return NotFound(ApiResponse<object>.Fail("Bill not found."));
+
+        // Cleared first, not cascaded - both are a hard RESTRICT against bills, the same
+        // deliberate guard that stops an ordinary code path deleting a bill a discount or a
+        // payment still depends on. This endpoint is the one place meant to go through it
+        // anyway, on a human's explicit say-so, not around it by accident.
+        var discounts = await _db.Set<AppleEsportsErp.Domain.Entities.Discount>()
+            .Where(d => d.BillId == id).ToListAsync();
+        _db.RemoveRange(discounts);
+
+        var payments = await _db.Set<AppleEsportsErp.Domain.Entities.Payment>()
+            .Where(p => p.BillId == id).ToListAsync();
+        _db.RemoveRange(payments);
+
+        await audit.LogAsync(new AuditEntry
+        {
+            OperatorId = CurrentUserId(),
+            UserRole = User.FindFirstValue(ClaimTypes.Role) ?? "unknown",
+            UserName = User.FindFirstValue(ClaimTypes.Name) ?? "unknown",
+            Action = "bill_deleted_permanently",
+            BranchId = branchId,
+            TargetType = "bill",
+            TargetId = bill.Id,
+            Details = new
+            {
+                bill.BillNumber, bill.CustomerName, bill.TotalAmount, bill.GamingAmount,
+                bill.FoodAmount, bill.DiscountAmount, bill.Status, bill.CreatedAt, bill.CompletedAt,
+            },
+        });
+
+        _db.Bills.Remove(bill);
+        await _db.SaveChangesAsync();
+
+        return Ok(ApiResponse.Ok());
+    }
+
     [HttpPost("{id:guid}/discount")]
     [Idempotent]
     [Authorize] // Replaced strict policy with inline check
@@ -177,6 +235,52 @@ public class BillingController : ControllerBase
         }
 
         var result = await _billingService.ProcessPaymentAsync(GetBranchId(), (await this.GetOperatorIdAsync()), (await this.GetShiftIdAsync()), id, dto);
+        return Ok(ApiResponse<BillDto>.Ok(result));
+    }
+
+    /// <summary>
+    /// Corrects only the payment method on an already-completed bill (e.g. marked Online, the
+    /// bank declined it, the customer paid Cash instead) - line items, totals, and discounts
+    /// stay locked. Open to every logged-in role - Operator included, per the owner's explicit
+    /// call that whoever is at the counter when the mistake is noticed should be able to fix it
+    /// on the spot rather than needing an Admin/Super Admin nearby. This used to gate Operator
+    /// out entirely (Super Admin always, Admin only with the paymentMethodCorrection permission
+    /// switched on) - deliberately, the same restriction as ApplyDiscount - but that restriction
+    /// was the owner's call to make, and they made the other one.
+    /// </summary>
+    [HttpPatch("{id:guid}/payment-method")]
+    [Idempotent]
+    [Authorize]
+    public async Task<IActionResult> EditPaymentMethod(Guid id, [FromBody] EditPaymentMethodDto dto, CancellationToken ct)
+    {
+        var role = User.FindFirstValue(ClaimTypes.Role);
+        bool canCorrect = !string.IsNullOrEmpty(role);
+
+        if (!canCorrect) return Forbid();
+
+        var actorId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+        if (_remote.MustTravel)
+        {
+            var branchId = await _db.Set<AppleEsportsErp.Domain.Entities.Bill>().AsNoTracking()
+                .Where(b => b.Id == id).Select(b => b.BranchId).FirstOrDefaultAsync(ct);
+
+            if (branchId == Guid.Empty)
+                return NotFound(ApiResponse<object>.Fail("Head Office has no such bill.", "BILL_NOT_FOUND"));
+
+            return await SendToBranchAsync(branchId, AppleEsportsErp.Api.Services.BranchCommands.EditPaymentMethod, new
+            {
+                billId = id,
+                dto.NewPaymentType,
+                dto.CashAmount,
+                dto.OnlineAmount,
+                dto.Reason,
+                actorId,
+                actorRole = role,
+            }, ct);
+        }
+
+        var result = await _billingService.EditPaymentMethodAsync(GetBranchId(), actorId, role!, id, dto);
         return Ok(ApiResponse<BillDto>.Ok(result));
     }
 

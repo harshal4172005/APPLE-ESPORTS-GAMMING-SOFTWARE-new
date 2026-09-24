@@ -133,17 +133,31 @@ public class BillingService : IBillingService
     /// gaming charge live (same formula as the operator PC card / member overlay) instead of
     /// returning the stale amount stored at session start — this is what keeps the Billing
     /// Counter's bill panel from showing a different number than everywhere else.
+    ///
+    /// Gated on the bill's own Status too, not just the session's — a bill closes (food paid
+    /// separately, ₹0 buffer auto-close, deferred) while its session keeps running as genuine
+    /// pay-as-you-go, and that combination is completely normal. Without this check, a bill
+    /// paid two minutes into a session that is still open four days later showed its gaming
+    /// line still climbing off four days of elapsed time — a live total on a bill that had
+    /// nothing left to collect. A Completed bill is done; it shows the amount it was actually
+    /// settled for, not a number that keeps moving underneath a receipt already printed.
     /// </summary>
     private static BillDto MapToDtoWithLiveAmount(Bill bill)
     {
         var dto = MapToDto(bill);
 
-        if (bill.Session != null && bill.Session.State == Domain.Enums.SessionState.Active)
+        if (bill.Status != BillStatus.Completed
+            && bill.Session != null && bill.Session.State == Domain.Enums.SessionState.Active)
         {
             decimal ratePerHour = bill.Pc?.PricingProfile?.BaseHourlyRate ?? Application.Services.SessionPricingCalculator.DefaultRatePerHour;
             int bufferMinutes = bill.Pc?.PricingProfile?.BufferMinutes ?? Application.Services.SessionPricingCalculator.DefaultBufferMinutes;
             decimal elapsedMinutes = (decimal)(DateTimeOffset.UtcNow - bill.Session.StartTime).TotalMinutes;
-            decimal liveGamingAmount = Application.Services.SessionPricingCalculator.CalculateGamingAmount(ratePerHour, bufferMinutes, elapsedMinutes);
+            // Package-aware, not hours x BaseHourlyRate alone - see CalculateLiveGamingAmount.
+            // A session running under "4 hrs - Rs 180" now shows Rs 180 climbing exactly the
+            // way the final Stop bill would, instead of a flat hourly number nobody is really
+            // being charged.
+            decimal liveGamingAmount = Application.Services.SessionPricingCalculator.CalculateLiveGamingAmount(
+                bill.Session.PackagePrice, bill.Session.PlannedDurationMin, ratePerHour, bufferMinutes, elapsedMinutes);
 
             // The sticker price first — what the customer sees with no discount — THEN the
             // discount comes off that. See ApplyDiscountAsync for why: rounding the raw
@@ -215,8 +229,11 @@ public class BillingService : IBillingService
             int bufferMinutes = bill.Pc?.PricingProfile?.BufferMinutes
                 ?? Application.Services.SessionPricingCalculator.DefaultBufferMinutes;
             decimal elapsedMinutes = (decimal)(DateTimeOffset.UtcNow - bill.Session.StartTime).TotalMinutes;
-            rawGaming = Application.Services.SessionPricingCalculator.CalculateGamingAmount(
-                ratePerHour, bufferMinutes, elapsedMinutes);
+            // Package-aware - see CalculateLiveGamingAmount. A discount on a package session
+            // must come off the package's real price (plus any overrun), not off a plain
+            // hours x BaseHourlyRate figure that was never the customer's actual charge.
+            rawGaming = Application.Services.SessionPricingCalculator.CalculateLiveGamingAmount(
+                bill.Session.PackagePrice, bill.Session.PlannedDurationMin, ratePerHour, bufferMinutes, elapsedMinutes);
         }
 
         var (stickerGaming, stickerFood, preDiscountTotal) = Application.Services.SessionPricingCalculator.ComputeRoundedBreakdown(
@@ -306,6 +323,197 @@ public class BillingService : IBillingService
 
         await _unitOfWork.SaveChangesAsync();
         await _hubNotification.BroadcastBillingUpdateAsync(branchId, bill.Id);
+
+        return MapToDto(bill);
+    }
+
+    /// <summary>
+    /// Corrects only the payment method on an already-completed bill — e.g. marked Online, the
+    /// bank later declined it, the customer paid Cash instead. Line items, totals, and discounts
+    /// stay exactly as they were; only PaymentType/CashAmount/OnlineAmount move, and the delta is
+    /// booked as a NEW cash-register adjustment dated now, not folded into the original payment's
+    /// own CashTransaction. That original row is left untouched deliberately: it is what that
+    /// day's (possibly already-closed, already-reported) register actually recorded at the time,
+    /// and rewriting it would silently change a day's numbers that may have already been handed
+    /// over and signed off. The correction belongs to today, because today is when it happened.
+    /// </summary>
+    public async Task<BillDto> EditPaymentMethodAsync(
+        Guid branchId, Guid actorId, string actorRole, Guid id, EditPaymentMethodDto dto)
+    {
+        RefuseIfHeadOffice("payment-corrected");
+
+        if (dto.NewPaymentType == PaymentType.Wallet)
+            throw new AppException(
+                "Payment method cannot be corrected to or from Wallet here - a wallet payment's " +
+                "Gaming/Food split isn't retained per-payment, so it can't be safely reversed or " +
+                "re-applied from this screen. Use a fresh payment/refund for that instead.",
+                System.Net.HttpStatusCode.BadRequest, "WALLET_CORRECTION_NOT_SUPPORTED");
+
+        var bill = await _unitOfWork.Repository<Bill>().Query()
+            .Include(b => b.Payments)
+            .Include(b => b.Pc)
+            .FirstOrDefaultAsync(b => b.Id == id && b.BranchId == branchId)
+            ?? throw new NotFoundException("Bill not found.");
+
+        if (bill.Status != BillStatus.Completed)
+            throw new AppException(
+                "Only a completed bill's payment method can be corrected.",
+                System.Net.HttpStatusCode.BadRequest, "BILL_NOT_COMPLETED");
+
+        if (bill.PaymentType == PaymentType.Wallet || bill.WalletAmount > 0)
+            throw new AppException(
+                "This bill was paid (at least partly) from a member's wallet, so its payment " +
+                "method cannot be corrected here - see EditPaymentMethodAsync's wallet note.",
+                System.Net.HttpStatusCode.BadRequest, "WALLET_CORRECTION_NOT_SUPPORTED");
+
+        if (dto.CashAmount < 0 || dto.OnlineAmount < 0)
+            throw new AppException(
+                "A payment cannot contain a negative amount.",
+                System.Net.HttpStatusCode.BadRequest, "NEGATIVE_PAYMENT_AMOUNT");
+
+        if (Math.Round(dto.CashAmount + dto.OnlineAmount, 2) != Math.Round(bill.TotalAmount, 2))
+            throw new AppException(
+                $"The corrected split must still add up to the bill's total of {bill.TotalAmount:0.00} " +
+                $"(cash {dto.CashAmount:0.00} + online {dto.OnlineAmount:0.00} = " +
+                $"{dto.CashAmount + dto.OnlineAmount:0.00}).",
+                System.Net.HttpStatusCode.BadRequest, "PAYMENT_SPLIT_MISMATCH");
+
+        var oldPaymentType = bill.PaymentType;
+        var oldCashAmount = bill.CashAmount;
+        var oldOnlineAmount = bill.OnlineAmount;
+        decimal cashDelta = dto.CashAmount - oldCashAmount;
+
+        bill.PaymentType = dto.NewPaymentType;
+        bill.CashAmount = dto.CashAmount;
+        bill.OnlineAmount = dto.OnlineAmount;
+        // ActualCashCollected/CashReceived/ChangeReturned describe a specific tendering moment
+        // that already happened and isn't being redone here - only left consistent so a cash
+        // amount of zero doesn't leave a stale "collected" figure sitting behind it.
+        bill.ActualCashCollected = dto.CashAmount;
+        if (dto.CashAmount == 0)
+        {
+            bill.CashReceived = 0;
+            bill.ChangeReturned = 0;
+        }
+        bill.UpdatedAt = DateTimeOffset.UtcNow;
+        _unitOfWork.Repository<Bill>().Update(bill);
+
+        // The Bill row above is what the Billing Counter and this bill's own receipt read - but
+        // End of Day's Cash/Online totals (EodService.GenerateReportAsync) sum the ORIGINAL
+        // Payment row instead, not the Bill: `payments.Sum(p => p.CashAmount/OnlineAmount)`. A
+        // correction that only touched Bill left that Payment row exactly as it was tendered,
+        // so a bill corrected from Cash to Online kept counting as Cash on End of Day forever -
+        // "online in online, cash in cash" never actually held once anything was corrected.
+        // Every non-wallet Payment tied to this bill (in practice always exactly one - a
+        // Completed bill can only be paid once) is corrected the same way as the Bill itself.
+        var nonWalletPayments = bill.Payments.Where(p => p.WalletAmount == 0).ToList();
+        if (nonWalletPayments.Count == 1)
+        {
+            var payment = nonWalletPayments[0];
+            payment.PaymentType = dto.NewPaymentType;
+            payment.CashAmount = dto.CashAmount;
+            payment.OnlineAmount = dto.OnlineAmount;
+            payment.ActualCashCollected = dto.CashAmount;
+            if (dto.CashAmount == 0)
+            {
+                payment.CashReceived = 0;
+                payment.ChangeReturned = 0;
+            }
+            _unitOfWork.Repository<Payment>().Update(payment);
+        }
+        else if (nonWalletPayments.Count > 1)
+        {
+            // Genuinely unexpected shape for a Completed bill - refuse rather than guess which
+            // of several payment rows to rewrite and risk End of Day disagreeing with itself in
+            // a new way.
+            throw new AppException(
+                "This bill has more than one payment record, so its payment method can't be " +
+                "safely corrected here - which one to change is ambiguous.",
+                System.Net.HttpStatusCode.Conflict, "AMBIGUOUS_PAYMENT_RECORDS");
+        }
+
+        // Book the cash delta into TODAY's drawer, not the original day's - see the method
+        // comment. Looked up by branch alone, not the correcting actor's own shift: a Super
+        // Admin correcting from Head Office is not on any shift here at all, and even locally
+        // the bill's OWN (probably long-closed) original shift is exactly the wrong one to ask
+        // - the point is whichever register is open right now, today. No open register right
+        // now (e.g. corrected outside branch hours) means there is nothing to adjust; the bill
+        // and audit trail still record the correction either way.
+        CashRegister? activeRegister = null;
+        if (cashDelta != 0)
+        {
+            activeRegister = await _unitOfWork.Repository<CashRegister>().Query()
+                .FirstOrDefaultAsync(cr => cr.BranchId == branchId && cr.Status == CashRegisterStatus.Open);
+
+            if (activeRegister != null)
+            {
+                activeRegister.ExpectedDrawerCash += cashDelta;
+                activeRegister.TotalCashSales += cashDelta;
+                _unitOfWork.Repository<CashRegister>().Update(activeRegister);
+
+                // CashTransaction.OperatorId is a non-nullable FK into THIS branch's own local
+                // Operators table - same fault class as ApplyDiscountAsync's DiscountBy note. A
+                // correction issued locally by a genuine branch Operator/Admin/Super Admin
+                // satisfies that fine; one routed down as a remote command from Head Office
+                // never can, because actorId is then a Head Office User's own id, which this
+                // branch's database has never seen. Confirmed live: every payment correction
+                // issued from Head Office failed outright with a 23503 foreign key violation,
+                // the same failure mode discounts had before that fix. Falls back to the open
+                // register's own operator - it is their drawer being adjusted either way - so
+                // the correction still applies instead of failing the whole transaction over
+                // who gets named on one internal bookkeeping row; the real actor is still
+                // recorded in full on the audit log entry below regardless.
+                var operatorIdForTransaction = await _unitOfWork.Repository<Operator>().Query()
+                    .AnyAsync(o => o.Id == actorId)
+                    ? actorId
+                    : activeRegister.OperatorId;
+
+                await _unitOfWork.Repository<CashTransaction>().AddAsync(new CashTransaction
+                {
+                    CashRegisterId = activeRegister.Id,
+                    BillId = bill.Id,
+                    BranchId = branchId,
+                    OperatorId = operatorIdForTransaction,
+                    PcNumber = bill.Pc?.PcNumber,
+                    CustomerName = bill.CustomerName ?? "Walk-in",
+                    TransactionType = "payment_method_correction",
+                    CashAmount = cashDelta,
+                    CashReceived = 0,
+                    ChangeReturned = 0,
+                    ActualCashCollected = cashDelta,
+                    GamingAmount = 0,
+                    FoodAmount = 0,
+                    CreatedAt = DateTimeOffset.UtcNow
+                });
+            }
+        }
+
+        await _auditService.LogAsync(new AuditEntry
+        {
+            OperatorId = actorId,
+            UserId = actorId,
+            UserRole = actorRole,
+            UserName = string.Empty,
+            Action = AuditActions.PaymentMethodEdit,
+            BranchId = branchId,
+            TargetType = "bill",
+            TargetId = bill.Id,
+            Details = new
+            {
+                OldPaymentType = oldPaymentType?.ToString(),
+                NewPaymentType = dto.NewPaymentType.ToString(),
+                OldCashAmount = oldCashAmount,
+                NewCashAmount = dto.CashAmount,
+                OldOnlineAmount = oldOnlineAmount,
+                NewOnlineAmount = dto.OnlineAmount,
+                Reason = dto.Reason,
+            }
+        });
+
+        await _unitOfWork.SaveChangesAsync();
+        await _hubNotification.BroadcastBillingUpdateAsync(branchId, bill.Id);
+        if (activeRegister != null)
+            await _hubNotification.BroadcastCashRegisterUpdateAsync(branchId, activeRegister.Id);
 
         return MapToDto(bill);
     }

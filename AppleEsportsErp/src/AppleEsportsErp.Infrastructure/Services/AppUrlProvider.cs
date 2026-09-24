@@ -121,6 +121,14 @@ public class AppUrlProvider : IAppUrlProvider
     public string BuildResetPasswordLink(string email, string token)
     {
         var baseUrl = ResetLinkBaseUrl();
-        return $"{baseUrl}/reset-password?email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
+
+        // A fragment (#...), not a query string (?...) - the one part of a URL a browser never
+        // includes in the actual HTTP request line. A query string version of this same link put
+        // a one-time password-reset token in plain text into every access log between the
+        // recipient and this server - nginx's, any CDN's, any corporate proxy's - all of which
+        // outlive the token's own one-hour expiry and the "used once" guard on it by months or
+        // years. A fragment is read by the page's own JavaScript after the browser has already
+        // finished navigating, and simply never travels over the wire to be logged anywhere.
+        return $"{baseUrl}/reset-password#email={Uri.EscapeDataString(email)}&token={Uri.EscapeDataString(token)}";
     }
 }

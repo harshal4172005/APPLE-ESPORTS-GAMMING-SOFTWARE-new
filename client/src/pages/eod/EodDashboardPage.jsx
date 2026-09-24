@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment } from 'react';
-import { ShieldCheck, AlertTriangle, FileText, CheckCircle, Lock, Monitor, Utensils, Clock, Printer, Download, Wrench, ZapOff, Clock as ClockIcon } from 'lucide-react';
+import { AlertTriangle, FileText, Lock, Monitor, Utensils, Clock, Printer, Download, Wrench, ZapOff, Clock as ClockIcon, Pencil, X } from 'lucide-react';
 import { printBill } from '../../utils/printBill';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import api from '../../config/api';
 import PageHeader from '../../components/layout/PageHeader';
 import { useSocket } from '../../contexts/SocketContext';
+import { useToast } from '../../components/ui/Toast';
+import { editPaymentMethod } from '../../api/billing.api';
 import { createReport, addStatGrid, addTable, save, ROW_TINT_RED, ROW_TINT_GREEN, ROW_TINT_NEUTRAL } from '../../utils/pdfReport';
 import EodPaymentSummaryBar from '../../components/eod/EodPaymentSummaryBar';
 import { getBranchMaintenanceLogs } from '../../api/maintenanceLogs.api';
@@ -54,7 +56,73 @@ function shiftGroupLabel(group) {
 }
 
 export default function EodDashboardPage() {
-  const { isSuperAdmin, user } = useAuth();
+  const { isSuperAdmin, user, canCorrectPaymentMethod } = useAuth();
+  const toast = useToast();
+
+  // ── Payment-method correction, inline from an EOD entry ──
+  // Reuses the same PATCH /billing/{id}/payment-method endpoint as Billing Counter's own
+  // "Change payment method" control (BillDetailsPanel.jsx) - this is just a second place to
+  // reach it, for someone reviewing a day's entries here rather than pulling up the bill at
+  // the counter. The live BillUpdated subscription already wired below (fetchEodData) means
+  // this table refreshes on its own once the correction is saved - no separate refetch needed.
+  const [editingBillId, setEditingBillId] = useState(null);
+  const [correctMethod, setCorrectMethod] = useState('cash');
+  const [correctCash, setCorrectCash] = useState('');
+  const [correctOnline, setCorrectOnline] = useState('');
+  const [correctReason, setCorrectReason] = useState('');
+  const [correctBusy, setCorrectBusy] = useState(false);
+  const [correctError, setCorrectError] = useState(null);
+
+  const openCorrectPayMethod = (bill) => {
+    const total = bill.totalRevenue || 0;
+    const method = (bill.paymentType || '').toLowerCase();
+    setCorrectMethod(method === 'online' ? 'online' : method === 'split' ? 'split' : 'cash');
+    setCorrectCash(method === 'online' ? '0' : String(total));
+    setCorrectOnline(method === 'online' ? String(total) : '0');
+    setCorrectReason('');
+    setCorrectError(null);
+    // realBillId, never billId - billId on this row is the human-readable bill NUMBER
+    // (e.g. "BILL-20260917-XXXX"), and the correction endpoint needs the actual id.
+    setEditingBillId(bill.realBillId);
+  };
+
+  const handleCorrectPayMethod = async (bill) => {
+    const total = bill.totalRevenue || 0;
+    let cashAmount = 0, onlineAmount = 0, newPaymentType;
+    if (correctMethod === 'cash') { cashAmount = total; newPaymentType = 'Cash'; }
+    else if (correctMethod === 'online') { onlineAmount = total; newPaymentType = 'Online'; }
+    else { cashAmount = Number(correctCash) || 0; onlineAmount = Number(correctOnline) || 0; newPaymentType = 'Split'; }
+
+    if (Math.round((cashAmount + onlineAmount) * 100) !== Math.round(total * 100)) {
+      setCorrectError(`Cash + Online must add up to ₹${total.toFixed(2)}.`);
+      return;
+    }
+    if (!correctReason.trim()) {
+      setCorrectError('A reason is required.');
+      return;
+    }
+
+    setCorrectBusy(true);
+    setCorrectError(null);
+    try {
+      // realBillId, never billId - see openCorrectPayMethod's comment.
+      await editPaymentMethod(bill.realBillId, {
+        newPaymentType, cashAmount, onlineAmount, reason: correctReason.trim(),
+      });
+      toast.success('Payment method corrected');
+      setEditingBillId(null);
+    } catch (err) {
+      setCorrectError(err.response?.data?.error || err.message || 'Failed to correct payment method');
+    } finally {
+      setCorrectBusy(false);
+    }
+  };
+
+  const canEditPayment = (bill) => {
+    if (!canCorrectPaymentMethod()) return false;
+    const method = (bill.paymentType || '').toLowerCase();
+    return method === 'cash' || method === 'online' || method === 'split';
+  };
   const { activeBranch } = useBranch();
   const { subscribe, connected, SIGNALR_HUBS } = useSocket();
 
@@ -62,12 +130,32 @@ export default function EodDashboardPage() {
   // this screen at 1am IST while closing up must still default to tonight's
   // report, not tomorrow's UTC date.
   const [targetDate, setTargetDate] = useState(currentTradingDayIst()); // YYYY-MM-DD
-  const [summaryBarHeight, setSummaryBarHeight] = useState(140);
+  // Same field, same default - a single day is just a range of one. Only once someone actually
+  // picks a later end date does the page stop asking for one day's cash register (which only
+  // ever means one shift's drawer) and switch to showing every day in between instead.
+  const [endDate, setEndDate] = useState(currentTradingDayIst());
+  const isRange = endDate > targetDate;
+  const rangeLabel = isRange ? `${targetDate} to ${endDate}` : targetDate;
+  const [rangeDaily, setRangeDaily] = useState([]);
+  const [rangeCredits, setRangeCredits] = useState([]);
+  // Compact by default on a browser that has never opened this page before - a shift-close
+  // operator wants a glance at the totals, not the PC grid above covered up the moment EOD
+  // opens. Remembered per-browser after that: dragging the bar persists across reloads and
+  // future visits instead of snapping back to whatever the default was every single time.
+  const [summaryBarHeight, setSummaryBarHeight] = useState(() => {
+    try {
+      const stored = localStorage.getItem('eodSummaryBar.height');
+      return stored ? Number(stored) : 180;
+    } catch {
+      return 180;
+    }
+  });
+
+  useEffect(() => {
+    try { localStorage.setItem('eodSummaryBar.height', String(summaryBarHeight)); } catch { /* ignore */ }
+  }, [summaryBarHeight]);
   const [report, setReport] = useState(null);
-  const [validation, setValidation] = useState(null);
-  const [isHistorical, setIsHistorical] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
-  const [isFinalizing, setIsFinalizing] = useState(false);
   const [error, setError] = useState(null);
 
   const [pcs, setPcs] = useState([]);
@@ -98,74 +186,56 @@ export default function EodDashboardPage() {
     setIsUpdating(true);
     setError(null);
 
+    const rangeSelected = endDate > targetDate;
+
     try {
-      // First try to fetch historical snapshot
-      try {
-        const { data: historyData } = await api.get('/eod/history', {
-          params: { date: targetDate, branchId: targetBranchId }
-        });
+      // Window must be the same 06:00-06:00 IST trading day boundary /eod/preview uses, not
+      // midnight-to-midnight UTC - otherwise this table and the revenue cards above it disagree
+      // about which bills belong to "today". For a real range, this spans midnight IST on the
+      // start date through to midnight IST the morning after the end date.
+      const startIso = tradingDayRangeIst(targetDate).startIso;
+      const endIso = tradingDayRangeIst(endDate).endIso;
 
-        setReport(historyData.data.data); // historyData.data is EodSnapshotDto, .data is EodReportDto
-        setIsHistorical(true);
-      } catch (historyErr) {
-        if (historyErr.response?.status === 404) {
-          // No snapshot exists. It is either today or an unfinalized past date.
-          setIsHistorical(false);
-          setValidation(null);
+      // A single business day still asks /eod/preview for its cash register and shift figures -
+      // that concept genuinely only means one day's drawer, and there is nothing sensible to sum
+      // it into across a range. A real range skips it entirely instead of calling it once per
+      // day, which is what let this page reuse the exact same range-report call either way.
+      const previewPromise = rangeSelected
+        ? Promise.resolve(null)
+        : api.get('/eod/preview', { params: { date: targetDate, branchId: targetBranchId } });
 
-          // Fetch Preview
-          const { data: previewData } = await api.get('/eod/preview', {
-            params: { date: targetDate, branchId: targetBranchId }
-          });
-          setReport(previewData.data);
-
-          // Fetch Validation Status
-          const { data: validationData } = await api.get('/eod/validation', {
-            params: { date: targetDate, branchId: targetBranchId }
-          });
-          setValidation(validationData.data);
-        } else {
-          throw historyErr;
-        }
-      }
-
-      // Also fetch range-report to get allBills and PCs for PC-Wise Grid, and maintenance logs.
-      // Window must be the same 06:00-06:00 IST trading day /eod/preview uses above, not
-      // midnight-to-midnight UTC - otherwise this table and the revenue cards above it
-      // disagree about which bills belong to "today".
-      const { startIso, endIso } = tradingDayRangeIst(targetDate);
-      const [pcsRes, billsRes] = await Promise.all([
+      const [previewData, pcsRes, billsRes] = await Promise.all([
+        previewPromise,
         api.get('/pcs', { params: { branchId: targetBranchId } }),
         api.get('/eod/range-report', {
-          params: {
-            startDate: startIso,
-            endDate: endIso,
-            branchId: targetBranchId
-          }
+          params: { startDate: startIso, endDate: endIso, branchId: targetBranchId }
         })
       ]);
+
+      setReport(previewData?.data?.data ?? null);
       setPcs(pcsRes.data?.data || []);
       setAllBills(billsRes.data?.data?.allBills || []);
       setDowntime(billsRes.data?.data?.downtime || []);
       setShifts(billsRes.data?.data?.shifts || []);
+      setRangeDaily(billsRes.data?.data?.daily || []);
+      setRangeCredits(billsRes.data?.data?.allCredits || []);
 
       // Fetch maintenance logs separately so it doesn't break EOD if it fails
       try {
         const maintenanceRes = await getBranchMaintenanceLogs(targetBranchId, 30);
-        // Show maintenance logs that were ACTIVE on the target date:
-        // - Marked on or before the target date
-        // - Either not resolved yet, OR resolved on/after the target date
-        //   (">=", not ">": a PC marked and restored on the same day must still show up)
-        const logsActiveOnDate = (maintenanceRes.data || []).filter(log => {
+        // Show maintenance logs active at any point between the start and end date - "on or
+        // before the end date" and "not resolved, or resolved on/after the start date" - which
+        // collapses to the exact same single-day check already here when start === end.
+        const logsActiveInRange = (maintenanceRes.data || []).filter(log => {
           const markedDate = toIstDateString(log.markedAt);
           const resolvedDate = log.resolvedAt ? toIstDateString(log.resolvedAt) : null;
 
-          const markedOnOrBefore = markedDate <= targetDate;
+          const markedOnOrBefore = markedDate <= endDate;
           const notResolvedOrResolvedAfter = !resolvedDate || resolvedDate >= targetDate;
 
           return markedOnOrBefore && notResolvedOrResolvedAfter;
         });
-        setMaintenanceLogs(logsActiveOnDate);
+        setMaintenanceLogs(logsActiveInRange);
       } catch (err) {
         console.error('Failed to fetch maintenance logs:', err);
         setMaintenanceLogs([]);
@@ -175,12 +245,23 @@ export default function EodDashboardPage() {
 
     } catch (err) {
       setError(err.response?.data?.error || err.response?.data?.message || 'Failed to fetch EOD data.');
+      // A failed poll or a date switch that stumbles must not leave the previous date's full
+      // report sitting on screen under the error banner - that reads as live, current data
+      // when it is neither. Clear everything so the screen actually goes blank on failure.
+      setReport(null);
+      setPcs([]);
+      setAllBills([]);
+      setShifts([]);
+      setDowntime([]);
+      setMaintenanceLogs([]);
+      setRangeDaily([]);
+      setRangeCredits([]);
     } finally {
       setIsLoading(false);
       setIsUpdating(false);
       isFetchingRef.current = false;
     }
-  }, [targetDate, targetBranchId, isSuperAdmin]);
+  }, [targetDate, endDate, targetBranchId, isSuperAdmin]);
 
   useEffect(() => {
     fetchEodData();
@@ -203,8 +284,6 @@ export default function EodDashboardPage() {
   // the branch's own machine, not here, so Head Office was never going to be pushed anything
   // about a branch - the timer is the only thing that was ever updating those figures.
   useEffect(() => {
-    if (isHistorical) return;   // a finalised day cannot change; polling it is pure waste
-
     const REFRESH_EVERY_MS = 10000;
 
     const tick = () => {
@@ -221,11 +300,11 @@ export default function EodDashboardPage() {
       clearInterval(pollInterval);
       document.removeEventListener('visibilitychange', tick);
     };
-  }, [fetchEodData, isHistorical]);
+  }, [fetchEodData]);
 
   // Instant refresh when something actually happens on this machine, on top of the timer above.
   useEffect(() => {
-    if (!connected || isHistorical) return;
+    if (!connected) return;
 
     const unsubCash = subscribe(SIGNALR_HUBS.CASH, 'CashRegisterUpdated', fetchEodData);
     const unsubBill = subscribe(SIGNALR_HUBS.BILLING, 'BillUpdated', fetchEodData);
@@ -236,85 +315,102 @@ export default function EodDashboardPage() {
       unsubBill();
       unsubSession();
     };
-  }, [connected, subscribe, SIGNALR_HUBS.CASH, SIGNALR_HUBS.BILLING, SIGNALR_HUBS.SESSIONS, fetchEodData, isHistorical]);
-
-  const handleFinalize = async () => {
-    if (!window.confirm("Are you sure? This will generate a permanent immutable snapshot for this date. It cannot be undone.")) return;
-
-    setIsFinalizing(true);
-    try {
-      await api.post('/eod/finalize', { date: targetDate });
-      await fetchEodData(); // Re-fetch to show historical locked view
-    } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to finalize EOD.');
-    } finally {
-      setIsFinalizing(false);
-    }
-  };
+  }, [connected, subscribe, SIGNALR_HUBS.CASH, SIGNALR_HUBS.BILLING, SIGNALR_HUBS.SESSIONS, fetchEodData]);
 
   const handleDownloadPdf = () => {
-    if (!report) return;
-    const title = 'End of Day Report';
-    const subtitle = `${activeBranch?.name || 'All Branches'}  •  ${targetDate}  •  ${isHistorical ? 'Finalized (Immutable)' : 'Live Preview'}`;
+    if (isRange ? rangeDaily.length === 0 : !report) return;
+    const title = isRange ? 'EOD Range Report' : 'End of Day Report';
+    const rangeLabel = isRange ? `${targetDate} to ${endDate}` : targetDate;
+    const subtitle = `${activeBranch?.name || 'All Branches'}  •  ${rangeLabel}  •  Live Preview`;
     const { doc } = createReport({ title, subtitle });
     let y = 90;
 
-    y = addStatGrid(doc, y, [
-      { label: 'Total Net Revenue', value: `Rs ${report.revenue.netRevenue}` },
-      { label: 'Gaming Revenue', value: `Rs ${report.revenue.totalGamingRevenue}` },
-      { label: 'Food Revenue', value: `Rs ${report.revenue.totalFoodRevenue}` },
-      { label: 'Discounts Applied', value: `Rs ${report.revenue.totalDiscounts}` },
-    ]);
-    y += 10;
+    if (isRange) {
+      // A cash register only ever means one shift's drawer - there is no sensible way to sum
+      // "opening balance" or "physically counted" across several of them, so a range prints the
+      // same daily revenue breakdown the screen shows instead of a Cash Lifecycle table.
+      const rangeTotals = rangeDaily.reduce((acc, d) => ({
+        gaming: acc.gaming + d.gamingRevenue,
+        food: acc.food + d.foodRevenue,
+        discount: acc.discount + (d.discountAmount || 0),
+        net: acc.net + d.totalRevenue,
+      }), { gaming: 0, food: 0, discount: 0, net: 0 });
 
-    y = addTable(doc, y, {
-      title, subtitle,
-      heading: 'Cash Lifecycle Summary',
-      head: ['Metric', 'Amount'],
-      // Same rows as the screen, and for the same reasons. A printed report is the copy that
-      // gets kept and argued over later, so an uncounted drawer must not print as Rs 0 and a
-      // handover shortfall must not vanish from the column it explains.
-      body: [
-        ['Opening Balance Total', `Rs ${report.cash.totalOpeningBalance}`],
-        ['Cash Sales + Wallet TopUps', `Rs ${report.cash.totalCashSales}`],
-        ['Petty Expenses', `-Rs ${report.cash.totalPettyExpenses}`],
-        ...(Number(report.cash.differencesFoundEarlier ?? 0) !== 0
-          ? [[
-              Number(report.cash.differencesFoundEarlier) < 0
-                ? 'Missing at an earlier handover'
-                : 'Extra at an earlier handover',
-              `Rs ${Math.abs(Number(report.cash.differencesFoundEarlier)).toFixed(2)}`,
-            ]]
-          : []),
-        ['Expected Drawer Total', `Rs ${report.cash.expectedCashInDrawer}`],
-        ['Physically Counted', report.cash.actualPhysicalCashCounted == null
-          ? 'Not counted yet'
-          : `Rs ${report.cash.actualPhysicalCashCounted}`],
-        ['Total Difference', report.cash.totalDiscrepancy == null
-          ? 'Unknown until the drawer is counted'
-          : `Rs ${report.cash.totalDiscrepancy}`],
-      ],
-    });
+      y = addStatGrid(doc, y, [
+        { label: 'Total Net Revenue', value: `Rs ${rangeTotals.net.toFixed(2)}` },
+        { label: 'Gaming Revenue', value: `Rs ${rangeTotals.gaming.toFixed(2)}` },
+        { label: 'Food Revenue', value: `Rs ${rangeTotals.food.toFixed(2)}` },
+        { label: 'Discounts Applied', value: `Rs ${rangeTotals.discount.toFixed(2)}` },
+      ]);
+      y += 10;
 
-    const creditsPending = (report.creditLogs?.filter(c => c.status?.toLowerCase() === 'pending')
-      .reduce((acc, c) => acc + c.creditAmount, 0) || 0).toFixed(2);
-    const overallEndTotal = (report.paymentMethods.totalCash + report.paymentMethods.totalOnline + report.paymentMethods.totalWalletDeductions + report.paymentMethods.totalWalletTopUps).toFixed(2);
+      y = addTable(doc, y, {
+        title, subtitle,
+        heading: 'Daily Revenue Breakdown',
+        head: ['Date', 'Net Gaming', 'Net Food & Drink', 'Discount', 'Total'],
+        body: rangeDaily.map(d => [
+          d.date, `Rs ${d.gamingRevenue.toFixed(2)}`, `Rs ${d.foodRevenue.toFixed(2)}`,
+          `Rs ${(d.discountAmount || 0).toFixed(2)}`, `Rs ${d.totalRevenue.toFixed(2)}`
+        ]),
+      });
+    } else {
+      y = addStatGrid(doc, y, [
+        { label: 'Total Net Revenue', value: `Rs ${report.revenue.netRevenue}` },
+        { label: 'Gaming Revenue', value: `Rs ${report.revenue.totalGamingRevenue}` },
+        { label: 'Food Revenue', value: `Rs ${report.revenue.totalFoodRevenue}` },
+        { label: 'Discounts Applied', value: `Rs ${report.revenue.totalDiscounts}` },
+      ]);
+      y += 10;
 
-    y = addTable(doc, y, {
-      title, subtitle,
-      heading: 'Overall Collection & Operations',
-      head: ['Metric', 'Value'],
-      body: [
-        ['Cash', `Rs ${report.paymentMethods.totalCash}`],
-        ['Online', `Rs ${report.paymentMethods.totalOnline}`],
-        ['Wallet Deductions (Gaming/Food)', `Rs ${report.paymentMethods.totalWalletDeductions}`],
-        ['Wallet Top-Ups (Cash Collected)', `Rs ${report.paymentMethods.totalWalletTopUps}`],
-        ['Credits Pending', `-Rs ${creditsPending}`],
-        ['Overall End Total', `Rs ${overallEndTotal}`],
-        ['Total Sessions', String(report.operations.totalSessions)],
-        ['Total Food Orders', String(report.operations.totalFoodOrders)],
-      ],
-    });
+      y = addTable(doc, y, {
+        title, subtitle,
+        heading: 'Cash Lifecycle Summary',
+        head: ['Metric', 'Amount'],
+        // Same rows as the screen, and for the same reasons. A printed report is the copy that
+        // gets kept and argued over later, so an uncounted drawer must not print as Rs 0 and a
+        // handover shortfall must not vanish from the column it explains.
+        body: [
+          ['Opening Balance Total', `Rs ${report.cash.totalOpeningBalance}`],
+          ['Cash Sales + Member Amount Top-Ups', `Rs ${report.cash.totalCashSales}`],
+          ['Petty Expenses', `-Rs ${report.cash.totalPettyExpenses}`],
+          ...(Number(report.cash.differencesFoundEarlier ?? 0) !== 0
+            ? [[
+                Number(report.cash.differencesFoundEarlier) < 0
+                  ? 'Missing at an earlier handover'
+                  : 'Extra at an earlier handover',
+                `Rs ${Math.abs(Number(report.cash.differencesFoundEarlier)).toFixed(2)}`,
+              ]]
+            : []),
+          ['Expected Drawer Total', `Rs ${report.cash.expectedCashInDrawer}`],
+          ['Physically Counted', report.cash.actualPhysicalCashCounted == null
+            ? 'Not counted yet'
+            : `Rs ${report.cash.actualPhysicalCashCounted}`],
+          ['Total Difference', report.cash.totalDiscrepancy == null
+            ? 'Unknown until the drawer is counted'
+            : `Rs ${report.cash.totalDiscrepancy}`],
+        ],
+      });
+
+      const creditsPending = (report.creditLogs?.filter(c => c.status?.toLowerCase() === 'pending')
+        .reduce((acc, c) => acc + c.creditAmount, 0) || 0).toFixed(2);
+      const overallEndTotal = (report.paymentMethods.totalCash + report.paymentMethods.totalOnline + report.paymentMethods.totalWalletDeductions + report.paymentMethods.totalWalletTopUps).toFixed(2);
+
+      y = addTable(doc, y, {
+        title, subtitle,
+        heading: 'Overall Collection & Operations',
+        head: ['Metric', 'Value'],
+        body: [
+          ['Cash', `Rs ${report.paymentMethods.totalCash}`],
+          ['Online', `Rs ${report.paymentMethods.totalOnline}`],
+          ['Member Amount Deductions (Gaming/Food)', `Rs ${report.paymentMethods.totalWalletDeductions}`],
+          ['Member Amount Top-Ups (Cash Collected)', `Rs ${report.paymentMethods.totalWalletTopUps}`],
+          ['Credits Pending', `-Rs ${creditsPending}`],
+          ['Overall End Total', `Rs ${overallEndTotal}`],
+          ['Total Sessions', String(report.operations.totalSessions)],
+          ['Total Food Orders', String(report.operations.totalFoodOrders)],
+        ],
+      });
+    }
 
     const pcRows = (pcs || []).map(pc => {
       const pcBills = allBills?.filter(b => b.pcId === pc.id) || [];
@@ -353,16 +449,16 @@ export default function EodDashboardPage() {
 
     y = addTable(doc, y, {
       title, subtitle,
-      heading: `Complete Billing Audit Logs (${targetDate})`,
+      heading: `Complete Billing Audit Logs (${rangeLabel})`,
       head: ['Date', 'PC Number', 'Start Time', 'End Time', 'Customer', 'Payment', 'Gaming', 'Food', 'Discount', 'Total', 'Note', 'Operator'],
       body: billBody,
       rowColor: (rowIndex) => shiftHeaderRows.has(rowIndex) ? ROW_TINT_NEUTRAL : null,
     });
 
-    const eodCreditRows = report.creditLogs || [];
+    const eodCreditRows = isRange ? rangeCredits : (report.creditLogs || []);
     y = addTable(doc, y, {
       title, subtitle,
-      heading: `Credit Audit Logs (${targetDate})`,
+      heading: `Credit Audit Logs (${rangeLabel})`,
       head: ['Date Created', 'Customer', 'PC', 'Original Bill', 'Initial Paid', 'Amount Due', 'Status', 'Date Cleared'],
       body: eodCreditRows.map(c => [
         new Date(c.createdAt).toLocaleString(), c.customerName, c.pcNumber,
@@ -376,7 +472,7 @@ export default function EodDashboardPage() {
     if (maintenanceRows.length) {
       y = addTable(doc, y, {
         title, subtitle,
-        heading: `Maintenance Logs (${targetDate})`,
+        heading: `Maintenance Logs (${rangeLabel})`,
         head: ['PC', 'Marked At', 'Marked By', 'Reason', 'Duration', 'Status', 'Resolved At', 'Resolution Notes'],
         body: maintenanceRows.map(log => [
           log.pcName || '-',
@@ -398,7 +494,7 @@ export default function EodDashboardPage() {
     if (downtimeRows.length) {
       y = addTable(doc, y, {
         title, subtitle,
-        heading: `Power Cut / Downtime Logs (${targetDate})`,
+        heading: `Power Cut / Downtime Logs (${rangeLabel})`,
         head: ['Kind', 'From', 'To', 'Minutes', 'Sessions Affected', 'Impact', 'Notes'],
         body: downtimeRows.map(d => [
           d.kind || '-',
@@ -412,10 +508,13 @@ export default function EodDashboardPage() {
       });
     }
 
-    save(doc, `Apple_Esports_EOD_${targetDate}.pdf`);
+    save(doc, `Apple_Esports_EOD_${isRange ? `${targetDate}_to_${endDate}` : targetDate}.pdf`);
   };
 
   const groupedBills = useMemo(() => groupBillsByShift(allBills, shifts), [allBills, shifts]);
+  // report.creditLogs only exists for a single day; a range sources the same rows from
+  // range-report's own allCredits instead (see fetchEodData) - same shape either way.
+  const creditRows = isRange ? rangeCredits : (report?.creditLogs || []);
 
   if (isSuperAdmin && !activeBranch) {
     return (
@@ -431,37 +530,48 @@ export default function EodDashboardPage() {
     <>
     <div
       className="h-full flex flex-col max-w-6xl mx-auto space-y-6 overflow-y-auto"
-      style={{ paddingBottom: report ? summaryBarHeight + 24 : 40 }}
+      // The fixed bottom bar's actual rendered height is always exactly `summaryBarHeight`
+      // (that value is what sets its CSS height, not a guess) - so this padding, driven by the
+      // same variable plus a clearance margin, can never fall short of what it needs to clear,
+      // whatever height the bar is dragged to.
+      style={{ paddingBottom: report ? summaryBarHeight + 32 : 40 }}
     >
       <div className="flex justify-between items-center bg-bg-2 p-6 rounded-xl border border-border">
         <PageHeader
           title="End of Day Dashboard"
-          subtitle={isHistorical ? 'Immutable Financial Snapshot' : 'Live Preview & Real-Time Updates'}
+          subtitle="Live Preview & Real-Time Updates"
           icon="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
         />
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={targetDate}
-              onChange={(e) => setTargetDate(e.target.value)}
-              className="bg-bg-3 border border-border rounded-lg px-4 py-2 text-text outline-none focus:border-accent"
-            />
-            <button
-              onClick={handleDownloadPdf}
-              disabled={isLoading || !report}
-              className="btn-secondary py-2 px-3 flex items-center gap-1.5 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <Download className="w-3.5 h-3.5" /> Download PDF
-            </button>
-          </div>
-          <div className="flex items-center gap-3">
-            {isHistorical && (
-              <span className="bg-neon-green/10 text-neon-green px-3 py-1 rounded border border-neon-green/30 text-xs font-bold uppercase tracking-widest flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4" /> Finalized
-              </span>
-            )}
-          </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={targetDate}
+            onChange={(e) => {
+              const next = e.target.value;
+              setTargetDate(next);
+              // Keeps the range the right way round with no extra click - picking a new start
+              // date past the current end date just brings the end date along with it, rather
+              // than silently swapping which field means what.
+              if (next > endDate) setEndDate(next);
+            }}
+            className="bg-bg-3 border border-border rounded-lg px-4 py-2 text-text outline-none focus:border-accent"
+          />
+          <span className="text-text-3 text-xs">to</span>
+          <input
+            type="date"
+            value={endDate}
+            min={targetDate}
+            onChange={(e) => setEndDate(e.target.value)}
+            className="bg-bg-3 border border-border rounded-lg px-4 py-2 text-text outline-none focus:border-accent"
+          />
+          <button
+            onClick={handleDownloadPdf}
+            disabled={isLoading || (isRange ? rangeDaily.length === 0 : !report)}
+            title={isRange ? 'Downloads the daily breakdown, billing, credit and maintenance logs for this range' : undefined}
+            className="btn-secondary py-2 px-3 flex items-center gap-1.5 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Download className="w-3.5 h-3.5" /> Download PDF
+          </button>
         </div>
       </div>
 
@@ -585,14 +695,34 @@ export default function EodDashboardPage() {
                             const startStr = bill.sessionStartTime ? new Date(bill.sessionStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
                             const endStr = bill.sessionEndTime ? new Date(bill.sessionEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-';
 
+                            const thisBillId = bill.billId || bill.id;
+                            // editingBillId is set from realBillId (see openCorrectPayMethod) -
+                            // compared against the same field here, not the display number.
+                            const isEditingThis = editingBillId === bill.realBillId;
+
                             return (
-                              <tr key={bill.billId} className="hover:bg-bg-3/40 transition-colors">
+                              <Fragment key={thisBillId}>
+                              <tr className="hover:bg-bg-3/40 transition-colors">
                                 <td className="py-3 px-4 text-text-2">{new Date(bill.date).toLocaleDateString()}</td>
                                 <td className="py-3 px-4 text-text font-bold">{bill.pcName || '-'}</td>
                                 <td className="py-3 px-4 text-text-2">{startStr}</td>
                                 <td className="py-3 px-4 text-text-2">{endStr}</td>
                                 <td className="py-3 px-4 text-text-2 font-sans">{bill.customer}</td>
-                                <td className="py-3 px-4 text-center text-text-3 uppercase">{bill.paymentType}</td>
+                                <td className="py-3 px-4 text-center text-text-3 uppercase">
+                                  <span className="inline-flex items-center gap-1.5">
+                                    {bill.paymentType}
+                                    {canEditPayment(bill) && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openCorrectPayMethod(bill)}
+                                        title="Change payment method"
+                                        className="text-text-3 hover:text-accent transition-colors"
+                                      >
+                                        <Pencil className="w-3 h-3" />
+                                      </button>
+                                    )}
+                                  </span>
+                                </td>
                                 <td className="py-3 px-4 text-right text-text">₹{bill.gamingRevenue.toFixed(2)}</td>
                                 <td className="py-3 px-4 text-right text-text">₹{bill.foodRevenue.toFixed(2)}</td>
                                 <td className="py-3 px-4 text-right text-neon-red">{bill.discount > 0 ? `-₹${bill.discount.toFixed(2)}` : '-'}</td>
@@ -609,6 +739,70 @@ export default function EodDashboardPage() {
                                   </button>
                                 </td>
                               </tr>
+                              {isEditingThis && (
+                                <tr>
+                                  <td colSpan={13} className="bg-bg-3/40 px-4 py-3">
+                                    <div className="max-w-md space-y-2.5 font-sans normal-case">
+                                      <div className="flex items-center justify-between">
+                                        <div className="text-[10px] font-bold text-accent uppercase tracking-widest">
+                                          Correct Payment Method — {bill.customer}, ₹{bill.totalRevenue.toFixed(2)}
+                                        </div>
+                                        <button type="button" onClick={() => setEditingBillId(null)} className="text-text-3 hover:text-text">
+                                          <X className="w-4 h-4" />
+                                        </button>
+                                      </div>
+                                      <div className="grid grid-cols-3 gap-1.5">
+                                        {['cash', 'online', 'split'].map(m => (
+                                          <button
+                                            key={m}
+                                            type="button"
+                                            onClick={() => setCorrectMethod(m)}
+                                            className={`py-1.5 rounded border text-[11px] font-bold uppercase tracking-wider transition-all ${
+                                              correctMethod === m
+                                                ? 'bg-accent/20 border-accent text-accent'
+                                                : 'bg-bg-2 border-border text-text-3 hover:border-accent/50'
+                                            }`}
+                                          >
+                                            {m}
+                                          </button>
+                                        ))}
+                                      </div>
+                                      {correctMethod === 'split' && (
+                                        <div className="grid grid-cols-2 gap-2">
+                                          <div>
+                                            <label className="text-[10px] text-text-3 uppercase tracking-wider">Cash</label>
+                                            <input type="number" value={correctCash} onChange={e => setCorrectCash(e.target.value)}
+                                              className="w-full bg-bg-2 border border-border rounded px-2 py-1.5 text-sm font-mono text-text" />
+                                          </div>
+                                          <div>
+                                            <label className="text-[10px] text-text-3 uppercase tracking-wider">Online</label>
+                                            <input type="number" value={correctOnline} onChange={e => setCorrectOnline(e.target.value)}
+                                              className="w-full bg-bg-2 border border-border rounded px-2 py-1.5 text-sm font-mono text-text" />
+                                          </div>
+                                        </div>
+                                      )}
+                                      <div>
+                                        <label className="text-[10px] text-text-3 uppercase tracking-wider">Reason (required)</label>
+                                        <input type="text" value={correctReason} onChange={e => setCorrectReason(e.target.value)}
+                                          placeholder="e.g. bank declined the online payment, customer paid cash instead"
+                                          className="w-full bg-bg-2 border border-border rounded px-2 py-1.5 text-xs text-text" />
+                                      </div>
+                                      {correctError && <div className="text-[11px] text-neon-red">{correctError}</div>}
+                                      <div className="flex gap-2 pt-1">
+                                        <button type="button" disabled={correctBusy} onClick={() => setEditingBillId(null)}
+                                          className="flex-1 py-1.5 rounded border border-border text-text-3 text-xs font-bold uppercase tracking-wider hover:bg-bg-2 disabled:opacity-50">
+                                          Cancel
+                                        </button>
+                                        <button type="button" disabled={correctBusy} onClick={() => handleCorrectPayMethod(bill)}
+                                          className="flex-1 py-1.5 rounded border border-accent bg-accent/10 text-accent text-xs font-bold uppercase tracking-wider hover:bg-accent/20 disabled:opacity-50">
+                                          {correctBusy ? 'Saving…' : 'Save Correction'}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                              </Fragment>
                             );
                           })}
                         </tbody>
@@ -633,75 +827,129 @@ export default function EodDashboardPage() {
         <div className="flex justify-center items-center min-h-[40vh]">
           <div className="w-8 h-8 rounded-full border-2 border-accent border-t-transparent animate-spin" />
         </div>
-      ) : report ? (
+      ) : (report || isRange) ? (
         <>
-          {/* Validation Panel (Only if not historical) */}
-          {!isHistorical && validation && (
-            <div className={`p-6 rounded-xl border ${validation.isReady ? 'bg-neon-green/5 border-neon-green/20' : 'bg-neon-red/5 border-neon-red/20'}`}>
-              <h3 className={`text-sm uppercase font-bold tracking-widest mb-4 flex items-center gap-2 ${validation.isReady ? 'text-neon-green' : 'text-neon-red'}`}>
-                {validation.isReady ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}
-                Financial Validation Status
-              </h3>
-              
-              {validation.isReady ? (
-                <p className="text-text-2 text-sm">All shifts are closed. All registers verified. Financials are balanced. You may proceed to finalize.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {validation.blockers.map((blocker, idx) => (
-                    <li key={idx} className="text-sm text-neon-red flex items-start gap-2">
-                      <span className="text-neon-red/50 mt-0.5">•</span>
-                      {blocker}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+          {!isRange && report && (
+            <>
+              {/* Revenue & Operations Summary Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
+                  <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Total Net Revenue</div>
+                  <div className="text-3xl font-mono font-bold text-accent">₹{report.revenue.netRevenue}</div>
+                </div>
+                <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
+                  <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Gaming Revenue</div>
+                  <div className="text-2xl font-mono font-bold text-text">₹{report.revenue.totalGamingRevenue}</div>
+                </div>
+                <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
+                  <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Food Revenue</div>
+                  <div className="text-2xl font-mono font-bold text-text">₹{report.revenue.totalFoodRevenue}</div>
+                </div>
+                <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
+                  <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Discounts Applied</div>
+                  <div className="text-2xl font-mono font-bold text-text">₹{report.revenue.totalDiscounts}</div>
+                </div>
+              </div>
+
+              {/* Operations Overview */}
+              <div className="bg-bg-2 rounded-xl border border-border shadow-lg p-6">
+                <h3 className="text-sm uppercase font-bold text-text-2 tracking-widest mb-6 border-b border-border pb-3 flex items-center gap-2">
+                  <FileText className="w-4 h-4" /> Operations Overview
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-bg-3 p-3 rounded-lg border border-border text-center">
+                    <div className="text-2xl font-bold text-text">{report.operations.totalSessions}</div>
+                    <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Sessions</div>
+                  </div>
+                  <div className="bg-bg-3 p-3 rounded-lg border border-border text-center">
+                    <div className="text-2xl font-bold text-text">{report.operations.totalFoodOrders}</div>
+                    <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Food Orders</div>
+                  </div>
+                </div>
+              </div>
+            </>
           )}
 
-          {/* Revenue & Operations Summary Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
-              <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Total Net Revenue</div>
-              <div className="text-3xl font-mono font-bold text-accent">₹{report.revenue.netRevenue}</div>
-            </div>
-            <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
-              <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Gaming Revenue</div>
-              <div className="text-2xl font-mono font-bold text-text">₹{report.revenue.totalGamingRevenue}</div>
-            </div>
-            <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
-              <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Food Revenue</div>
-              <div className="text-2xl font-mono font-bold text-text">₹{report.revenue.totalFoodRevenue}</div>
-            </div>
-            <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
-              <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Discounts Applied</div>
-              <div className="text-2xl font-mono font-bold text-text">₹{report.revenue.totalDiscounts}</div>
-            </div>
-          </div>
+          {isRange && (() => {
+            // A cash register only ever means one shift's drawer - summing "opening balance" or
+            // "physically counted" across several of them would not describe anything real, so
+            // a range shows the same daily revenue breakdown Reports already uses instead of the
+            // single-day Cash Lifecycle / Operations cards above.
+            const rangeTotals = rangeDaily.reduce((acc, d) => ({
+              gaming: acc.gaming + d.gamingRevenue,
+              food: acc.food + d.foodRevenue,
+              discount: acc.discount + (d.discountAmount || 0),
+              net: acc.net + d.totalRevenue,
+            }), { gaming: 0, food: 0, discount: 0, net: 0 });
 
-          {/* Operations Overview */}
-          <div className="bg-bg-2 rounded-xl border border-border shadow-lg p-6">
-            <h3 className="text-sm uppercase font-bold text-text-2 tracking-widest mb-6 border-b border-border pb-3 flex items-center gap-2">
-              <FileText className="w-4 h-4" /> Operations Overview
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-bg-3 p-3 rounded-lg border border-border text-center">
-                <div className="text-2xl font-bold text-text">{report.operations.totalSessions}</div>
-                <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Sessions</div>
-              </div>
-              <div className="bg-bg-3 p-3 rounded-lg border border-border text-center">
-                <div className="text-2xl font-bold text-text">{report.operations.totalFoodOrders}</div>
-                <div className="text-[10px] uppercase font-bold text-text-3 tracking-widest mt-1">Food Orders</div>
-              </div>
-            </div>
-          </div>
+            return (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
+                    <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Total Net Revenue</div>
+                    <div className="text-3xl font-mono font-bold text-accent">₹{rangeTotals.net.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
+                    <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Gaming Revenue</div>
+                    <div className="text-2xl font-mono font-bold text-text">₹{rangeTotals.gaming.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
+                    <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Food Revenue</div>
+                    <div className="text-2xl font-mono font-bold text-text">₹{rangeTotals.food.toFixed(2)}</div>
+                  </div>
+                  <div className="bg-bg-2 p-5 rounded-xl border border-border shadow-lg">
+                    <div className="text-text-3 text-xs uppercase font-bold tracking-widest mb-1">Discounts Applied</div>
+                    <div className="text-2xl font-mono font-bold text-text">₹{rangeTotals.discount.toFixed(2)}</div>
+                  </div>
+                </div>
+
+                <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg">
+                  <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2 mb-6">
+                    <FileText className="w-4.5 h-4.5 text-accent" />
+                    Daily Revenue Breakdown ({rangeLabel})
+                  </h2>
+                  <div className="overflow-x-auto">
+                    {rangeDaily.length === 0 ? (
+                      <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
+                        No billing records found in this range.
+                      </div>
+                    ) : (
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead>
+                          <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
+                            <th className="py-2.5 px-4">Date</th>
+                            <th className="py-2.5 px-4 text-right">Net Gaming</th>
+                            <th className="py-2.5 px-4 text-right">Net Food & Drink</th>
+                            <th className="py-2.5 px-4 text-right">Discount</th>
+                            <th className="py-2.5 px-4 text-right">Total</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border/40 font-mono">
+                          {rangeDaily.map(day => (
+                            <tr key={day.date} className="hover:bg-bg-3/40 transition-colors">
+                              <td className="py-2 px-4 text-text-2">{day.date}</td>
+                              <td className="py-2 px-4 text-right text-text">₹{day.gamingRevenue.toFixed(2)}</td>
+                              <td className="py-2 px-4 text-right text-text">₹{day.foodRevenue.toFixed(2)}</td>
+                              <td className="py-2 px-4 text-right text-neon-red">{day.discountAmount > 0 ? `-₹${day.discountAmount.toFixed(2)}` : '-'}</td>
+                              <td className="py-2 px-4 text-right text-neon-green font-bold">₹{day.totalRevenue.toFixed(2)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
 
           {/* ── Power cuts & connection losses ──
               Deliberately above the billing log: it is the context for the numbers below. */}
-          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg mt-8">
+          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg">
             <div className="flex justify-between items-center mb-4">
               <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2">
                 <ZapOff className="w-4.5 h-4.5 text-accent" />
-                Power &amp; Connection Interruptions ({targetDate})
+                Power &amp; Connection Interruptions ({rangeLabel})
               </h2>
               {downtime.length > 0 && (
                 <span className="text-xs font-mono text-neon-orange">
@@ -760,18 +1008,18 @@ export default function EodDashboardPage() {
           </div>
 
           {/* ── Complete Billing Audit Logs ── */}
-          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg mt-8">
+          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg">
             <div className="flex justify-between items-center mb-6">
               <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2">
                 <Clock className="w-4.5 h-4.5 text-accent" />
-                Complete Billing Audit Logs ({targetDate})
+                Complete Billing Audit Logs ({rangeLabel})
               </h2>
             </div>
 
             <div className="overflow-x-auto">
               {!allBills || allBills.length === 0 ? (
                 <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
-                  No bills found for the selected date.
+                  No bills found for the selected {isRange ? 'range' : 'date'}.
                 </div>
               ) : (
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
@@ -803,8 +1051,14 @@ export default function EodDashboardPage() {
                             </span>
                           </td>
                         </tr>
-                        {group.bills.map(bill => (
-                      <tr key={bill.billId} className="hover:bg-bg-3/40 transition-colors">
+                        {group.bills.map(bill => {
+                        const auditBillId = bill.billId || bill.id;
+                        // editingBillId is set from realBillId (see openCorrectPayMethod) -
+                        // compared against the same field here, not the display number.
+                        const isEditingThisAudit = editingBillId === bill.realBillId;
+                        return (
+                      <Fragment key={auditBillId}>
+                      <tr className="hover:bg-bg-3/40 transition-colors">
                         <td className="py-3 px-4 text-text-2">
                           {new Date(bill.date).toLocaleDateString()}
                         </td>
@@ -843,7 +1097,19 @@ export default function EodDashboardPage() {
                               {bill.paymentType}
                             </span>
                           ) : (
-                            <span className="text-text-3 uppercase">{bill.paymentType}</span>
+                            <span className="inline-flex items-center gap-1.5">
+                              <span className="text-text-3 uppercase">{bill.paymentType}</span>
+                              {canEditPayment(bill) && (
+                                <button
+                                  type="button"
+                                  onClick={() => openCorrectPayMethod(bill)}
+                                  title="Change payment method"
+                                  className="text-text-3 hover:text-accent transition-colors"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                              )}
+                            </span>
                           )}
                         </td>
                         <td className="py-3 px-4 text-right text-text">₹{bill.gamingRevenue.toFixed(2)}</td>
@@ -862,7 +1128,72 @@ export default function EodDashboardPage() {
                           </button>
                         </td>
                       </tr>
-                        ))}
+                      {isEditingThisAudit && (
+                        <tr>
+                          <td colSpan={13} className="bg-bg-3/40 px-4 py-3">
+                            <div className="max-w-md space-y-2.5 font-sans normal-case">
+                              <div className="flex items-center justify-between">
+                                <div className="text-[10px] font-bold text-accent uppercase tracking-widest">
+                                  Correct Payment Method — {bill.customer}, ₹{bill.totalRevenue.toFixed(2)}
+                                </div>
+                                <button type="button" onClick={() => setEditingBillId(null)} className="text-text-3 hover:text-text">
+                                  <X className="w-4 h-4" />
+                                </button>
+                              </div>
+                              <div className="grid grid-cols-3 gap-1.5">
+                                {['cash', 'online', 'split'].map(m => (
+                                  <button
+                                    key={m}
+                                    type="button"
+                                    onClick={() => setCorrectMethod(m)}
+                                    className={`py-1.5 rounded border text-[11px] font-bold uppercase tracking-wider transition-all ${
+                                      correctMethod === m
+                                        ? 'bg-accent/20 border-accent text-accent'
+                                        : 'bg-bg-2 border-border text-text-3 hover:border-accent/50'
+                                    }`}
+                                  >
+                                    {m}
+                                  </button>
+                                ))}
+                              </div>
+                              {correctMethod === 'split' && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <label className="text-[10px] text-text-3 uppercase tracking-wider">Cash</label>
+                                    <input type="number" value={correctCash} onChange={e => setCorrectCash(e.target.value)}
+                                      className="w-full bg-bg-2 border border-border rounded px-2 py-1.5 text-sm font-mono text-text" />
+                                  </div>
+                                  <div>
+                                    <label className="text-[10px] text-text-3 uppercase tracking-wider">Online</label>
+                                    <input type="number" value={correctOnline} onChange={e => setCorrectOnline(e.target.value)}
+                                      className="w-full bg-bg-2 border border-border rounded px-2 py-1.5 text-sm font-mono text-text" />
+                                  </div>
+                                </div>
+                              )}
+                              <div>
+                                <label className="text-[10px] text-text-3 uppercase tracking-wider">Reason (required)</label>
+                                <input type="text" value={correctReason} onChange={e => setCorrectReason(e.target.value)}
+                                  placeholder="e.g. bank declined the online payment, customer paid cash instead"
+                                  className="w-full bg-bg-2 border border-border rounded px-2 py-1.5 text-xs text-text" />
+                              </div>
+                              {correctError && <div className="text-[11px] text-neon-red">{correctError}</div>}
+                              <div className="flex gap-2 pt-1">
+                                <button type="button" disabled={correctBusy} onClick={() => setEditingBillId(null)}
+                                  className="flex-1 py-1.5 rounded border border-border text-text-3 text-xs font-bold uppercase tracking-wider hover:bg-bg-2 disabled:opacity-50">
+                                  Cancel
+                                </button>
+                                <button type="button" disabled={correctBusy} onClick={() => handleCorrectPayMethod(bill)}
+                                  className="flex-1 py-1.5 rounded border border-accent bg-accent/10 text-accent text-xs font-bold uppercase tracking-wider hover:bg-accent/20 disabled:opacity-50">
+                                  {correctBusy ? 'Saving…' : 'Save Correction'}
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </Fragment>
+                        );
+                        })}
                       </Fragment>
                     ))}
                   </tbody>
@@ -872,18 +1203,18 @@ export default function EodDashboardPage() {
           </div>
 
           {/* ── Credit Audit Logs ── */}
-          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg mt-8">
+          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg">
             <div className="flex justify-between items-center mb-6">
               <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2">
                 <Clock className="w-4.5 h-4.5 text-accent" />
-                Credit Audit Logs ({targetDate})
+                Credit Audit Logs ({rangeLabel})
               </h2>
             </div>
 
             <div className="overflow-x-auto">
-              {!report.creditLogs || report.creditLogs.length === 0 ? (
+              {creditRows.length === 0 ? (
                 <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
-                  No credit records found for the selected date.
+                  No credit records found for the selected {isRange ? 'range' : 'date'}.
                 </div>
               ) : (
                 <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
@@ -900,7 +1231,7 @@ export default function EodDashboardPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/40 font-mono">
-                    {report.creditLogs.map(credit => (
+                    {creditRows.map(credit => (
                       <tr key={credit.creditId} className="hover:bg-bg-3/40 transition-colors">
                         <td className="py-3 px-4 text-text-2 flex items-center gap-1">
                           {new Date(credit.createdAt).toLocaleString()}
@@ -932,11 +1263,11 @@ export default function EodDashboardPage() {
           </div>
 
           {/* ── Maintenance Audit Logs ── */}
-          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg mt-8">
+          <div className="card bg-bg-2 border border-border p-6 rounded-xl shadow-lg">
             <div className="flex justify-between items-center mb-6">
               <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2">
                 <Wrench className="w-4.5 h-4.5 text-neon-orange" />
-                Maintenance Logs (Last 30 Days)
+                Maintenance Logs ({rangeLabel})
               </h2>
             </div>
 
@@ -992,25 +1323,6 @@ export default function EodDashboardPage() {
             </div>
           </div>
 
-          {/* Finalize Button */}
-          {!isHistorical && isSuperAdmin && (
-            <div className="mt-8">
-              <button
-                onClick={handleFinalize}
-                disabled={!validation?.isReady || isFinalizing}
-                className="w-full py-5 rounded-xl font-bold uppercase tracking-widest text-sm transition-all bg-accent hover:bg-accent-hover text-white shadow-lg shadow-accent/20 flex justify-center items-center gap-3 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isFinalizing ? (
-                  <div className="w-5 h-5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-                ) : (
-                  <>
-                    <ShieldCheck className="w-5 h-5" />
-                    Finalize EOD & Create Immutable Snapshot
-                  </>
-                )}
-              </button>
-            </div>
-          )}
         </>
       ) : null}
     </div>

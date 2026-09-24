@@ -20,6 +20,14 @@ public class VersionInfoDto
     /// of the system that is not finished.
     /// </summary>
     public bool HasInstaller { get; set; }
+
+    /// <summary>
+    /// Whether the standalone gaming-PC agent exe has been published against this version too -
+    /// the same gate as <see cref="HasInstaller"/>, for the artifact AgentSelfUpdater fetches
+    /// instead of the branch installer. A version can have one without the other: a pure
+    /// server-side fix has nothing for a gaming PC to take.
+    /// </summary>
+    public bool HasAgent { get; set; }
 }
 
 public class BranchVersionStatusDto

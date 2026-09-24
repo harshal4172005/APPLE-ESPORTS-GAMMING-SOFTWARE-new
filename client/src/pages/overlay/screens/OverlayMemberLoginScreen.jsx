@@ -122,7 +122,7 @@ export default function OverlayMemberLoginScreen() {
           <div className="w-12 h-12 bg-accent/10 border border-accent/30 rounded-full flex items-center justify-center mx-auto mb-3 shadow-[0_0_15px_rgba(220,38,38,0.2)]">
             <UserCheck className="w-6 h-6 text-accent" />
           </div>
-          <p className="text-text-2 font-body text-xs">Login to start a session directly from your wallet.</p>
+          <p className="text-text-2 font-body text-xs">Login to start a session directly from your Member Amount.</p>
         </div>
 
         {isForgotPassword ? (

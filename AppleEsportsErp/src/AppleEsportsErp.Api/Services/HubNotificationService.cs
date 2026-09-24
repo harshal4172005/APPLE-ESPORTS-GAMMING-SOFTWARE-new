@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using AppleEsportsErp.Api.Hubs;
 using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Application.DTOs.Members;
 using Microsoft.EntityFrameworkCore;
 using AppleEsportsErp.Infrastructure.Data;
 using AppleEsportsErp.Domain.Enums;
@@ -19,6 +20,7 @@ public class HubNotificationService : IHubNotificationService
     private readonly IHubContext<CashHub> _cashHub;
     private readonly IHubContext<PcOverlayHub> _pcOverlayHub;
     private readonly IHubContext<DashboardHub> _dashboardHub;
+    private readonly IHubContext<NotificationHub> _notificationHub;
     private readonly IServiceScopeFactory _scopeFactory;
 
     public HubNotificationService(
@@ -30,6 +32,7 @@ public class HubNotificationService : IHubNotificationService
         IHubContext<CashHub> cashHub,
         IHubContext<PcOverlayHub> pcOverlayHub,
         IHubContext<DashboardHub> dashboardHub,
+        IHubContext<NotificationHub> notificationHub,
         IServiceScopeFactory scopeFactory)
     {
         _pcStatusHub = pcStatusHub;
@@ -40,6 +43,7 @@ public class HubNotificationService : IHubNotificationService
         _cashHub = cashHub;
         _pcOverlayHub = pcOverlayHub;
         _dashboardHub = dashboardHub;
+        _notificationHub = notificationHub;
         _scopeFactory = scopeFactory;
     }
 
@@ -169,12 +173,21 @@ public class HubNotificationService : IHubNotificationService
         await InvalidateDashboardCacheAsync(branchId);
     }
 
-    public async Task SendUnlockCommandToAgentAsync(Guid pcId, int durationMinutes, string? customerName)
+    public async Task SendUnlockCommandToAgentAsync(
+        Guid pcId, int durationMinutes, string? customerName,
+        decimal? packagePrice = null, int? plannedDurationMin = null, string? packageName = null,
+        decimal ratePerHour = 0m, int bufferMinutes = 0, DateTimeOffset? sessionStartUtc = null)
     {
         await _pcStatusHub.Clients.Group($"agent:{pcId}").SendAsync("UnlockSession", new
         {
             DurationMinutes = durationMinutes,
             CustomerName = customerName,
+            PackagePrice = packagePrice,
+            PlannedDurationMin = plannedDurationMin,
+            PackageName = packageName,
+            RatePerHour = ratePerHour,
+            BufferMinutes = bufferMinutes,
+            SessionStartUtc = sessionStartUtc,
             Timestamp = DateTimeOffset.UtcNow
         });
     }
@@ -223,5 +236,38 @@ public class HubNotificationService : IHubNotificationService
             await dashboardService.InvalidateCacheAsync(null);
         }
         await _dashboardHub.Clients.All.SendAsync("DashboardRefreshRequired");
+    }
+
+    public async Task SendForceLogoutAsync(Guid operatorId, string reason)
+    {
+        // "user:{id}" is joined by every connection on every BranchAwareHub (see
+        // Hubs.cs's OnConnectedAsync), so this reaches the operator's session regardless of
+        // which screen happens to be open. SocketContext.jsx has been listening for exactly
+        // this event on the notifications hub the whole time - nothing ever sent it.
+        await _notificationHub.Clients.Group($"user:{operatorId}").SendAsync("ForceLogout", reason);
+    }
+
+    public async Task BroadcastMemberBalanceUpdateAsync(Guid branchId, Guid memberId)
+    {
+        using var scope = _scopeFactory.CreateScope();
+        var memberService = scope.ServiceProvider.GetRequiredService<IMemberService>();
+        MemberDto? member;
+        try
+        {
+            member = await memberService.GetMemberByIdAsync(memberId);
+        }
+        catch
+        {
+            // Head Office broadcasting about a member id its own database doesn't have a row
+            // for (the branch-local edit path, not the remote one) - nothing to push.
+            return;
+        }
+
+        var payload = new { memberId, branchId, member };
+        // NotificationHub, not a new dedicated hub - this is the one already used for
+        // miscellaneous branch-wide pushes not tied to one specific domain hub (ForceLogout,
+        // PermissionsUpdated), and every screen already connects to it via SocketContext.jsx.
+        await _notificationHub.Clients.Group($"branch:{branchId}")
+            .SendAsync("MemberBalanceUpdated", new EventEnvelope<object>(payload));
     }
 }

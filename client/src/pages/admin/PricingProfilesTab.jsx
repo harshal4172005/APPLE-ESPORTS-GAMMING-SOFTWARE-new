@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { getPricingProfiles, createPricingProfile, updatePricingProfile, deletePricingProfile } from '../../api/settings.api';
+import { getPricingProfiles, createPricingProfile, updatePricingProfile, deletePricingProfile, createPricingPackage, updatePricingPackage, deletePricingPackage } from '../../api/settings.api';
 import { useToast } from '../../components/ui/Toast';
-import { Plus, Edit, Trash2, MapPin } from 'lucide-react';
+import { Plus, Edit, Trash2, MapPin, Package, X } from 'lucide-react';
 import { useBranch } from '../../contexts/BranchContext';
 
 export default function PricingProfilesTab() {
@@ -12,6 +12,7 @@ export default function PricingProfilesTab() {
   const [profiles, setProfiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [drawer, setDrawer] = useState({ isOpen: false, data: null });
+  const [packageForm, setPackageForm] = useState({ id: null, name: '', durationMinutes: '', price: '' });
 
   // Initially select first branch if none selected
   useEffect(() => {
@@ -78,12 +79,75 @@ export default function PricingProfilesTab() {
     }
   };
 
+  // Refetches profiles and keeps the open drawer's snapshot in sync, so the packages list
+  // updates in place without closing the drawer after every add/edit/delete.
+  const refreshDrawerPackages = async (profileId) => {
+    try {
+      const res = await getPricingProfiles(selectedBranchId);
+      const list = res.data || [];
+      setProfiles(list);
+      const updated = list.find(p => p.id === profileId);
+      if (updated) setDrawer(d => ({ ...d, data: updated }));
+    } catch (err) {
+      toast.error('Failed to refresh packages');
+    }
+  };
+
+  const resetPackageForm = () => setPackageForm({ id: null, name: '', durationMinutes: '', price: '' });
+
+  const handlePackageSubmit = async (e) => {
+    e.preventDefault();
+    if (!packageForm.name || !packageForm.durationMinutes || packageForm.price === '') return;
+
+    try {
+      if (packageForm.id) {
+        await updatePricingPackage(packageForm.id, {
+          name: packageForm.name,
+          durationMinutes: Number(packageForm.durationMinutes),
+          price: Number(packageForm.price),
+          sortOrder: Number(packageForm.durationMinutes),
+          isActive: true
+        });
+        toast.success('Package updated');
+      } else {
+        await createPricingPackage({
+          pricingProfileId: drawer.data.id,
+          name: packageForm.name,
+          durationMinutes: Number(packageForm.durationMinutes),
+          price: Number(packageForm.price),
+          sortOrder: Number(packageForm.durationMinutes)
+        });
+        toast.success('Package added');
+      }
+      resetPackageForm();
+      refreshDrawerPackages(drawer.data.id);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to save package');
+    }
+  };
+
+  const handleEditPackage = (pkg) => {
+    setPackageForm({ id: pkg.id, name: pkg.name, durationMinutes: pkg.durationMinutes, price: pkg.price });
+  };
+
+  const handleDeletePackage = async (pkg) => {
+    if (!window.confirm(`Remove the "${pkg.name}" package?`)) return;
+    try {
+      await deletePricingPackage(pkg.id);
+      toast.success('Package removed');
+      if (packageForm.id === pkg.id) resetPackageForm();
+      refreshDrawerPackages(drawer.data.id);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Failed to remove package');
+    }
+  };
+
   const renderDrawer = () => (
     <div className={`fixed inset-y-0 right-0 w-96 bg-bg-2 border-l border-border shadow-2xl transform transition-transform duration-300 z-50 ${drawer.isOpen ? 'translate-x-0' : 'translate-x-full'}`}>
       <div className="h-full flex flex-col">
         <div className="p-4 border-b border-border flex items-center justify-between bg-bg-3">
           <h2 className="font-heading font-bold text-accent tracking-wider">{drawer.data ? 'Edit Profile' : 'New Pricing Profile'}</h2>
-          <button onClick={() => setDrawer({ isOpen: false, data: null })} className="text-text-3 hover:text-text transition-colors text-2xl leading-none">&times;</button>
+          <button onClick={() => { setDrawer({ isOpen: false, data: null }); resetPackageForm(); }} className="text-text-3 hover:text-text transition-colors text-2xl leading-none">&times;</button>
         </div>
         <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
           <form onSubmit={handleSave} className="form-stack text-xs">
@@ -133,6 +197,82 @@ export default function PricingProfilesTab() {
               </button>
             </div>
           </form>
+
+          {drawer.data && (
+            <div className="mt-6 pt-4 border-t border-border">
+              <h3 className="font-heading font-bold text-accent tracking-wider text-xs flex items-center gap-2">
+                <Package size={14} /> CUSTOM PACKAGES
+              </h3>
+              <p className="text-[10px] text-text-3 mt-1">
+                Fixed duration/price deals (e.g. "4 hrs - ₹180") shown to customers instead of the auto 1/2/3-hour multiples.
+                Leave empty to keep using the hourly-rate multiples.
+              </p>
+
+              {(drawer.data.packages || []).length > 0 && (
+                <div className="mt-3 space-y-1.5">
+                  {drawer.data.packages.map(pkg => (
+                    <div key={pkg.id} className="flex items-center justify-between bg-bg-3 border border-border rounded px-2 py-1.5 text-xs">
+                      <span className="text-text">{pkg.name}</span>
+                      <span className="text-text-2 font-mono">{pkg.durationMinutes}m</span>
+                      <span className="text-accent font-mono">₹{Number(pkg.price).toFixed(2)}</span>
+                      <div className="flex gap-1.5">
+                        <button type="button" onClick={() => handleEditPackage(pkg)} className="btn-icon" title="Edit package">
+                          <Edit size={12} className="text-blue-400" />
+                        </button>
+                        <button type="button" onClick={() => handleDeletePackage(pkg)} className="btn-icon" title="Remove package">
+                          <Trash2 size={12} className="text-red-400" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <form onSubmit={handlePackageSubmit} className="form-stack text-xs mt-3 bg-bg-3 border border-border rounded p-3">
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="form-group col-span-3">
+                    <label>Package Name</label>
+                    <input
+                      className="form-control"
+                      placeholder="e.g. 30 min"
+                      value={packageForm.name}
+                      onChange={(e) => setPackageForm(f => ({ ...f, name: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Minutes</label>
+                    <input
+                      type="number" min="1" step="1"
+                      className="form-control"
+                      placeholder="30"
+                      value={packageForm.durationMinutes}
+                      onChange={(e) => setPackageForm(f => ({ ...f, durationMinutes: e.target.value }))}
+                    />
+                  </div>
+                  <div className="form-group col-span-2">
+                    <label>Price (₹)</label>
+                    <input
+                      type="number" min="0" step="1"
+                      className="form-control"
+                      placeholder="30"
+                      value={packageForm.price}
+                      onChange={(e) => setPackageForm(f => ({ ...f, price: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-2">
+                  <button type="submit" className="btn-primary flex-1 flex justify-center items-center gap-2 text-xs py-1.5">
+                    <Plus size={12} /> {packageForm.id ? 'UPDATE PACKAGE' : 'ADD PACKAGE'}
+                  </button>
+                  {packageForm.id && (
+                    <button type="button" onClick={resetPackageForm} className="btn-icon" title="Cancel edit">
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -163,7 +303,7 @@ export default function PricingProfilesTab() {
           </div>
           <button 
             className="btn-primary flex items-center gap-2 text-xs py-1.5"
-            onClick={() => setDrawer({ isOpen: true, data: null })}
+            onClick={() => { setDrawer({ isOpen: true, data: null }); resetPackageForm(); }}
             disabled={!selectedBranchId}
           >
             <Plus size={14} /> NEW PROFILE
@@ -189,6 +329,7 @@ export default function PricingProfilesTab() {
                 <th>Free Buffer</th>
                 <th>Refresh Rate (Hz)</th>
                 <th>System Specs</th>
+                <th>Packages</th>
                 <th>Status</th>
                 <th className="w-16"></th>
               </tr>
@@ -201,6 +342,9 @@ export default function PricingProfilesTab() {
                   <td className="text-text-2 font-mono">{p.bufferMinutes ?? 10}m free</td>
                   <td className="text-text-2">{p.refreshRate || '-'}</td>
                   <td className="text-text-2">{p.systemSpecs || '-'}</td>
+                  <td className="text-text-2">
+                    {(p.packages || []).length > 0 ? `${p.packages.length} custom` : <span className="text-text-3">hourly x1/2/3</span>}
+                  </td>
                   <td>
                     {p.isActive ? (
                       <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-green-500/20 text-green-400">ACTIVE</span>
@@ -209,7 +353,7 @@ export default function PricingProfilesTab() {
                     )}
                   </td>
                   <td className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button onClick={() => setDrawer({ isOpen: true, data: p })} className="btn-icon" title="Edit Profile">
+                    <button onClick={() => { setDrawer({ isOpen: true, data: p }); resetPackageForm(); }} className="btn-icon" title="Edit Profile">
                       <Edit size={14} className="text-blue-400" />
                     </button>
                     {p.isActive && (
@@ -227,7 +371,7 @@ export default function PricingProfilesTab() {
 
       {renderDrawer()}
       {drawer.isOpen && (
-        <div className="fixed inset-0 bg-bg/60 backdrop-blur-sm z-40" onClick={() => setDrawer({ isOpen: false, data: null })} />
+        <div className="fixed inset-0 bg-bg/60 backdrop-blur-sm z-40" onClick={() => { setDrawer({ isOpen: false, data: null }); resetPackageForm(); }} />
       )}
     </div>
   );

@@ -5,22 +5,24 @@ import Drawer from '../../components/ui/Drawer';
 import { useAuth } from '../../contexts/AuthContext';
 import { ROLES } from '../../config/constants';
 import { useBranch } from '../../contexts/BranchContext';
-import { 
+import {
   getBranches, createBranch, updateBranch, deleteBranch, activateBranch, deleteBranchPermanent,
   getOperators, createOperator, updateOperator, deleteOperator, activateOperator, deleteOperatorPermanent,
   getBranchPcsDetailed, createPc, updatePc, deletePc,
   getAuditLogs,
   forceLogoutOperator, getSystemConfigs, saveSystemConfig,
-  manageOperatorAdminRole, getPricingProfiles
+  manageOperatorAdminRole, getPricingProfiles,
+  getFoodGroups, createFoodGroup, setFoodGroupBranches, deleteFoodGroup
 } from '../../api/settings.api';
 import { authAPI } from '../../api/auth.api';
 import {
-  Store, Users, Activity, MoreVertical, Edit, Trash2, Plus, Save, Clock, MapPin, Monitor, Wrench, Shield, Check, Info, Eye, EyeOff, KeyRound
+  Store, Users, Activity, MoreVertical, Edit, Trash2, Plus, Save, Clock, MapPin, Monitor, Wrench, Shield, Check, Info, Eye, EyeOff, KeyRound, Gamepad2, Utensils
 } from 'lucide-react';
 import SystemConfigTab from './SystemConfigTab';
 import SecuritySettingsTab from './SecuritySettingsTab';
 import AdminsTab from './AdminsTab';
 import PricingProfilesTab from './PricingProfilesTab';
+import FoodSharingTab from './FoodSharingTab';
 import './SettingsPage.css';
 
 const PERMISSION_KEYS = [
@@ -32,8 +34,8 @@ const PERMISSION_KEYS = [
   { id: 'cash_register', label: 'Cash Desk', desc: 'Manage cash transactions in open shift' },
   { id: 'cash_desk', label: 'Cash Register', desc: 'Verify expected vs counted cash in drawer' },
   { id: 'online_desk', label: 'Online Desk', desc: 'Track all online (UPI/Card) payments in real-time' },
-  { id: 'wallet_desk', label: 'Wallet Desk', desc: 'Track member wallet top-ups and session deductions' },
-  { id: 'members', label: 'Members', desc: 'Register new loyalty accounts and top-up wallets' },
+  { id: 'wallet_desk', label: 'Member Amount Desk', desc: 'Track Member Amount top-ups and session deductions' },
+  { id: 'members', label: 'Members', desc: 'Register new loyalty accounts and top up Member Amount' },
   { id: 'menu_editor', label: 'Menu Editor', desc: 'Configure cafe rates and menu card items' },
   { id: 'pc_status', label: 'PC Status', desc: 'Full PC network health overview (Admin only)' },
   { id: 'reports', label: 'Reports', desc: 'Reconciliation reports, shift summaries and revenue data' },
@@ -55,6 +57,7 @@ export default function SettingsPage() {
   const [branches, setBranches] = useState([]);
   const [operators, setOperators] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [foodGroups, setFoodGroups] = useState([]);
 
   // Drawers State
   const [branchDrawer, setBranchDrawer] = useState({ isOpen: false, data: null });
@@ -73,12 +76,13 @@ export default function SettingsPage() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [bRes, oRes, aRes] = await Promise.all([
-        getBranches(), getOperators(), getAuditLogs()
+      const [bRes, oRes, aRes, fgRes] = await Promise.all([
+        getBranches(), getOperators(), getAuditLogs(), getFoodGroups()
       ]);
       setBranches(bRes.data || []);
       setOperators(oRes.data || []);
-      setAuditLogs(aRes.data || []);
+      setAuditLogs(aRes.data?.items || []);
+      setFoodGroups(fgRes.data || []);
     } catch (error) {
       toast.error('Failed to load settings data');
     } finally {
@@ -133,12 +137,14 @@ export default function SettingsPage() {
   const handleSaveBranch = async (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
+    const foodGroupId = formData.get('foodGroupId');
     const payload = {
       name: formData.get('name'),
       address: formData.get('address'),
       openingTime: formData.get('openingTime'),
       closingTime: formData.get('closingTime'),
-      configuredReservationDurations: formData.get('configuredReservationDurations')
+      configuredReservationDurations: formData.get('configuredReservationDurations'),
+      foodGroupId: foodGroupId || null
     };
 
     try {
@@ -334,8 +340,11 @@ export default function SettingsPage() {
         await updatePc(pcDrawer.data.id, payload);
         toast.success('PC updated successfully');
       } else {
-        await createPc(payload);
-        toast.success('PC created successfully');
+        const result = await createPc(payload);
+        // From Head Office this is queued for the branch to carry out rather than created on
+        // the spot - real message from the server rather than a flat "created", since the new
+        // PC will not actually show up in the list below until the branch has processed it.
+        toast.success(result?.data?.queued ? result.data.message : 'PC created successfully');
       }
       // Capture branchId before closing the drawer (avoids stale closure)
       const branchId = pcModal.branch?.id;
@@ -409,11 +418,17 @@ export default function SettingsPage() {
                 >
                   <Monitor size={16} /> Pricing Profiles
                 </button>
-                <button 
-                  className={`nav-item w-full ${activeTab === 'security' ? 'active' : ''}`} 
+                <button
+                  className={`nav-item w-full ${activeTab === 'security' ? 'active' : ''}`}
                   onClick={() => setActiveTab('security')}
                 >
                   <Shield size={16} /> Security Settings
+                </button>
+                <button
+                  className={`nav-item w-full ${activeTab === 'food-sharing' ? 'active' : ''}`}
+                  onClick={() => setActiveTab('food-sharing')}
+                >
+                  <Utensils size={16} /> Food & Snacks Sharing
                 </button>
               </>
             )}
@@ -650,6 +665,8 @@ export default function SettingsPage() {
               
               {/* GLOBAL ADMINS TAB */}
               {activeTab === 'admins' && <AdminsTab />}
+
+              {activeTab === 'food-sharing' && <FoodSharingTab />}
             </>
           )}
         </div>
@@ -719,7 +736,27 @@ export default function SettingsPage() {
             />
             <span className="text-[10px] text-text-3 mt-1 block">Enter minutes separated by commas.</span>
           </div>
-          
+
+          <div className="form-group">
+            <label>Share Food & Snacks With</label>
+            <select
+              name="foodGroupId"
+              defaultValue={branchDrawer.data?.foodGroupId || ''}
+              className="form-control"
+            >
+              <option value="">Don't share — keep independent</option>
+              {foodGroups.map(g => (
+                <option key={g.id} value={g.id}>
+                  {g.name} ({g.branches.map(b => b.name).join(', ') || 'no branches yet'})
+                </option>
+              ))}
+            </select>
+            <span className="text-[10px] text-text-3 mt-1 block">
+              Branches sharing a group show the same menu and stock count. Create a new group
+              first from Food & Snacks Sharing in the sidebar if the one you need isn't listed.
+            </span>
+          </div>
+
           <div className="drawer-footer pt-4">
             <button type="submit" className="btn-primary w-full flex justify-center items-center gap-2 font-heading tracking-wider">
               <Save size={16} /> SAVE LOCATION
@@ -835,12 +872,21 @@ export default function SettingsPage() {
                   <Info className="w-4 h-4" />
                   PC number must be unique within this branch context.
                 </div>
-                <button 
-                  onClick={() => setPcDrawer({ isOpen: true, data: null })}
-                  className="btn-primary flex items-center gap-1.5 text-[11px] font-bold uppercase py-1.5 px-3"
-                >
-                  <Plus size={13} /> ADD PC RIG
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setPcDrawer({ isOpen: true, data: null, isConsole: false })}
+                    className="btn-primary flex items-center gap-1.5 text-[11px] font-bold uppercase py-1.5 px-3"
+                  >
+                    <Plus size={13} /> ADD PC RIG
+                  </button>
+                  <button
+                    onClick={() => setPcDrawer({ isOpen: true, data: null, isConsole: true })}
+                    className="btn-primary flex items-center gap-1.5 text-[11px] font-bold uppercase py-1.5 px-3"
+                    title="A console (PS5, Xbox...) is billed and timed like a PC but has no screen-lock agent and no IP"
+                  >
+                    <Gamepad2 size={13} /> ADD CONSOLE
+                  </button>
+                </div>
               </div>
 
               {pcModal.loading ? (
@@ -876,7 +922,10 @@ export default function SettingsPage() {
                         return (
                           <tr key={p.id}>
                             <td className="font-semibold text-text font-heading text-xs">
-                              {p.pcNumber} {p.pcName && p.pcName !== p.pcNumber && <span className="text-text-3">({p.pcName})</span>}
+                              <span className="inline-flex items-center gap-1.5">
+                                {p.zone === 'Console' && <Gamepad2 size={12} className="text-accent shrink-0" />}
+                                {p.pcNumber} {p.pcName && p.pcName !== p.pcNumber && <span className="text-text-3">({p.pcName})</span>}
+                              </span>
                             </td>
                             <td className="text-text-2 max-w-[120px] truncate">
                               {parsedSpecs.gpu || parsedSpecs.cpu ? (
@@ -933,47 +982,61 @@ export default function SettingsPage() {
       )}
 
       {/* NESTED PC CREATE/EDIT DRAWER — key forces form remount per PC */}
+      {(() => {
+        // A drawer opened via "Add Console" starts with no data yet, so pcDrawer.isConsole
+        // carries the intent; editing an existing row instead reads it back off that row's own
+        // zone. Either way this decides whether the form asks for an IP at all.
+        const isConsoleMode = pcDrawer.data ? pcDrawer.data?.zone === 'Console' : !!pcDrawer.isConsole;
+        return (
       <Drawer
         isOpen={pcDrawer.isOpen}
         onClose={() => setPcDrawer({ isOpen: false, data: null })}
-        title={pcDrawer.data ? 'Update PC Rig Details' : 'Register PC Rig'}
+        title={pcDrawer.data ? 'Update PC Rig Details' : (isConsoleMode ? 'Register Console' : 'Register PC Rig')}
         width="400px"
       >
         <form key={pcDrawer.data?.id || 'new-pc'} onSubmit={handleSavePc} className="form-stack text-xs">
           <div className="form-group">
-            <label>PC ID / Station Number *</label>
-            <input 
-              name="pcNumber" 
-              required 
-              defaultValue={pcDrawer.data?.pcNumber} 
-              className="form-control" 
-              placeholder="e.g. PC-01"
-            />
-          </div>
-          
-          <div className="form-group">
-            <label>Friendly Name</label>
-            <input 
-              name="pcName" 
-              defaultValue={pcDrawer.data?.pcName} 
-              className="form-control" 
-              placeholder="e.g. RTX 4090 VIP Rig"
+            <label>{isConsoleMode ? 'Console ID / Station Number *' : 'PC ID / Station Number *'}</label>
+            <input
+              name="pcNumber"
+              required
+              defaultValue={pcDrawer.data?.pcNumber}
+              className="form-control"
+              placeholder={isConsoleMode ? 'e.g. PS5-01' : 'e.g. PC-01'}
             />
           </div>
 
           <div className="form-group">
-            <label>Zone / Tier (Legacy)</label>
-            <select 
-              name="zone" 
-              defaultValue={pcDrawer.data?.zone || 'Standard'} 
+            <label>Friendly Name</label>
+            <input
+              name="pcName"
+              defaultValue={pcDrawer.data?.pcName}
               className="form-control"
-            >
-              <option value="Standard">Standard Area</option>
-              <option value="VIP">VIP Lounge</option>
-              <option value="Console">Console Room</option>
-              <option value="Streaming">Streaming Booth</option>
-            </select>
+              placeholder={isConsoleMode ? 'e.g. PS5 - Booth 1' : 'e.g. RTX 4090 VIP Rig'}
+            />
           </div>
+
+          {isConsoleMode ? (
+            // A console is not a "zone" a customer picks a seat in - it is a device type. Fixed
+            // rather than shown as a dropdown, so nobody accidentally reassigns a registered
+            // console back into Standard/VIP/Streaming, which would put it behind the same
+            // AwaitingSetup gate a real gaming PC needs and it can never satisfy (no agent will
+            // ever call /api/agent/provision for a PS5).
+            <input type="hidden" name="zone" value="Console" />
+          ) : (
+            <div className="form-group">
+              <label>Zone / Tier (Legacy)</label>
+              <select
+                name="zone"
+                defaultValue={pcDrawer.data?.zone || 'Standard'}
+                className="form-control"
+              >
+                <option value="Standard">Standard Area</option>
+                <option value="VIP">VIP Lounge</option>
+                <option value="Streaming">Streaming Booth</option>
+              </select>
+            </div>
+          )}
 
           <div className="form-group">
             <label>Pricing Profile / Dynamic Zone</label>
@@ -992,15 +1055,17 @@ export default function SettingsPage() {
             <p className="text-[10px] text-text-3 mt-1">Select the billing profile for this PC.</p>
           </div>
 
-          <div className="form-group">
-            <label>IP Address</label>
-            <input 
-              name="ipAddress" 
-              defaultValue={pcDrawer.data?.ipAddress} 
-              className="form-control" 
-              placeholder="e.g. 192.168.1.100"
-            />
-          </div>
+          {!isConsoleMode && (
+            <div className="form-group">
+              <label>IP Address</label>
+              <input
+                name="ipAddress"
+                defaultValue={pcDrawer.data?.ipAddress}
+                className="form-control"
+                placeholder="e.g. 192.168.1.100"
+              />
+            </div>
+          )}
 
           <div className="border-t border-border pt-3 mt-3">
             <h4 className="font-semibold text-text uppercase tracking-wider text-[10px] mb-2 text-accent">Specifications</h4>
@@ -1050,6 +1115,8 @@ export default function SettingsPage() {
           </div>
         </form>
       </Drawer>
+        );
+      })()}
 
     </div>
   );

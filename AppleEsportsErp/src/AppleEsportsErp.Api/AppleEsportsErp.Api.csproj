@@ -28,6 +28,14 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
+    <!-- The version this build reports to Head Office. It read 1.0.0.0 because nothing set it,
+         so a branch would have reported version 1.0.0 whatever was installed - the same fault
+         the dashboard window had when it said 2.0 for months. Kept in step with the installer's
+         AppVersion by hand for now; there is one place to change and a build that disagrees with
+         its own installer is worth catching. -->
+    <Version>3.1.60</Version>
+    <FileVersion>3.1.60.0</FileVersion>
+    <AssemblyVersion>3.1.60.0</AssemblyVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>

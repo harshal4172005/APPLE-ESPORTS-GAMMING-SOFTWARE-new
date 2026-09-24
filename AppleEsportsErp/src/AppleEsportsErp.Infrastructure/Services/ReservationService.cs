@@ -5,6 +5,7 @@ using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.DTOs.Reservations;
 using AppleEsportsErp.Application.Exceptions;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Application.Services;
 using AppleEsportsErp.Domain.Entities;
 using AppleEsportsErp.Domain.Enums;
 using AppleEsportsErp.Infrastructure.Configuration;
@@ -68,6 +69,25 @@ public class ReservationService : IReservationService
         return new PaginatedResult<ReservationDto>(dtos, total, page, pageSize);
     }
 
+    /// <summary>
+    /// Every reservation in a date range, any state - unlike GetActiveReservationsAsync, which
+    /// deliberately shows only Pending because that is the operator's own to-do list. A look
+    /// back at a past day wants everything that was booked that day, arrived or not.
+    /// </summary>
+    public async Task<List<ReservationDto>> GetReservationHistoryAsync(Guid branchId, DateOnly fromDate, DateOnly toDate)
+    {
+        var (dayStart, _) = IndiaTime.BusinessDayRange(fromDate);
+        var (_, dayEnd) = IndiaTime.BusinessDayRange(toDate);
+
+        var reservations = await _unitOfWork.Repository<Reservation>().Query()
+            .Include(r => r.Pc)
+            .Where(r => r.BranchId == branchId && r.ReservationTime >= dayStart && r.ReservationTime < dayEnd)
+            .OrderByDescending(r => r.ReservationTime)
+            .ToListAsync();
+
+        return reservations.Select(MapToDto).ToList();
+    }
+
     public async Task<ReservationDto> GetReservationAsync(Guid id)
     {
         var reservation = await _unitOfWork.Repository<Reservation>().Query()
@@ -99,6 +119,11 @@ public class ReservationService : IReservationService
 
         var gracePeriod = (dto.GracePeriodMin.HasValue && dto.GracePeriodMin.Value > 0) ? dto.GracePeriodMin.Value : 15;
 
+        // The deposit total still covers both portions - it is credited against the customer's
+        // final bill regardless of how it was paid (see the bill-completion path below). Only
+        // the cash portion is ever allowed to touch the drawer.
+        var advanceDeposit = dto.AdvanceDepositCash + dto.AdvanceDepositOnline;
+
         var reservation = new Reservation
         {
             PcId = dto.PcId,
@@ -109,7 +134,7 @@ public class ReservationService : IReservationService
             ReservationTime = dto.ReservationTime,
             DurationMin = dto.DurationMin,
             GracePeriodMin = gracePeriod,
-            AdvanceDeposit = dto.AdvanceDeposit,
+            AdvanceDeposit = advanceDeposit,
             State = ReservationState.Pending,
             Notes = dto.Notes
         };
@@ -123,20 +148,23 @@ public class ReservationService : IReservationService
             _unitOfWork.Repository<Pc>().Update(pc);
         }
 
-        // Fetch operator's active shift and record advance deposit
+        // Fetch operator's active shift and record the CASH portion of the advance deposit.
+        // The online portion never touched the drawer, so it never adds to ExpectedDrawerCash -
+        // it used to be added unconditionally here, which permanently inflated what the drawer
+        // was expected to hold by however much of the deposit was actually paid online.
         var activeShift = await _unitOfWork.Repository<Shift>().Query()
             .FirstOrDefaultAsync(s => s.OperatorId == operatorId && s.BranchId == branchId && s.Status == ShiftStatus.Active);
         var shiftId = activeShift?.Id;
 
-        if (dto.AdvanceDeposit > 0 && shiftId.HasValue)
+        if (dto.AdvanceDepositCash > 0 && shiftId.HasValue)
         {
             var activeRegister = await _unitOfWork.Repository<CashRegister>().Query()
                 .FirstOrDefaultAsync(cr => cr.BranchId == branchId && cr.ShiftId == shiftId.Value && cr.Status == CashRegisterStatus.Open);
-                
+
             if (activeRegister != null)
             {
-                activeRegister.ExpectedDrawerCash += dto.AdvanceDeposit;
-                activeRegister.TotalCashSales += dto.AdvanceDeposit;
+                activeRegister.ExpectedDrawerCash += dto.AdvanceDepositCash;
+                activeRegister.TotalCashSales += dto.AdvanceDepositCash;
                 _unitOfWork.Repository<CashRegister>().Update(activeRegister);
 
                 var cashTx = new CashTransaction
@@ -145,7 +173,7 @@ public class ReservationService : IReservationService
                     BranchId = branchId,
                     OperatorId = operatorId,
                     TransactionType = "reservation_deposit",
-                    CashAmount = dto.AdvanceDeposit,
+                    CashAmount = dto.AdvanceDepositCash,
                     CreatedAt = DateTimeOffset.UtcNow
                 };
                 await _unitOfWork.Repository<CashTransaction>().AddAsync(cashTx);
@@ -153,7 +181,7 @@ public class ReservationService : IReservationService
         }
 
         await _unitOfWork.Repository<Reservation>().AddAsync(reservation);
-        
+
         await _auditService.LogAsync(new AuditEntry
         {
             OperatorId = operatorId,
@@ -163,7 +191,14 @@ public class ReservationService : IReservationService
             BranchId = branchId,
             TargetType = "reservation",
             TargetId = reservation.Id,
-            Details = new { CustomerName = dto.CustomerName, PcNumber = pc.PcNumber, ReservationTime = dto.ReservationTime, AdvanceDeposit = dto.AdvanceDeposit }
+            Details = new
+            {
+                CustomerName = dto.CustomerName,
+                PcNumber = pc.PcNumber,
+                ReservationTime = dto.ReservationTime,
+                AdvanceDepositCash = dto.AdvanceDepositCash,
+                AdvanceDepositOnline = dto.AdvanceDepositOnline
+            }
         });
 
         await _unitOfWork.CommitTransactionAsync();
@@ -229,6 +264,82 @@ public class ReservationService : IReservationService
         await _hubNotification.BroadcastReservationUpdateAsync(branchId, reservation.Id);
 
         return MapToDto(reservation);
+    }
+
+    /// <summary>
+    /// A plain reminder flag, hand-set at the counter - not routed through Head Office when set
+    /// there, unlike every other action here. There is nothing for a branch to carry out: no PC
+    /// to free, no session to start, nothing with a money or audit consequence. Reservation is
+    /// already a synced entity (SyncCapture.Watched), so this still reaches Head Office's own
+    /// copy the ordinary way when set at a branch - it just never needs to travel the other
+    /// direction, because nothing there depends on it.
+    /// </summary>
+    public async Task<ReservationDto> SetArrivedAsync(Guid branchId, Guid id, bool arrived)
+    {
+        var reservation = await _unitOfWork.Repository<Reservation>().Query()
+            .Include(r => r.Pc)
+            .FirstOrDefaultAsync(r => r.Id == id)
+            ?? throw new NotFoundException("Reservation not found.");
+
+        if (reservation.BranchId != branchId)
+            throw new BranchIsolationException("Reservation belongs to another branch.");
+
+        reservation.Arrived = arrived;
+        _unitOfWork.Repository<Reservation>().Update(reservation);
+        await _unitOfWork.CommitTransactionAsync();
+
+        return MapToDto(reservation);
+    }
+
+    /// <summary>Permanently removes a reservation - the "Remove" button, distinct from Cancel:
+    /// no reason kept, no Cancelled record left behind, just gone. Frees the PC exactly like
+    /// Cancel does if it was still holding it for this booking.</summary>
+    public async Task DeleteReservationAsync(Guid branchId, Guid operatorId, Guid id)
+    {
+        var reservation = await _unitOfWork.Repository<Reservation>().Query()
+            .Include(r => r.Pc)
+            .FirstOrDefaultAsync(r => r.Id == id)
+            ?? throw new NotFoundException("Reservation not found.");
+
+        if (reservation.BranchId != branchId)
+            throw new BranchIsolationException("Reservation belongs to another branch.");
+
+        var pc = await _unitOfWork.Repository<Pc>().GetByIdAsync(reservation.PcId);
+        if (pc != null)
+        {
+            if (pc.CurrentReservationId == reservation.Id)
+                pc.CurrentReservationId = null;
+
+            if (pc.State == PcState.Reserved)
+            {
+                var hasOther = await _unitOfWork.Repository<Reservation>().Query()
+                    .AnyAsync(r => r.PcId == pc.Id && r.State == ReservationState.Pending && r.Id != reservation.Id
+                              && r.ReservationTime <= DateTimeOffset.UtcNow.AddMinutes(15));
+
+                if (!hasOther)
+                    pc.State = PcState.Idle;
+            }
+
+            _unitOfWork.Repository<Pc>().Update(pc);
+            await _hubNotification.BroadcastPcStatusChangeAsync(branchId, pc.Id);
+        }
+
+        _unitOfWork.Repository<Reservation>().Remove(reservation);
+
+        await _auditService.LogAsync(new AuditEntry
+        {
+            OperatorId = operatorId,
+            UserRole = "Operator",
+            UserName = "System",
+            Action = AuditActions.ReservationDelete,
+            BranchId = branchId,
+            TargetType = "reservation",
+            TargetId = reservation.Id,
+            Details = new { reservation.CustomerName, reservation.PcId }
+        });
+
+        await _unitOfWork.CommitTransactionAsync();
+        await _hubNotification.BroadcastReservationUpdateAsync(branchId, reservation.Id);
     }
 
     public async Task<ReservationDto> StartReservedSessionAsync(Guid branchId, Guid operatorId, Guid id)
@@ -471,7 +582,8 @@ public class ReservationService : IReservationService
             Notes = r.Notes,
             AdvanceDeposit = r.AdvanceDeposit,
             GracePeriodMin = r.GracePeriodMin,
-            PcName = r.Pc?.PcNumber
+            PcName = r.Pc?.PcNumber,
+            Arrived = r.Arrived
         };
     }
 }

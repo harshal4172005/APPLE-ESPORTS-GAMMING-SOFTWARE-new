@@ -204,13 +204,18 @@ public class DashboardService : IDashboardService
                 .Include(s => s.Operator)
                 .FirstOrDefaultAsync(s => s.BranchId == branchId && s.Status == ShiftStatus.Active && !s.Operator.Username.StartsWith("system_admin"));
                 
-            bool isOperatorActuallyOnline = AppleEsportsErp.Application.Services.OperatorPresenceTracker.IsOperatorAvailable(branchId.ToString());
-            
+            // OperatorPresenceTracker used to decide this, but it only ever sees a SignalR
+            // connection made directly to Head Office - and a branch operator's real work
+            // happens against their own branch's local API (see desktop-client/AppConfig.cs),
+            // never Head Office directly. That signal can never fire for a real branch, so
+            // every operator, on every branch, showed "(Offline)" permanently. IsOnline is
+            // what the branch's own heartbeat actually reports (BranchHeartbeatController.
+            // ApplyOperatorsOnDutyAsync), so it reflects the branch's own truth instead.
             string activeOperator = "None";
             if (activeShift?.Operator != null)
             {
-                activeOperator = isOperatorActuallyOnline 
-                    ? activeShift.Operator.FullName 
+                activeOperator = activeShift.Operator.IsOnline
+                    ? activeShift.Operator.FullName
                     : $"{activeShift.Operator.FullName} (Offline)";
             }
 

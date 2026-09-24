@@ -26,6 +26,27 @@ export const deleteBranchPermanent = async (id) => {
   return response.data;
 };
 
+// --- Food Groups (shared food/snacks menu + stock across linked branches) ---
+export const getFoodGroups = async () => {
+  const response = await api.get('/food-groups');
+  return response.data;
+};
+
+export const createFoodGroup = async (name) => {
+  const response = await api.post('/food-groups', { name });
+  return response.data;
+};
+
+export const setFoodGroupBranches = async (id, branchIds) => {
+  const response = await api.put(`/food-groups/${id}/branches`, branchIds);
+  return response.data;
+};
+
+export const deleteFoodGroup = async (id) => {
+  const response = await api.delete(`/food-groups/${id}`);
+  return response.data;
+};
+
 // --- Operators ---
 export const getOperators = async () => {
   const response = await api.get('/operators');
@@ -81,7 +102,7 @@ export const deletePc = async (id) => {
 
 // --- Audit Logs ---
 export const getAuditLogs = async () => {
-  const response = await api.get('/audit-logs?limit=500');
+  const response = await api.get('/audit-logs?pageSize=500');
   return response.data;
 };
 
@@ -109,6 +130,11 @@ export const getSystemConfigs = async () => {
 
 export const saveSystemConfig = async (data) => {
   const response = await api.post('/system-config', data);
+  return response.data;
+};
+
+export const testEmailConfig = async (toAddress) => {
+  const response = await api.post('/system-config/test-email', { toAddress });
   return response.data;
 };
 
@@ -141,6 +167,21 @@ export const updatePricingProfile = async (id, data) => {
 
 export const deletePricingProfile = async (id) => {
   const response = await api.delete(`/pricing-profiles/${id}`);
+  return response.data;
+};
+
+export const createPricingPackage = async (data) => {
+  const response = await api.post('/pricing-profiles/packages', data);
+  return response.data;
+};
+
+export const updatePricingPackage = async (id, data) => {
+  const response = await api.put(`/pricing-profiles/packages/${id}`, data);
+  return response.data;
+};
+
+export const deletePricingPackage = async (id) => {
+  const response = await api.delete(`/pricing-profiles/packages/${id}`);
   return response.data;
 };
 

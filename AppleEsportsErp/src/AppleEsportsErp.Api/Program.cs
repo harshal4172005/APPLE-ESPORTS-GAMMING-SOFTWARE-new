@@ -177,7 +177,14 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
                 if (!hasBearer)
                 {
-                    var cookieToken = context.Request.Cookies["accessToken"];
+                    // Checked first, and used instead of accessToken when present: this is
+                    // what carries an Admin Quick-Switch. It is a wholly separate cookie from
+                    // accessToken/refreshToken so switching in and out never touches the
+                    // operator's own session - see AuthController's admin-switch endpoints.
+                    var switchToken = context.Request.Cookies["adminSwitchToken"];
+                    var cookieToken = !string.IsNullOrEmpty(switchToken)
+                        ? switchToken
+                        : context.Request.Cookies["accessToken"];
                     if (!string.IsNullOrEmpty(cookieToken))
                         context.Token = cookieToken;
                 }
@@ -220,7 +227,7 @@ builder.Services.AddAuthorization(options =>
     foreach (var dashboard in new[] { Dashboards.BillingCounter, Dashboards.Sessions, Dashboards.Reservations,
         Dashboards.FoodOrders, Dashboards.CashRegister, Dashboards.CashDesk, Dashboards.Members,
         Dashboards.MenuEditor, Dashboards.MainDashboard, Dashboards.PcStatus, Dashboards.Eod, Dashboards.Settings,
-        Dashboards.WalletSettings, Dashboards.MemberValueEdit })
+        Dashboards.WalletSettings, Dashboards.MemberValueEdit, Dashboards.Reports })
     {
         options.AddPolicy($"Dashboard:{dashboard}", policy =>
             policy.Requirements.Add(new DashboardRequirement(dashboard)));
@@ -393,6 +400,18 @@ builder.Services.AddHostedService<AppleEsportsErp.Api.Services.OpenSessionMonito
 // Closes a trading day that has ended when nobody ticked "last shift of the day", so the report
 // no longer depends on being remembered at 3am.
 builder.Services.AddHostedService<AppleEsportsErp.Api.Services.TradingDayCloserService>();
+// Puts a PC back to "Not Set Up" once its agent has gone quiet for good (uninstalled, retired),
+// instead of it reading Idle/Free forever with no physical machine behind it.
+builder.Services.AddHostedService<AppleEsportsErp.Api.Services.PcAgentWatchdogService>();
+// Re-queues a fresh sync attempt for any shift, cash register or pending credit that is still
+// open right now but has no delivery attempt waiting in the outbox - the safety net for a
+// capture that was missed for any reason. Branch-only; see the class remarks.
+builder.Services.AddHostedService<AppleEsportsErp.Api.Services.SyncReconciliationService>();
+// The actual cross-check: fingerprints every watched row this branch has recently cared about
+// and asks Head Office whether it still agrees, resending only whatever does not match. This is
+// what actually guarantees the two databases stay the same, rather than just guaranteeing a
+// delivery attempt happened once. Branch-only; see the class remarks.
+builder.Services.AddHostedService<AppleEsportsErp.Api.Services.SyncManifestReconcilerService>();
 builder.Services.AddHostedService<AppleEsportsErp.Api.Services.FixedDurationSessionMonitorService>();
 builder.Services.AddHostedService<AppleEsportsErp.Api.Services.DeferredBillingMonitorService>();
 builder.Services.AddHostedService<AppleEsportsErp.Api.Services.SessionActivityCleanupService>();
@@ -489,6 +508,21 @@ using (var scope = app.Services.CreateScope())
             // IsDevelopment() together.
             AppleEsportsErp.Api.DbUpdater.UpdateSchema(app);
             Log.Information("Database schema patches applied ✓");
+
+            // Checked here, not only by the desktop app on launch, because the desktop app's own
+            // attempt to do this needs elevation it does not normally have and has been silently
+            // failing on every ordinary launch since the day it was written - see
+            // AutoUpdateTaskGuard for the full reasoning. This service is always elevated and
+            // always running, which the desktop app is neither.
+            if (!AppleEsportsErp.Infrastructure.Configuration.DeploymentRole.IsHeadOffice(app.Configuration))
+            {
+                AppleEsportsErp.Api.AutoUpdateTaskGuard.EnsureRegistered(app.Logger);
+
+                // Same reasoning, same fix shape: an already-running branch never gets the
+                // installer's setup steps re-run, only new binaries - so a branch live before
+                // this existed would stay unreachable from the LAN forever without this.
+                AppleEsportsErp.Api.FirewallGuard.EnsureOpen(app.Logger);
+            }
         }
         else
         {

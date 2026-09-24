@@ -53,7 +53,7 @@ export default function WalletApprovalModal() {
             
             <h2 className="font-heading font-bold text-2xl uppercase tracking-wider text-text mb-2">Payment Request</h2>
             <p className="text-text-2 font-body text-sm mb-6">
-              The operator requested a wallet deduction of 
+              The operator requested a Member Amount deduction of
               <strong className="text-neon-orange text-lg ml-2 font-mono drop-shadow-[0_0_8px_rgba(255,153,0,0.5)]">
                 ₹{walletApprovalRequest.amount?.toFixed(0)}
               </strong>

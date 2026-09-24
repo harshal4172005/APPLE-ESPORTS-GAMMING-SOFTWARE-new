@@ -44,7 +44,13 @@ public class FixedDurationSessionMonitorService : BranchOnlyBackgroundService
                 _logger.LogError(ex, "Error occurred executing CheckExpiredFixedSessionsAsync.");
             }
 
-            await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
+            // Was 15 seconds. A customer whose plan just ran out was still being let play for
+            // up to 15s past their own expiry before this even noticed, on top of whatever the
+            // overlay itself then takes to catch up and lock - "the lock screen comes after
+            // some time" was that stack of two delays, not a broken push. Five is a plain
+            // indexed query against a handful of rows at most; nothing about running it three
+            // times as often costs anything worth trading against a paying-for-nothing gap.
+            await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
         }
 
         _logger.LogInformation("FixedDurationSessionMonitorService is stopping.");

@@ -71,6 +71,27 @@ public class FoodOrderService : IFoodOrderService
         return new PaginatedResult<FoodOrderDto>(dtos, total, page, pageSize);
     }
 
+    /// <summary>
+    /// Every order in a date range, whatever its status - unlike GetActiveOrdersAsync, which
+    /// deliberately excludes Completed/Cancelled because it feeds the live kitchen board and
+    /// those have nothing left to do. A look back at a past day wants exactly the opposite: the
+    /// finished orders are the point.
+    /// </summary>
+    public async Task<List<FoodOrderDto>> GetOrderHistoryAsync(Guid branchId, DateOnly fromDate, DateOnly toDate)
+    {
+        var (dayStart, _) = IndiaTime.BusinessDayRange(fromDate);
+        var (_, dayEnd) = IndiaTime.BusinessDayRange(toDate);
+
+        var orders = await _unitOfWork.Repository<FoodOrder>().Query()
+            .Include(o => o.Items)
+            .Include(o => o.Pc)
+            .Where(o => o.BranchId == branchId && o.OrderTime >= dayStart && o.OrderTime < dayEnd)
+            .OrderByDescending(o => o.OrderTime)
+            .ToListAsync();
+
+        return orders.Select(MapToDto).ToList();
+    }
+
     public async Task<FoodOrderDto> GetOrderAsync(Guid branchId, Guid id)
     {
         var order = await _unitOfWork.Repository<FoodOrder>().Query()

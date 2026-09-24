@@ -166,8 +166,8 @@ export default function AdminsTab() {
       { id: 'members', label: 'Global Member Directory', desc: 'View and edit any customer account from any branch' },
       { id: 'menu_editor', label: 'Café Menu & Pricing Editor', desc: 'Modify food items, inventory, and PC pricing rates' },
       { id: 'employee_forms', label: 'HR & Employee Records', desc: 'Access employee joining forms and staff directories' },
-      { id: 'wallet_settings', label: 'Wallet Top-Up Settings', desc: 'Edit the minimum Gaming top-up amount and default bonus percentage' },
-      { id: 'member_value_edit', label: 'Edit Member Wallet Values', desc: 'Directly override any individual member\'s wallet balance or lifetime stats' }
+      { id: 'wallet_settings', label: 'Member Amount Top-Up Settings', desc: 'Edit the minimum Gaming top-up amount and default bonus percentage' },
+      { id: 'member_value_edit', label: 'Edit Member Amount Values', desc: 'Directly override any individual member\'s Member Amount balance or lifetime stats' }
     ];
 
     return (

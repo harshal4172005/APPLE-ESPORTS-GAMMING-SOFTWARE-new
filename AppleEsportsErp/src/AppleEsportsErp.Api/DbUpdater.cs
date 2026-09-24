@@ -144,6 +144,28 @@ ADD COLUMN IF NOT EXISTS ""PhotoDataUrl"" text,
 ADD COLUMN IF NOT EXISTS ""AadharDataUrl"" text;
 ");
 
+        // A PC that has never been claimed by a real machine used to be created as Idle -
+        // PcsController.Create now creates it AwaitingSetup instead, but that fix only reaches
+        // PCs created after it shipped. Every PC added before then is still sitting on the old
+        // value, on every branch that had already added one, and looks identical on screen to a
+        // real, working, free PC. MachineId IS NULL is the same signal AwaitingSetup itself is
+        // defined by - a real claim always sets it - so this can never touch a PC that is
+        // genuinely idle and working. Runs on every startup rather than once, so it also cleans
+        // up anything added between two updates on a branch that skipped a version, and finds
+        // nothing to do once a branch is already caught up.
+        db.Database.ExecuteSqlRaw(@"
+UPDATE pcs SET ""State"" = 'awaitingsetup', ""PoweredOff"" = false
+WHERE ""MachineId"" IS NULL AND ""State"" = 'idle';
+
+-- A separate leftover from the same underlying cause: a PC that was already AwaitingSetup
+-- when someone pressed Shut Down / Shut Down All, before SendShutdownCommand and
+-- SendShutdownAllCommand were guarded against sending that to an unclaimed PC. Nothing
+-- meaningfully shuts down a machine that was never claimed, so PoweredOff should never be
+-- true here regardless of how it got set.
+UPDATE pcs SET ""PoweredOff"" = false
+WHERE ""State"" = 'awaitingsetup' AND ""PoweredOff"" = true;
+");
+
         // Seed the four branches, their PCs, pricing and operators — at HEAD OFFICE, in
         // Development ONLY.
         //

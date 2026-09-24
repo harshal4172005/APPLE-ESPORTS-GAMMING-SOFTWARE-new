@@ -28,9 +28,9 @@ export default function AdminSwitchModal({ isOpen, onClose }) {
   }, [isOpen, fetchAvailableAdminsForSwitch]);
 
   const handleSubmit = useCallback(async (currentPin) => {
-    if (!selectedAdmin) return;
+    if (!selectedAdmin || loading) return;
     const submitPin = currentPin || pin;
-    
+
     if (submitPin.length < selectedAdmin.pinLength) {
       toast.error(`PIN must be ${selectedAdmin.pinLength} digits`);
       return;
@@ -48,11 +48,13 @@ export default function AdminSwitchModal({ isOpen, onClose }) {
     } finally {
       setLoading(false);
     }
-  }, [selectedAdmin, pin, adminSwitchIn, onClose, toast]);
+  }, [selectedAdmin, pin, loading, adminSwitchIn, onClose, toast]);
 
   const appendPin = useCallback((num) => {
-    if (!selectedAdmin) return;
-    
+    // Guards against the 50ms auto-submit timer below racing a manual "Confirm Switch" click
+    // (or a fast second keypad tap) into firing adminSwitchIn twice for one PIN entry.
+    if (!selectedAdmin || loading || pin.length >= selectedAdmin.pinLength) return;
+
     setPin(p => {
       const newPin = p.length < selectedAdmin.pinLength ? p + num : p;
       // Auto-submit if we hit the exact length
@@ -62,11 +64,12 @@ export default function AdminSwitchModal({ isOpen, onClose }) {
       }
       return newPin;
     });
-  }, [selectedAdmin, handleSubmit]);
+  }, [selectedAdmin, loading, pin, handleSubmit]);
 
   const removePin = useCallback(() => {
+    if (loading) return;
     setPin(p => p.slice(0, -1));
-  }, []);
+  }, [loading]);
 
   useEffect(() => {
     if (!isOpen || !selectedAdmin) return;
@@ -177,30 +180,34 @@ export default function AdminSwitchModal({ isOpen, onClose }) {
                   <button
                     key={num}
                     type="button"
+                    disabled={loading}
                     onClick={() => appendPin(num.toString())}
-                    className="aspect-square bg-bg-3 hover:bg-bg border border-border hover:border-accent/50 rounded-lg text-xl font-mono text-text transition-all active:scale-95"
+                    className="aspect-square bg-bg-3 hover:bg-bg border border-border hover:border-accent/50 rounded-lg text-xl font-mono text-text transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                   >
                     {num}
                   </button>
                 ))}
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => setPin('')}
-                  className="aspect-square bg-bg-3 hover:bg-neon-red/10 border border-border hover:border-neon-red/50 rounded-lg text-xs font-bold text-neon-red transition-all active:scale-95"
+                  className="aspect-square bg-bg-3 hover:bg-neon-red/10 border border-border hover:border-neon-red/50 rounded-lg text-xs font-bold text-neon-red transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                 >
                   CLEAR
                 </button>
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => appendPin('0')}
-                  className="aspect-square bg-bg-3 hover:bg-bg border border-border hover:border-accent/50 rounded-lg text-xl font-mono text-text transition-all active:scale-95"
+                  className="aspect-square bg-bg-3 hover:bg-bg border border-border hover:border-accent/50 rounded-lg text-xl font-mono text-text transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                 >
                   0
                 </button>
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={removePin}
-                  className="aspect-square bg-bg-3 hover:bg-bg border border-border hover:border-accent/50 rounded-lg flex items-center justify-center text-text transition-all active:scale-95"
+                  className="aspect-square bg-bg-3 hover:bg-bg border border-border hover:border-accent/50 rounded-lg flex items-center justify-center text-text transition-all active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
                 >
                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z" />
@@ -208,10 +215,11 @@ export default function AdminSwitchModal({ isOpen, onClose }) {
                 </button>
                 <button
                   type="button"
+                  disabled={loading}
                   onClick={() => handleSubmit()}
-                  className="col-span-3 mt-2 bg-accent hover:bg-accent/90 border border-accent/50 rounded-lg text-sm font-bold text-white transition-all active:scale-95 py-3 shadow-[0_0_10px_rgba(220,38,38,0.3)] uppercase tracking-widest"
+                  className="col-span-3 mt-2 bg-accent hover:bg-accent/90 border border-accent/50 rounded-lg text-sm font-bold text-white transition-all active:scale-95 py-3 shadow-[0_0_10px_rgba(220,38,38,0.3)] uppercase tracking-widest disabled:opacity-50 disabled:pointer-events-none"
                 >
-                  Confirm Switch
+                  {loading ? 'Switching…' : 'Confirm Switch'}
                 </button>
               </div>
             </div>

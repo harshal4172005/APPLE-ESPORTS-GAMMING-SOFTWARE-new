@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.AspNetCore.SignalR.Client;
 
 namespace AppleEsportsErp.ClientAgent.Services;
@@ -23,6 +24,16 @@ public class DualConnectionService
     private CancellationTokenSource _cts = new();
 
     public string CurrentMode => _currentMode;
+
+    /// <summary>
+    /// This build's own version, read from the assembly rather than a constant so it can never
+    /// drift from what was actually installed. Sent on every heartbeat so Head Office's "N of M
+    /// gaming PCs up to date" is counted from what agents actually report, not assumed.
+    /// </summary>
+    private static string RunningVersion =>
+        Assembly.GetExecutingAssembly().GetName().Version is { } v
+            ? $"{v.Major}.{v.Minor}.{v.Build}"
+            : "0.0.0";
 
     public DualConnectionService(Views.LockScreen lockScreen, SessionControlService sessionControl)
     {
@@ -168,7 +179,7 @@ public class DualConnectionService
                     }
 
                     // Send heartbeat
-                    try { await _lanConnection.InvokeAsync("AgentHeartbeat", _config.PcId, "LAN"); }
+                    try { await _lanConnection.InvokeAsync("AgentHeartbeat", _config.PcId, "LAN", RunningVersion); }
                     catch { _lanFailCount++; }
                 }
                 else
@@ -205,7 +216,7 @@ public class DualConnectionService
                 // Also keep cloud connection alive (passive heartbeat)
                 if (_cloudConnection?.State == HubConnectionState.Connected)
                 {
-                    try { await _cloudConnection.InvokeAsync("AgentHeartbeat", _config.PcId, _currentMode); }
+                    try { await _cloudConnection.InvokeAsync("AgentHeartbeat", _config.PcId, _currentMode, RunningVersion); }
                     catch { }
                 }
             }

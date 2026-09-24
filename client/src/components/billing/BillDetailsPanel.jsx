@@ -57,14 +57,14 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
     if (!bill?.id) return;
     const handleWalletDeclined = (data) => {
       if (data.billId === bill?.id) {
-        toast.error(`Wallet payment declined: ${data.reason}`);
+        toast.error(`Member Amount payment declined: ${data.reason}`);
         setWalletWaiting(false);
       }
     };
     
     const handleWalletApproved = (data) => {
       if (data.billId === bill?.id) {
-        toast.success('Wallet payment approved!');
+        toast.success('Member Amount payment approved!');
         setWalletWaiting(false);
         onPaymentSuccess?.();
       }
@@ -376,12 +376,12 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
           {/* Payment method grid — a member's bill can only be settled from their wallet */}
           <div className="grid grid-cols-3 gap-2">
             {(bill.memberId ? [
-              { id: 'wallet', label: 'Wallet', Icon: Wallet        },
+              { id: 'wallet', label: 'Member Amount', Icon: Wallet        },
             ] : [
               { id: 'cash',   label: 'Cash',   Icon: Banknote      },
               { id: 'upi',    label: 'UPI',    Icon: Smartphone    },
               { id: 'split',  label: 'Split',  Icon: ArrowLeftRight},
-              { id: 'wallet', label: 'Wallet', Icon: Wallet        },
+              { id: 'wallet', label: 'Member Amount', Icon: Wallet        },
               { id: 'credit', label: 'Credit', Icon: Clock         },
             ]).map(({ id, label, Icon }) => (
               <button
@@ -554,12 +554,12 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
           {payMethod === 'wallet' && (
             <div className="bg-bg-2 border border-accent/20 rounded-lg p-3 space-y-3">
               <div className="text-[10px] text-neon-orange uppercase font-bold tracking-widest">
-                Deduct from Member Wallet
+                Deduct from Member Amount
               </div>
 
               {!bill.memberId ? (
                 <div className="text-neon-red text-xs font-bold bg-neon-red/10 border border-neon-red/20 px-3 py-2 rounded-lg">
-                  ⚠ No member is linked to this bill. Walk-in customers cannot pay with wallet.
+                  ⚠ No member is linked to this bill. Walk-in customers cannot pay with Member Amount.
                 </div>
               ) : memberInfo ? (
                 <div className="space-y-3">
@@ -593,7 +593,7 @@ export default function BillDetailsPanel({ bill, onBillUpdate, onPaymentSuccess,
                     {processing ? (
                       <div className="w-4 h-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
                     ) : (
-                      <><Wallet className="w-4 h-4" /> Deduct From Wallet</>
+                      <><Wallet className="w-4 h-4" /> Deduct From Member Amount</>
                     )}
                   </button>
                 </div>
@@ -696,7 +696,7 @@ function PaidBreakdown({ payments }) {
         <TRow label="  Change Returned" value={`₹${p.changeReturned}`} cls="text-neon-orange font-bold" />
       </>}
       {p.onlineAmount > 0  && <TRow label="UPI / Online"   value={`₹${p.onlineAmount}`}  />}
-      {p.walletAmount > 0  && <TRow label="Member Wallet"  value={`₹${p.walletAmount}`}  />}
+      {p.walletAmount > 0  && <TRow label="Member Amount"  value={`₹${p.walletAmount}`}  />}
     </div>
   );
 }

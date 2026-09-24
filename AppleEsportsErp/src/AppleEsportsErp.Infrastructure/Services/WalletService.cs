@@ -42,6 +42,33 @@ public class WalletService : IWalletService
 
     private readonly IAdminNotifier _adminNotifier;
 
+    /// <summary>
+    /// Same as AuthService.ShareMemberResetTokenAsync, duplicated rather than shared because that
+    /// one is private to AuthService - the token this member's setup link needs, sent up to Head
+    /// Office so the link (which always points there) can be honoured. Never lets a queueing
+    /// failure take down the top-up itself; the member still gets their receipt and the welcome
+    /// email either way, and a lost sync here is recoverable, an unwound top-up is not.
+    /// </summary>
+    private async Task ShareMemberResetTokenAsync(Member member, string token, DateTimeOffset expiry)
+    {
+        if (member.HomeBranchId is not { } branchId) return;
+
+        try
+        {
+            await _outbox.RecordEventAsync(branchId, "Member", member.Id, "member.reset_requested", new
+            {
+                memberId = member.Id,
+                email = member.Email,
+                resetToken = token,
+                resetTokenExpiry = expiry,
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Could not queue the setup token for member {MemberId} to Head Office.", member.Id);
+        }
+    }
+
     private async Task<(decimal minGamingTopUp, decimal defaultBonusPercent)> GetTopUpRulesAsync()
     {
         var config = await _unitOfWork.Repository<SystemConfig>().Query()
@@ -197,7 +224,8 @@ public class WalletService : IWalletService
             walletTransactionId = walletTx.Id,
             operatorId,
             shiftId,
-            cashAmount = dto.Amount,
+            cashAmount = walletTx.CashAmount,
+            onlineAmount = walletTx.OnlineAmount,
             bonusAmount,
             totalCredit,
             paymentType = dto.PaymentType,
@@ -402,6 +430,15 @@ public class WalletService : IWalletService
 
             _unitOfWork.Repository<Member>().Update(member);
             await _unitOfWork.SaveChangesAsync();
+
+            // The link below always points at Head Office (AppUrlProvider.ResetLinkBaseUrl), the
+            // same as every other password link this system sends - but this token was just
+            // written into the branch's own local row, and Member updates were never part of
+            // sync. Without this, Head Office has no way to recognise it and the member's very
+            // first link - the one setting up their password at all - fails outright. Same gap
+            // AuthService.ShareMemberResetTokenAsync closes for a self-service forgot-password
+            // request; this is the equivalent for a first-top-up welcome email.
+            await ShareMemberResetTokenAsync(member, setupToken, member.ResetTokenExpiry.Value);
 
             string resetLink = _appUrls.BuildResetPasswordLink(member.Email, setupToken);
             string welcomeBody = $@"

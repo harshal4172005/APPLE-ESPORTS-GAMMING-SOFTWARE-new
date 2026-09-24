@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Users, Plus, Search, Wallet, Phone, Mail, Clock,
   X, Banknote, CreditCard, AlertTriangle,
-  UserPlus, Edit2, Check, ArrowUpRight, ArrowDownRight,
+  UserPlus, Edit2, Check, ArrowUpRight,
   Gamepad2, Coffee, RefreshCw, Trash2, Receipt, Eye, EyeOff,
   KeyRound, User as UserIcon, ShieldCheck, ShieldAlert, Gift, SlidersHorizontal, Download, Tag,
 } from 'lucide-react';
@@ -11,38 +11,20 @@ import { useBranch } from '../../contexts/BranchContext';
 import { useToast } from '../../components/ui/Toast';
 import {
   getMembers, getMemberById, registerMember, updateMember,
-  getWalletHistory, topUpWallet, adminEditMemberValues, deleteMember,
+  getMemberHistory, topUpWallet, adminEditMemberValues, deleteMember,
 } from '../../api/members.api';
 import { getWalletTopUpRules } from '../../api/settings.api';
 import { logActivity } from '../../utils/sessionLog';
+import { formatTime } from '../../utils/timeUtils';
+import { createReport, addTable, save } from '../../utils/pdfReport';
+
+const HISTORY_TYPE_STYLE = {
+  Session:         { label: 'Gaming Session', cls: 'text-neon-blue   bg-neon-blue/10   border-neon-blue/20' },
+  WalletTopUp:      { label: 'Top-Up',         cls: 'text-neon-green  bg-neon-green/10  border-neon-green/20' },
+  WalletDeduction:  { label: 'Deduction',      cls: 'text-neon-red    bg-neon-red/10    border-neon-red/20' },
+};
 
 const TOPUP_PRESETS = [200, 500, 1000, 2000, 5000];
-
-// `action` is the raw WalletAction enum from the backend (Recharge, DeductionGaming,
-// DeductionFood, Correction, RewardRedemption, Bonus) — "Correction" is used for both
-// bill/session-stop deductions and admin balance corrections, so it can go either way;
-// `isCredit` (derived from balanceBefore/balanceAfter, the only reliable source of
-// direction) breaks the tie for it and for any future/unknown action value.
-function ActionBadge({ action, isCredit }) {
-  const map = {
-    Recharge:         { label: 'Top-Up',           cls: 'text-neon-blue   bg-neon-blue/10   border-neon-blue/20' },
-    DeductionGaming:  { label: 'Gaming Deduction',  cls: 'text-neon-red    bg-neon-red/10    border-neon-red/20' },
-    DeductionFood:    { label: 'Food Deduction',    cls: 'text-neon-red    bg-neon-red/10    border-neon-red/20' },
-    Bonus:            { label: 'Bonus',             cls: 'text-neon-orange bg-neon-orange/10 border-neon-orange/20' },
-    RewardRedemption: { label: 'Reward Redemption', cls: 'text-neon-purple bg-neon-purple/10 border-neon-purple/20' },
-    Correction:       isCredit
-      ? { label: 'Added',    cls: 'text-neon-green bg-neon-green/10 border-neon-green/20' }
-      : { label: 'Deducted', cls: 'text-neon-red   bg-neon-red/10   border-neon-red/20' },
-  };
-  const { label, cls } = map[action] ?? (isCredit
-    ? { label: action, cls: 'text-neon-green bg-neon-green/10 border-neon-green/20' }
-    : { label: action, cls: 'text-neon-red   bg-neon-red/10   border-neon-red/20' });
-  return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wider ${cls}`}>
-      {label}
-    </span>
-  );
-}
 
 function StatusBadge({ status }) {
   const active = status === 0 || status === 'Active';
@@ -196,7 +178,7 @@ function RegisterDrawer({ open, onClose, onSuccess, editMember }) {
 
           <div>
             <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-1.5">
-              Username * <span className="normal-case font-normal">(login &amp; wallet payments)</span>
+              Username * <span className="normal-case font-normal">(login &amp; Member Amount payments)</span>
             </label>
             <div className="relative">
               <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-3" />
@@ -287,8 +269,8 @@ function TopUpModal({ member, isSuperAdmin, onClose, onSuccess }) {
         ...(isSuperAdmin && walletType === 'Gaming' && bonusPercent !== topUpRules.defaultBonusPercent && { bonusPercentOverride: bonusPercent }),
         reason: reason.trim() || 'Manual top-up',
       });
-      toast.success(`₹${numAmount} added to ${member.fullName}'s ${walletType} wallet`);
-      logActivity(`${member.fullName}: Wallet top-up of ₹${numAmount} (${walletType}, ${paymentType}).`, 'success');
+      toast.success(`₹${numAmount} added to ${member.fullName}'s ${walletType} Member Amount`);
+      logActivity(`${member.fullName}: Member Amount top-up of ₹${numAmount} (${walletType}, ${paymentType}).`, 'success');
       onSuccess();
       onClose();
     } catch (err) {
@@ -305,7 +287,7 @@ function TopUpModal({ member, isSuperAdmin, onClose, onSuccess }) {
           <div className="flex items-center gap-2">
             <Wallet className="w-5 h-5 text-neon-blue" />
             <div>
-              <h2 className="font-heading font-bold text-text uppercase tracking-wider text-sm leading-none">Top-Up Wallet</h2>
+              <h2 className="font-heading font-bold text-text uppercase tracking-wider text-sm leading-none">Top-Up Member Amount</h2>
               <p className="text-[10px] text-text-3 mt-0.5 font-mono">
                 {member.fullName} · G: ₹{parseFloat(member.gamingBalance || 0).toFixed(0)} · F: ₹{parseFloat(member.foodBalance || 0).toFixed(0)}
               </p>
@@ -342,11 +324,11 @@ function TopUpModal({ member, isSuperAdmin, onClose, onSuccess }) {
             <div className="flex gap-2 mt-3">
               <label className="flex items-center gap-1.5 text-xs text-text-2 cursor-pointer">
                 <input type="radio" name="walletType" value="Gaming" checked={walletType === 'Gaming'} onChange={() => setWalletType('Gaming')} className="text-neon-blue bg-bg-3 border-border focus:ring-neon-blue" />
-                Gaming Wallet
+                Gaming Member Amount
               </label>
               <label className="flex items-center gap-1.5 text-xs text-text-2 cursor-pointer">
                 <input type="radio" name="walletType" value="Food" checked={walletType === 'Food'} onChange={() => setWalletType('Food')} className="text-neon-orange bg-bg-3 border-border focus:ring-neon-orange" />
-                Food Wallet
+                Food Member Amount
               </label>
             </div>
 
@@ -532,8 +514,8 @@ function TopUpModal({ member, isSuperAdmin, onClose, onSuccess }) {
 // if explicitly granted via Settings → Admins).
 // ═══════════════════════════════════════════════════════════════════════════════
 const EDITABLE_FIELDS = [
-  { key: 'gamingBalance', label: 'Gaming Wallet Balance (₹)', step: '0.01' },
-  { key: 'foodBalance', label: 'Food Wallet Balance (₹)', step: '0.01' },
+  { key: 'gamingBalance', label: 'Gaming Member Amount Balance (₹)', step: '0.01' },
+  { key: 'foodBalance', label: 'Food Member Amount Balance (₹)', step: '0.01' },
   { key: 'totalGamingTopUps', label: 'Total Gaming Top-Ups (₹, lifetime)', step: '0.01' },
   { key: 'totalGamingBonusEarned', label: 'Total Gaming Bonus Earned (₹, lifetime)', step: '0.01' },
   { key: 'totalGamingSpend', label: 'Total Gaming Spend (₹, lifetime)', step: '0.01' },
@@ -691,7 +673,7 @@ function ExtraBonusModal({ member, onClose, onSuccess }) {
       };
 
       await topUpWallet(member.id, dto);
-      toast.success(`₹${bonusAmount.toFixed(0)} bonus given to ${member.fullName}'s ${walletType} wallet`);
+      toast.success(`₹${bonusAmount.toFixed(0)} bonus given to ${member.fullName}'s ${walletType} Member Amount`);
       onSuccess();
       onClose();
     } catch (err) {
@@ -722,7 +704,7 @@ function ExtraBonusModal({ member, onClose, onSuccess }) {
           </div>
 
           <div>
-            <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-2">Wallet</label>
+            <label className="block text-[10px] text-text-3 uppercase tracking-widest font-bold mb-2">Member Amount</label>
             <div className="grid grid-cols-2 gap-2">
               {[
                 { val: 'Gaming', Icon: Gamepad2, active: 'bg-neon-blue/15 border-neon-blue text-neon-blue' },
@@ -942,17 +924,56 @@ function DeleteConfirmModal({ member, onClose, onConfirm }) {
 // ═══════════════════════════════════════════════════════════════════════════════
 function MemberDetailPanel({ member, onEdit, onTopUp, onDiscount, onEditValues, onRefresh, onDelete }) {
   const { hasDashboardAccess } = useAuth();
+  const toast = useToast();
   const [txHistory, setTxHistory] = useState(null);
   const [txLoading, setTxLoading] = useState(false);
-  useEffect(() => {
+  const [historyFrom, setHistoryFrom] = useState('');
+  const [historyTo, setHistoryTo] = useState('');
+
+  const fetchHistory = useCallback(() => {
     if (!member) return;
-    setTxHistory(null);
     setTxLoading(true);
-    getWalletHistory(member.id)
-      .then(r => setTxHistory(r?.items ?? (Array.isArray(r) ? r : [])))
+    getMemberHistory(member.id, historyFrom || undefined, historyTo || undefined)
+      .then(r => setTxHistory(Array.isArray(r) ? r : []))
       .catch(() => setTxHistory([]))
       .finally(() => setTxLoading(false));
+  }, [member?.id, historyFrom, historyTo]);
+
+  useEffect(() => {
+    setTxHistory(null);
+    setHistoryFrom('');
+    setHistoryTo('');
   }, [member?.id]);
+
+  useEffect(() => {
+    fetchHistory();
+  }, [fetchHistory]);
+
+  const handleDownloadHistoryPdf = () => {
+    if (!txHistory || txHistory.length === 0) return;
+    const rangeLabel = historyFrom || historyTo
+      ? `${historyFrom || 'earliest'} to ${historyTo || 'latest'}`
+      : 'All Time';
+    const subtitle = `${member.fullName} (${member.memberNumber})  •  ${rangeLabel}`;
+    const { doc } = createReport({ title: 'Member History', subtitle });
+
+    addTable(doc, 90, {
+      title: 'Member History', subtitle,
+      head: ['Date & Time', 'Type', 'Description', 'Branch', 'PC', 'Duration', 'Amount'],
+      body: txHistory.map(h => [
+        new Date(h.timestamp).toLocaleString('en-IN'),
+        HISTORY_TYPE_STYLE[h.type]?.label || h.type,
+        h.description,
+        h.branchName || '-',
+        h.pcName || '-',
+        h.durationMinutes != null ? `${h.durationMinutes}m` : '-',
+        `${h.type === 'WalletTopUp' ? '+' : h.type === 'WalletDeduction' ? '-' : ''}Rs ${h.amount.toFixed(2)}`,
+      ]),
+    });
+
+    save(doc, `member-history-${member.memberNumber}${historyFrom ? `-${historyFrom}` : ''}${historyTo ? `_to_${historyTo}` : ''}.pdf`);
+    toast.success('History PDF downloaded');
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -967,7 +988,7 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onDiscount, onEditValues, 
             <RefreshCw className="w-3.5 h-3.5" />
           </button>
           {hasDashboardAccess('member_value_edit') && (
-            <button onClick={() => onEditValues(member)} className="p-1.5 text-text-3 hover:text-neon-orange rounded transition-colors" title="Edit wallet values (Admin)">
+            <button onClick={() => onEditValues(member)} className="p-1.5 text-text-3 hover:text-neon-orange rounded transition-colors" title="Edit Member Amount values (Admin)">
               <SlidersHorizontal className="w-3.5 h-3.5" />
             </button>
           )}
@@ -997,7 +1018,7 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onDiscount, onEditValues, 
         {/* Wallet Cards */}
         <div className="grid grid-cols-2 gap-2.5 px-4 mb-3">
           <div className="bg-bg-3 border border-border rounded-xl p-3 text-center">
-            <p className="text-[9px] text-text-3 uppercase tracking-widest font-bold">Gaming Wallet</p>
+            <p className="text-[9px] text-text-3 uppercase tracking-widest font-bold">Gaming Member Amount</p>
             <p className="font-mono font-bold text-2xl text-neon-blue mt-1 drop-shadow-[0_0_10px_rgba(77,166,255,0.4)]">
               ₹{parseFloat(member.gamingBalance || 0).toFixed(0)}
             </p>
@@ -1009,7 +1030,7 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onDiscount, onEditValues, 
             )}
           </div>
           <div className="bg-bg-3 border border-border rounded-xl p-3 text-center">
-            <p className="text-[9px] text-text-3 uppercase tracking-widest font-bold">Food Wallet</p>
+            <p className="text-[9px] text-text-3 uppercase tracking-widest font-bold">Food Member Amount</p>
             <p className="font-mono font-bold text-2xl text-neon-green mt-1 drop-shadow-[0_0_10px_rgba(34,211,166,0.4)]">
               ₹{parseFloat(member.foodBalance || 0).toFixed(0)}
             </p>
@@ -1038,7 +1059,7 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onDiscount, onEditValues, 
             onClick={() => { member.tempTarget = 'Gaming'; onTopUp(member); }}
             className="w-full py-3.5 rounded-xl bg-neon-green text-bg font-bold text-sm uppercase tracking-widest flex items-center justify-center gap-2 hover:brightness-110 transition-all shadow-[0_0_20px_rgba(34,211,166,0.2)]"
           >
-            <Receipt className="w-4 h-4" /> Process Wallet Top-Up
+            <Receipt className="w-4 h-4" /> Process Member Amount Top-Up
           </button>
           {hasDashboardAccess('member_extra_bonus') && (
             <button
@@ -1076,48 +1097,80 @@ function MemberDetailPanel({ member, onEdit, onTopUp, onDiscount, onEditValues, 
           </div>
         </div>
 
-        {/* Transaction History */}
+        {/* Full History — gaming sessions + wallet top-ups/deductions, every branch */}
         <div className="px-4 pb-4">
-          <p className="text-[9px] text-text-3 uppercase tracking-widest font-bold mb-2">Transaction History</p>
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[9px] text-text-3 uppercase tracking-widest font-bold">Member History</p>
+            <button
+              onClick={handleDownloadHistoryPdf}
+              disabled={!txHistory || txHistory.length === 0}
+              className="flex items-center gap-1 text-[10px] font-bold text-neon-blue uppercase tracking-wider hover:underline disabled:opacity-40 disabled:no-underline"
+              title="Download this history as a PDF"
+            >
+              <Download className="w-3 h-3" /> PDF
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5 mb-2">
+            <input
+              type="date"
+              value={historyFrom}
+              max={historyTo || undefined}
+              onChange={(e) => setHistoryFrom(e.target.value)}
+              className="flex-1 min-w-0 bg-bg-3 border border-border rounded-lg px-2 py-1 text-[11px] text-text"
+            />
+            <span className="text-[10px] text-text-3">to</span>
+            <input
+              type="date"
+              value={historyTo}
+              min={historyFrom || undefined}
+              onChange={(e) => setHistoryTo(e.target.value)}
+              className="flex-1 min-w-0 bg-bg-3 border border-border rounded-lg px-2 py-1 text-[11px] text-text"
+            />
+            {(historyFrom || historyTo) && (
+              <button
+                onClick={() => { setHistoryFrom(''); setHistoryTo(''); }}
+                className="text-[10px] text-text-3 hover:text-text underline shrink-0"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+
           {txLoading ? (
             <div className="flex justify-center py-6">
               <div className="w-5 h-5 rounded-full border-2 border-neon-green border-t-transparent animate-spin" />
             </div>
           ) : !txHistory || txHistory.length === 0 ? (
-            <div className="text-center py-8 text-text-3 text-sm bg-bg-3 border border-border rounded-xl">No transactions yet</div>
+            <div className="text-center py-8 text-text-3 text-sm bg-bg-3 border border-border rounded-xl">No history in this range</div>
           ) : (
-            <div className="space-y-1.5">
-              {txHistory.slice(0, 25).map(tx => {
-                // Action alone can't tell credit from debit ("Correction" covers both bill
-                // deductions and admin balance fixes) — balanceBefore/After is ground truth.
-                const isCredit = tx.balanceAfter >= tx.balanceBefore;
+            <div className="space-y-1.5 max-h-[420px] overflow-y-auto pr-1">
+              {txHistory.map(h => {
+                const style = HISTORY_TYPE_STYLE[h.type] || { label: h.type, cls: 'text-text-3 bg-bg-3 border-border' };
+                const isCredit = h.type === 'WalletTopUp';
+                const isSession = h.type === 'Session';
                 return (
-                <div key={tx.id} className="flex items-center justify-between bg-bg-3 border border-border rounded-lg px-3 py-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className={`p-1 rounded ${isCredit ? 'bg-neon-green/10' : 'bg-neon-red/10'}`}>
-                      {isCredit
-                        ? <ArrowUpRight className="w-3.5 h-3.5 text-neon-green" />
-                        : <ArrowDownRight className="w-3.5 h-3.5 text-neon-red" />
-                      }
-                    </div>
-                    <div className="min-w-0">
-                      <ActionBadge action={tx.action} isCredit={isCredit} />
-                      {tx.reason && <p className="text-[10px] text-text-3 truncate mt-0.5">{tx.reason}</p>}
-                    </div>
-                  </div>
-                  <div className="text-right shrink-0 ml-2">
-                    <p className={`font-mono font-bold text-sm ${isCredit ? 'text-neon-green' : 'text-neon-red'}`}>
-                      {isCredit ? '+' : '−'}₹{tx.amount + (tx.bonusAmount || 0)}
-                    </p>
-                    {tx.bonusAmount > 0 && (
-                      <p className="text-[10px] text-neon-green font-mono">
-                        {tx.amount > 0 ? `₹${tx.amount} + ` : ''}₹{tx.bonusAmount} bonus
+                <div key={h.id} className="bg-bg-3 border border-border rounded-lg px-3 py-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${style.cls}`}>
+                      {style.label}
+                    </span>
+                    {!isSession && (
+                      <p className={`font-mono font-bold text-sm shrink-0 ${isCredit ? 'text-neon-green' : 'text-neon-red'}`}>
+                        {isCredit ? '+' : '−'}₹{h.amount}
                       </p>
                     )}
-                    <p className="text-[10px] text-text-3 font-mono">
-                      {new Date(tx.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-                    </p>
+                    {isSession && (
+                      <p className="font-mono font-bold text-sm text-text shrink-0">₹{h.amount}</p>
+                    )}
                   </div>
+                  <p className="text-[11px] text-text mt-1 truncate">{h.description}</p>
+                  <p className="text-[10px] text-text-3 font-mono mt-0.5">
+                    {new Date(h.timestamp).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })} · {formatTime(h.timestamp)}
+                    {h.branchName && ` · ${h.branchName}`}
+                    {h.pcName && ` · ${h.pcName}`}
+                    {h.durationMinutes != null && ` · ${h.durationMinutes}m`}
+                  </p>
                 </div>
                 );
               })}

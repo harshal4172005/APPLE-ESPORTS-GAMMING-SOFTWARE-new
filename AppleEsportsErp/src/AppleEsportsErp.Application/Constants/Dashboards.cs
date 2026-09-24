@@ -19,6 +19,15 @@ public static class Dashboards
     public const string MemberValueEdit = "member_value_edit";
 
     /// <summary>
+    /// Never registered as an actual policy - `[Authorize(Policy = "Dashboard:reports")]`
+    /// referenced this name directly as a string, with no constant and nothing in
+    /// Program.cs's policy loop to back it. Every request to that endpoint threw
+    /// "AuthorizationPolicy named: 'Dashboard:reports' was not found" - a 500, on any
+    /// server running this code, the first time anyone actually opened Reports.
+    /// </summary>
+    public const string Reports = "reports";
+
+    /// <summary>
     /// Deliberately not in <see cref="AdminOnly"/>. An operator is the person sitting at the
     /// branch when an update lands, so they are the one who needs to see what it contains and
     /// whether it installed. Hiding it from them would mean the only people who can see the

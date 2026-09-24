@@ -80,7 +80,7 @@ export default function UserFlowSelectionPage() {
           >
             <UserCheck className="w-12 h-12 text-accent mb-6 group-hover:scale-110 transition-transform" />
             <h2 className="font-heading text-2xl font-bold text-text mb-3 tracking-wider">MEMBER</h2>
-            <p className="text-text-2 text-sm leading-relaxed max-w-[250px]">Log in to your account, manage wallet balance, and start sessions directly.</p>
+            <p className="text-text-2 text-sm leading-relaxed max-w-[250px]">Log in to your account, manage Member Amount balance, and start sessions directly.</p>
           </motion.div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { RefreshCw, X, Clock } from 'lucide-react';
@@ -13,6 +13,55 @@ export default function ExtendSessionModal({ pc, onClose, onActionSuccess }) {
 
   const [durationMinutes, setDurationMinutes] = useState(60);
 
+  // The branch's real plans for this PC - a 4-hour extension has to cost what a 4-hour plan
+  // actually costs (Rs 180), not (4 x hourly rate). Fetched once per PC rather than assumed
+  // from ratePerHour alone, the same plans a customer's own session-start screen shows, so this
+  // preview can never say a different number than what the operator is about to actually charge.
+  const [plans, setPlans] = useState(null);
+  useEffect(() => {
+    setPlans(null);
+    if (!pc?.id) return;
+    let alive = true;
+    api.get(`/public/pcs/${pc.id}/plans`)
+      .then(({ data }) => { if (alive && data?.success) setPlans(data.data); })
+      .catch(() => { /* falls back to the hourly-rate estimate below */ });
+    return () => { alive = false; };
+  }, [pc?.id]);
+
+  // Exact-duration package wins, same rule the server itself now applies
+  // (SessionService.ExtendSessionAsync) - this is only ever a preview of that, never the
+  // authority on what gets charged.
+  const matchedPlan = useMemo(
+    () => plans?.find(p => p.duration === durationMinutes && !p.isPostpaid),
+    [plans, durationMinutes]
+  );
+  const additionalAmount = useMemo(() => {
+    if (matchedPlan) return matchedPlan.price;
+    return (durationMinutes / 60) * (pc?.ratePerHour || 0);
+  }, [matchedPlan, durationMinutes, pc?.ratePerHour]);
+
+  // The branch's own real packages, not a fixed 30/60/120/180 guess - a profile whose actual
+  // packages are, say, 30/60/240/"Full Day" had its 4-hour and Full-Day plans completely
+  // unreachable from this modal, and picking the closest hardcoded button (180m) silently
+  // billed hourly with nothing on screen saying so. Falls back to the old fixed list only if
+  // this PC's plans haven't loaded (or genuinely has none), so the picker is never empty.
+  const presetMinutes = useMemo(() => {
+    const real = (plans || [])
+      .filter(p => !p.isPostpaid && p.duration > 0)
+      .map(p => p.duration);
+    return real.length > 0 ? Array.from(new Set(real)).sort((a, b) => a - b) : [30, 60, 120, 180];
+  }, [plans]);
+
+  useEffect(() => {
+    // Once the real packages are in, land on one of them rather than leaving the picker
+    // sitting on a duration (from the old hardcoded default) that may not even be one of
+    // this profile's actual plans.
+    if (presetMinutes.length > 0 && !presetMinutes.includes(durationMinutes)) {
+      setDurationMinutes(presetMinutes[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [presetMinutes]);
+
   if (!pc) return null;
 
   const handleExtend = async (e) => {
@@ -20,9 +69,6 @@ export default function ExtendSessionModal({ pc, onClose, onActionSuccess }) {
     setLoading(true);
     setError(null);
     try {
-      const ratePerHour = pc.ratePerHour || 0;
-      const additionalAmount = (durationMinutes / 60) * ratePerHour;
-      
       await api.post(`/sessions/${pc.activeSessionId}/extend`, {
         additionalMinutes: durationMinutes,
         additionalAmount: additionalAmount,
@@ -74,8 +120,8 @@ export default function ExtendSessionModal({ pc, onClose, onActionSuccess }) {
             <div className="space-y-3">
               <label className="text-xs font-mono font-bold text-text-2 uppercase tracking-widest">Select Time to Extend</label>
               <div className="grid grid-cols-2 gap-2.5">
-                {[30, 60, 120, 180].map(min => {
-                  const label = min < 60 ? `${min}m` : (min === 60 ? '1 Hour' : `${min / 60} Hours`);
+                {presetMinutes.map(min => {
+                  const label = min < 60 ? `${min}m` : (min % 60 === 0 ? `${min / 60} Hour${min === 60 ? '' : 's'}` : `${min}m`);
                   return (
                     <button
                       key={min}
@@ -96,9 +142,18 @@ export default function ExtendSessionModal({ pc, onClose, onActionSuccess }) {
             
             {/* Charge Preview */}
             <div className="bg-bg-3 rounded border border-border p-4 flex justify-between items-center gap-4">
-              <span className="text-xs text-text-2 font-mono uppercase tracking-wider">Additional Charge</span>
+              <div>
+                <span className="text-xs text-text-2 font-mono uppercase tracking-wider block">Additional Charge</span>
+                {/* No package covers this exact duration - said plainly rather than silently
+                    billing hourly with nothing on screen to show it. */}
+                {!matchedPlan && (
+                  <span className="text-[10px] text-neon-orange font-mono uppercase tracking-wider">
+                    Custom / Hourly rate
+                  </span>
+                )}
+              </div>
               <span className="font-bold text-neon-orange font-mono text-lg">
-                ₹{Math.ceil((durationMinutes / 60) * (pc.ratePerHour || 0))}
+                ₹{Math.ceil(additionalAmount)}
               </span>
             </div>
 

@@ -1,8 +1,61 @@
 import React, { useState, useEffect } from 'react';
-import { getSystemConfigs, saveSystemConfig, getWalletTopUpRules, saveWalletTopUpRules } from '../../api/settings.api';
+import { getSystemConfigs, saveSystemConfig, getWalletTopUpRules, saveWalletTopUpRules, testEmailConfig } from '../../api/settings.api';
 import { useAuth } from '../../contexts/AuthContext';
 import { useToast } from '../../components/ui/Toast';
-import { Save, Wallet } from 'lucide-react';
+import { Save, Wallet, Send } from 'lucide-react';
+
+// ── Lets an admin find out *why* mail isn't arriving without reading a log file on the
+// server. SendEmailAsync (the real forgot-password/top-up path) never throws - a wrong app
+// password or an unreachable Head Office both look identical to "nothing happened" - so this
+// is the only way to see the actual error. ──
+function TestEmailButton({ defaultTo }) {
+  const toast = useToast();
+  const [to, setTo] = useState(defaultTo || '');
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    if (!to && defaultTo) setTo(defaultTo);
+  }, [defaultTo]);
+
+  const handleTest = async () => {
+    if (!to.trim()) {
+      toast.error('Enter an address to send the test to first.');
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await testEmailConfig(to.trim());
+      toast.success(res.data?.message || 'Test email sent.');
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.response?.data?.message || 'Test email failed.');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="form-group md:col-span-2 mt-2 flex items-end gap-2">
+      <div className="flex-1">
+        <label>Send a test email to</label>
+        <input
+          type="email"
+          value={to}
+          onChange={(e) => setTo(e.target.value)}
+          className="form-control"
+          placeholder="you@gmail.com"
+        />
+      </div>
+      <button
+        type="button"
+        onClick={handleTest}
+        disabled={sending}
+        className="btn-secondary flex items-center gap-1.5 text-xs py-2 px-3 disabled:opacity-50"
+      >
+        <Send size={13} /> {sending ? 'SENDING...' : 'SEND TEST'}
+      </button>
+    </div>
+  );
+}
 
 function WalletTopUpSettingsCard() {
   const toast = useToast();
@@ -13,7 +66,7 @@ function WalletTopUpSettingsCard() {
   useEffect(() => {
     getWalletTopUpRules()
       .then(res => res?.data && setRules(res.data))
-      .catch(() => toast.error('Failed to load wallet top-up settings'))
+      .catch(() => toast.error('Failed to load Member Amount top-up settings'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -28,9 +81,9 @@ function WalletTopUpSettingsCard() {
     try {
       await saveWalletTopUpRules(payload);
       setRules(payload);
-      toast.success('Wallet top-up settings saved');
+      toast.success('Member Amount top-up settings saved');
     } catch (err) {
-      toast.error(err.response?.data?.error || 'Failed to save wallet top-up settings');
+      toast.error(err.response?.data?.error || 'Failed to save Member Amount top-up settings');
     } finally {
       setSaving(false);
     }
@@ -41,9 +94,9 @@ function WalletTopUpSettingsCard() {
   return (
     <form onSubmit={handleSave} className="bg-bg-2 p-5 rounded-lg border border-border">
       <h3 className="text-sm font-semibold mb-1 text-accent flex items-center gap-2">
-        <Wallet size={14} /> Wallet Top-Up Settings
+        <Wallet size={14} /> Member Amount Top-Up Settings
       </h3>
-      <p className="text-xs text-text-2 mb-4">Controls every Gaming wallet top-up across all branches — the minimum amount allowed and the default bonus % applied automatically.</p>
+      <p className="text-xs text-text-2 mb-4">Controls every Gaming Member Amount top-up across all branches — the minimum amount allowed and the default bonus % applied automatically.</p>
       <div className="grid grid-cols-2 gap-4">
         <div className="form-group">
           <label>Minimum Gaming Top-Up (₹)</label>
@@ -56,7 +109,7 @@ function WalletTopUpSettingsCard() {
       </div>
       <div className="flex justify-end mt-4">
         <button type="submit" disabled={saving} className="btn-primary flex items-center gap-2 shadow-lg shadow-accent/25 disabled:opacity-50">
-          <Save size={14} /> {saving ? 'SAVING...' : 'SAVE WALLET SETTINGS'}
+          <Save size={14} /> {saving ? 'SAVING...' : 'SAVE MEMBER AMOUNT SETTINGS'}
         </button>
       </div>
     </form>
@@ -158,7 +211,7 @@ export default function SystemConfigTab() {
         </div>
 
         <div className="bg-bg-2 p-5 rounded-lg border border-border">
-          <h3 className="text-sm font-semibold mb-4 text-accent">Loyalty & Wallet Rules</h3>
+          <h3 className="text-sm font-semibold mb-4 text-accent">Loyalty & Member Amount Rules</h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="form-group">
               <label>Points Per ₹ Spent</label>
@@ -189,6 +242,11 @@ export default function SystemConfigTab() {
               <input type="text" name="emailReceivers" defaultValue={currentRules.emailNotifications?.receivers} className="form-control" placeholder="receiver1@gmail.com, receiver2@gmail.com" />
             </div>
           </div>
+
+          <p className="text-xs text-text-2 mb-2">
+            Save your sender + app password above first, then send a test to confirm it actually works — a wrong password otherwise fails silently, with no error anywhere.
+          </p>
+          <TestEmailButton defaultTo={currentRules.emailNotifications?.sender} />
         </div>
 
         <div className="flex justify-end">

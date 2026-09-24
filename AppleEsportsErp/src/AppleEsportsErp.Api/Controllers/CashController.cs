@@ -51,7 +51,7 @@ public class CashController : ControllerBase
     public async Task<IActionResult> OpenRegister([FromBody] OpenRegisterDto dto)
     {
         var result = await _cashRegisterService.OpenRegisterAsync(GetBranchId(), (await this.GetOperatorIdAsync()), (await this.GetShiftIdAsync()), dto);
-        return Ok(ApiResponse<CashRegisterDto>.Ok(result));
+        return Ok(ApiResponse<OpenRegisterResultDto>.Ok(result));
     }
 
     [HttpPost("transaction")]

@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using AppleEsportsErp.Application.Constants;
+using AppleEsportsErp.Application.Interfaces;
 using AppleEsportsErp.Infrastructure.Data;
 
 namespace AppleEsportsErp.Api.Hubs;
@@ -106,9 +107,22 @@ public class ReservationHub : BranchAwareHub
 public class PcStatusHub : BranchAwareHub
 {
     private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IHubContext<PcOverlayHub> _pcOverlayHub;
+    private readonly IHubNotificationService _hubNotificationService;
+    private readonly IAuditService _auditService;
 
-    public PcStatusHub(ILogger<PcStatusHub> logger, IServiceScopeFactory scopeFactory) : base(logger)
-        => _scopeFactory = scopeFactory;
+    public PcStatusHub(
+        ILogger<PcStatusHub> logger,
+        IServiceScopeFactory scopeFactory,
+        IHubContext<PcOverlayHub> pcOverlayHub,
+        IHubNotificationService hubNotificationService,
+        IAuditService auditService) : base(logger)
+    {
+        _scopeFactory = scopeFactory;
+        _pcOverlayHub = pcOverlayHub;
+        _hubNotificationService = hubNotificationService;
+        _auditService = auditService;
+    }
 
     /// <summary>Called by the Gaming PC Agent when it connects</summary>
     public async Task AgentConnected(string pcId, string connectionMode)
@@ -197,6 +211,14 @@ public class PcStatusHub : BranchAwareHub
     ///
     /// It also took a pcId and sent to agent:{pcId} without ever asking whose PC that was, so an
     /// operator at one branch could shut down another branch's machine by id.
+    ///
+    /// Also sent to PcOverlayHub's own pc:{pcId} group, which is where a real machine actually is.
+    /// agent:{pcId} is who AppleEsportsErp.ClientAgent joins, and nothing puts a real gaming PC in
+    /// that group today - ClientAgent is never launched by the installer and ships with a
+    /// placeholder token, so it never connects (see PHASE3_PLAN.md). The WebView2 page every
+    /// gaming PC actually runs joins pc:{pcId} on load (OverlaySocketContext.jsx) for its lock
+    /// screen and session overlay, and is genuinely connected. Kept both rather than replacing one
+    /// with the other, so a future working ClientAgent does not need this touched again.
     /// </summary>
     public async Task SendShutdownCommand(string pcId)
     {
@@ -205,15 +227,65 @@ public class PcStatusHub : BranchAwareHub
         if (!await PcBelongsToBranchAsync(pcId, branchId))
             throw new HubException("That PC does not belong to this branch.");
 
+        var pcGuid = Guid.Parse(pcId); // safe: PcBelongsToBranchAsync above already parsed this
+
+        // Marks the PC powered-off in the database, not only over the wire - without this the
+        // shutdown was a SignalR message nobody's screen remembered, and the tile never changed
+        // colour no matter how many times it was sent. See Pc.PoweredOff for why this is its own
+        // column rather than State.
+        using (var scope = _scopeFactory.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var pc = await db.Pcs.FirstOrDefaultAsync(p => p.Id == pcGuid);
+
+            // AwaitingSetup means no real machine has ever claimed this PC - there is nothing to
+            // shut down, and marking it PoweredOff would make an unclaimed PC indistinguishable
+            // from a real one that was just switched off. See the same guard in
+            // SendShutdownAllCommand.
+            if (pc != null && pc.State != Domain.Enums.PcState.AwaitingSetup)
+            {
+                pc.PoweredOff = true;
+                pc.UpdatedAt = DateTimeOffset.UtcNow;
+                await db.SaveChangesAsync();
+            }
+        }
+
         await Clients.Group($"agent:{pcId}").SendAsync("ForceShutdown", new
         {
             Timestamp = DateTimeOffset.UtcNow
         });
 
+        await _pcOverlayHub.Clients.Group($"pc:{pcId}").SendAsync("ShutdownPc");
+
+        // Same broadcast a session start/stop or a maintenance flag already triggers, so every
+        // open dashboard sees the tile change colour immediately instead of waiting on the
+        // 20-second safety poll.
+        await _hubNotificationService.BroadcastPcStatusChangeAsync(branchId, pcGuid);
+
+        var actorRole = Context.User?.FindFirstValue(ClaimTypes.Role);
+        var actorId = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+        var actorName = Context.User?.FindFirstValue(ClaimTypes.Name);
+        var isOperatorActor = actorRole == Roles.Operator;
+
+        // Every other PC action (add, update, maintenance, delete) writes to the Audit Trail -
+        // this one only ever wrote to the technical log, which an operator or Head Office never
+        // sees. A shutdown is exactly the kind of action that needs to be on the record.
+        await _auditService.LogAsync(new AuditEntry
+        {
+            UserId = isOperatorActor ? null : (Guid.TryParse(actorId, out var uid) ? uid : null),
+            OperatorId = isOperatorActor && Guid.TryParse(actorId, out var oid) ? oid : null,
+            UserRole = actorRole,
+            UserName = actorName,
+            Action = "pc_shutdown",
+            BranchId = branchId,
+            TargetType = "pc",
+            TargetId = pcGuid,
+            Details = null
+        });
+
         Logger.LogWarning(
             "Shutdown command sent to PC {PcId} by {Role} {User} of branch {BranchId}",
-            pcId, Context.User?.FindFirstValue(ClaimTypes.Role),
-            Context.User?.FindFirstValue(ClaimTypes.Name), branchId);
+            pcId, actorRole, actorName, branchId);
     }
 
     /// <summary>
@@ -244,7 +316,34 @@ public class PcStatusHub : BranchAwareHub
             p.State == Domain.Enums.PcState.Active ||
             p.State == Domain.Enums.PcState.AwaitingBilling).ToList();
 
-        var targets = pcs.Except(busy).ToList();
+        // A PC still AwaitingSetup has no real machine that has ever claimed it - no agent
+        // listening, nothing plugged in as far as this system knows. There is nothing to send a
+        // shutdown to, and marking one PoweredOff would make an unclaimed PC look identical to a
+        // real one that was just switched off, which is exactly the distinction this state exists
+        // to preserve.
+        var neverClaimed = pcs.Where(p => p.State == Domain.Enums.PcState.AwaitingSetup).ToList();
+
+        var targets = pcs.Except(busy).Except(neverClaimed).ToList();
+
+        // Same reasoning as SendShutdownCommand: mark these powered-off in the database so their
+        // tiles actually change colour, not only send the live command. Loaded separately from
+        // the AsNoTracking query above because that one only projects Id/State.
+        if (targets.Count > 0)
+        {
+            var targetIds = targets.Select(t => t.Id).ToList();
+            var targetPcs = await db.Pcs.Where(p => targetIds.Contains(p.Id)).ToListAsync();
+            foreach (var pc in targetPcs)
+            {
+                pc.PoweredOff = true;
+                pc.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+            await db.SaveChangesAsync();
+        }
+
+        var actorRole = Context.User?.FindFirstValue(ClaimTypes.Role);
+        var actorId = Context.User?.FindFirstValue(ClaimTypes.NameIdentifier);
+        var actorName = Context.User?.FindFirstValue(ClaimTypes.Name);
+        var isOperatorActor = actorRole == Roles.Operator;
 
         foreach (var pc in targets)
         {
@@ -252,13 +351,35 @@ public class PcStatusHub : BranchAwareHub
             {
                 Timestamp = DateTimeOffset.UtcNow
             });
+
+            // See the comment on SendShutdownCommand above - this is the group a real machine is
+            // actually in today.
+            await _pcOverlayHub.Clients.Group($"pc:{pc.Id}").SendAsync("ShutdownPc");
+
+            // Same live-dashboard broadcast SendShutdownCommand uses, sent per PC so every tile
+            // updates immediately.
+            await _hubNotificationService.BroadcastPcStatusChangeAsync(branchId, pc.Id);
+
+            // One entry per PC, same action name SendShutdownCommand uses, so the Audit Trail
+            // reads the same regardless of whether a PC was shut down on its own or as part of
+            // closing the whole branch.
+            await _auditService.LogAsync(new AuditEntry
+            {
+                UserId = isOperatorActor ? null : (Guid.TryParse(actorId, out var uid) ? uid : null),
+                OperatorId = isOperatorActor && Guid.TryParse(actorId, out var oid) ? oid : null,
+                UserRole = actorRole,
+                UserName = actorName,
+                Action = "pc_shutdown",
+                BranchId = branchId,
+                TargetType = "pc",
+                TargetId = pc.Id,
+                Details = null
+            });
         }
 
         Logger.LogWarning(
             "Shut down all PCs at branch {BranchId}: {Sent} sent, {Skipped} skipped as busy, by {Role} {User}",
-            branchId, targets.Count, busy.Count,
-            Context.User?.FindFirstValue(ClaimTypes.Role),
-            Context.User?.FindFirstValue(ClaimTypes.Name));
+            branchId, targets.Count, busy.Count, actorRole, actorName);
 
         return new { sent = targets.Count, skippedBusy = busy.Count };
     }
@@ -299,11 +420,33 @@ public class PcStatusHub : BranchAwareHub
             .AnyAsync(p => p.Id == id && p.BranchId == branchId && !p.IsDeleted);
     }
 
-    /// <summary>Heartbeat from agent to keep connection alive</summary>
-    public async Task AgentHeartbeat(string pcId, string mode)
+    /// <summary>
+    /// Heartbeat from agent to keep connection alive. Also the only place a gaming PC's agent
+    /// version reaches the database - agentVersion is optional so an older agent talking to a
+    /// newer server (which has not yet installed the update that adds this parameter) still
+    /// heartbeats successfully, just without a version to report yet.
+    ///
+    /// Written only when it actually changed. A PC heartbeats every 10 seconds
+    /// (DualConnectionService.HealthCheckIntervalSeconds) and its version changes maybe once a
+    /// month - writing on every heartbeat regardless would be 35 PCs' worth of UPDATEs every
+    /// 10 seconds for a value that is, almost always, identical to what is already stored.
+    /// </summary>
+    public async Task AgentHeartbeat(string pcId, string mode, string? agentVersion = null)
     {
         Logger.LogDebug("Heartbeat from PC {PcId} in {Mode} mode", pcId, mode);
-        await Task.CompletedTask;
+
+        if (!string.IsNullOrWhiteSpace(agentVersion) && Guid.TryParse(pcId, out var id))
+        {
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+            var pc = await db.Pcs.FirstOrDefaultAsync(p => p.Id == id && !p.IsDeleted);
+            if (pc != null && pc.AgentVersion != agentVersion)
+            {
+                pc.AgentVersion = agentVersion;
+                await db.SaveChangesAsync();
+            }
+        }
     }
 }
 

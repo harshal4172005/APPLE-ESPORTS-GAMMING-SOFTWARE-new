@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { MonitorPlay, MonitorOff, IndianRupee, Clock } from 'lucide-react';
+import { MonitorPlay, MonitorOff, IndianRupee, Clock, Keyboard, Mouse } from 'lucide-react';
 import { useBranch } from '../../contexts/BranchContext';
 import { useSocket } from '../../contexts/SocketContext';
 import api from '../../config/api';
@@ -40,11 +40,38 @@ const AdminPcCard = ({ pc }) => {
   const isReserved = pc.state === 'Reserved';
   const isIdle = pc.state === 'Idle';
   const isMaintenance = pc.state === 'UnderMaintenance';
+  // A genuinely shut-down PC (PcState.Offline) used to have no entry here at all, so it fell
+  // through to the same border/bg as Idle and the badge row below rendered nothing - which is
+  // exactly why this page showed every non-busy PC as "FREE" and never as offline. Matches
+  // PcTile.jsx's DEFAULT_STYLE.
+  const isOffline = pc.state === 'Offline';
+  // A PC record no physical machine has claimed yet - matches PcTile.jsx's own AwaitingSetup
+  // entry and pc-awaitingsetup token, so it reads the same way here as on the Sessions page
+  // instead of looking identical to a genuinely free PC.
+  const isAwaitingSetup = pc.state === 'AwaitingSetup';
+
+  // pc.poweredOff means PcStatusHub's shutdown command was sent and the PC has not reconnected
+  // since (see backend Pc.PoweredOff). Combined with an open session the same way
+  // PcTile.jsx/PcDetailPanel.jsx do: a shut-down PC still billing a customer needs the
+  // operator's attention, which a plain offline card would hide.
+  const hasOpenSession = isActive || isAwaiting;
+  const isShutDownWhileBilling = pc.poweredOff && hasOpenSession;
+
+  // What the customer on this PC is being charged on - same rule as PcTile.jsx's
+  // isPayAsYouGo/hasPlanTime: an open session with no end time is billed as time elapses, one
+  // with an end time was a fixed pre-purchased duration. Only meaningful while a session is
+  // actually open, so it's gated on the same hasOpenSession this card already needed.
+  const hasSessionPlan = hasOpenSession && !!pc.activeSessionId;
+  const isPayAsYouGoPlan = hasSessionPlan && !pc.sessionEndTime;
+  const isFixedPlan = hasSessionPlan && !!pc.sessionEndTime;
 
   let borderClass = 'border-pc-idle/30 hover:border-pc-idle/50';
   let bgClass = 'bg-pc-idle/5';
-  
-  if (isActive) {
+
+  if (isShutDownWhileBilling) {
+    borderClass = 'border-neon-orange/60';
+    bgClass = 'bg-neon-orange/10';
+  } else if (isActive) {
     borderClass = 'border-pc-active/50';
     bgClass = 'bg-pc-active/10';
   } else if (isAwaiting) {
@@ -56,6 +83,12 @@ const AdminPcCard = ({ pc }) => {
   } else if (isMaintenance) {
     borderClass = 'border-pc-offline/30';
     bgClass = 'bg-bg-2/60 opacity-75';
+  } else if (isOffline) {
+    borderClass = 'border-pc-offline/50';
+    bgClass = 'bg-pc-offline/10';
+  } else if (isAwaitingSetup) {
+    borderClass = 'border-pc-awaitingsetup/50';
+    bgClass = 'bg-pc-awaitingsetup/10';
   }
 
   // Live charge — same formula as the backend (SessionPricingCalculator): free during the
@@ -84,11 +117,30 @@ const AdminPcCard = ({ pc }) => {
           )}
         </div>
         
-        {isActive && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-active/50 text-pc-active rounded uppercase">ACTIVE</span>}
-        {isAwaiting && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-neon-orange/50 text-neon-orange rounded uppercase">AWAITING BILL</span>}
-        {isReserved && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-reserved/50 text-pc-reserved rounded uppercase">RESERVED</span>}
-        {isIdle && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-border text-text-3 rounded uppercase">FREE</span>}
-        {isMaintenance && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-offline/50 text-pc-offline rounded uppercase">MAINTENANCE</span>}
+        <div className="flex items-center gap-1.5">
+          {/* What this session is billed on, said with a picture the same way PcTile.jsx's
+              monitor glyph does - only while a session is actually open, never on an idle/
+              offline/maintenance PC that has no plan to show one for. */}
+          {isPayAsYouGoPlan && (
+            <span className="flex items-center gap-0.5 text-pc-active" title="Pay-As-You-Go">
+              <Keyboard className="w-3 h-3" strokeWidth={2.5} />
+              <Mouse className="w-3 h-3" strokeWidth={2.5} />
+            </span>
+          )}
+          {isFixedPlan && (
+            <span className="text-neon-orange" title="Limited Time Plan">
+              <Clock className="w-3.5 h-3.5" strokeWidth={2.5} />
+            </span>
+          )}
+          {isShutDownWhileBilling && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-neon-orange/60 text-neon-orange rounded uppercase animate-pulse">OFF - BILLING</span>}
+          {isActive && !isShutDownWhileBilling && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-active/50 text-pc-active rounded uppercase">ACTIVE</span>}
+          {isAwaiting && !isShutDownWhileBilling && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-neon-orange/50 text-neon-orange rounded uppercase">AWAITING BILL</span>}
+          {isReserved && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-reserved/50 text-pc-reserved rounded uppercase">RESERVED</span>}
+          {isIdle && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-border text-text-3 rounded uppercase">FREE</span>}
+          {isMaintenance && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-offline/50 text-pc-offline rounded uppercase">MAINTENANCE</span>}
+          {isOffline && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-offline/50 text-pc-offline rounded uppercase">SHUT DOWN</span>}
+          {isAwaitingSetup && <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 border border-pc-awaitingsetup/50 text-pc-awaitingsetup rounded uppercase">NOT SET UP</span>}
+        </div>
       </div>
 
       {/* Details Area */}
@@ -167,9 +219,13 @@ export default function PcStatusPage() {
     }
     try {
       const { data } = await api.get('/pcs', { params: { branchId: activeBranch.id } });
-      const sorted = (data?.data || []).sort((a, b) =>
-        a.name.localeCompare(b.name, undefined, { numeric: true })
-      );
+      // PCs first, consoles (PS5/Xbox...) last - same ordering as SessionsPage.
+      const sorted = (data?.data || []).sort((a, b) => {
+        const aIsConsole = a.zone === 'Console' ? 1 : 0;
+        const bIsConsole = b.zone === 'Console' ? 1 : 0;
+        if (aIsConsole !== bIsConsole) return aIsConsole - bIsConsole;
+        return a.name.localeCompare(b.name, undefined, { numeric: true });
+      });
       setPcs(sorted);
     } catch (err) {
       console.error('Failed to load PCs', err);

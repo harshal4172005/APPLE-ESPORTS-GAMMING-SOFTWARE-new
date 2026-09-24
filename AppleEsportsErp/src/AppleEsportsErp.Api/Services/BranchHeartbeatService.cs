@@ -65,6 +65,14 @@ public class BranchHeartbeatService : BackgroundService
     private static readonly TimeSpan ComplainAtMost = TimeSpan.FromMinutes(15);
     private DateTimeOffset _lastComplaint = DateTimeOffset.MinValue;
 
+    /// <summary>
+    /// Own throttle, separate from <see cref="_lastComplaint"/> above - that one is about
+    /// losing the line to Head Office; this one is about a specific row (an operator, a menu
+    /// item, a member) that keeps failing to apply every single beat. Sharing one timer would
+    /// let either kind of problem silence the other's log line.
+    /// </summary>
+    private DateTimeOffset _lastConfigRowComplaint = DateTimeOffset.MinValue;
+
     public BranchHeartbeatService(
         ILogger<BranchHeartbeatService> logger,
         IConfiguration configuration,
@@ -165,6 +173,9 @@ public class BranchHeartbeatService : BackgroundService
                 CurrentSessionId = p.CurrentSessionId,
                 SessionStartTime = p.CurrentSession != null ? p.CurrentSession.StartTime : (DateTimeOffset?)null,
                 SessionEndTime = p.CurrentSession != null ? p.CurrentSession.EndTime : null,
+                SessionPackagePrice = p.CurrentSession != null ? p.CurrentSession.PackagePrice : null,
+                SessionPlannedDurationMin = p.CurrentSession != null ? p.CurrentSession.PlannedDurationMin : null,
+                PoweredOff = p.PoweredOff,
             })
             .ToListAsync(ct);
 
@@ -240,18 +251,27 @@ public class BranchHeartbeatService : BackgroundService
         // going quiet - so the next time this happens, the result message says what broke.
         try
         {
-            await ApplyConfigFromReplyAsync(db, body, ct);
+            // No shared scope is passed in at all any more - see ApplyConfigFromReplyAsync's own
+            // comment for why. It used to take one DbContext for the whole config (every
+            // operator, every menu item, every member on one SaveChangesAsync), which meant a
+            // single colliding row anywhere in that batch failed everything else in it too - and
+            // did so on every beat forever, since Head Office resends the same batch until the
+            // branch's reported fingerprint changes, which it never did while the save kept
+            // throwing. Now each row gets its own scope and its own save, isolated the same way
+            // RunCommandsFromReplyAsync already isolates one command from the next.
+            await ApplyConfigFromReplyAsync(body, ct);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex,
-                "Applying Head Office's settings failed. Nothing else this beat is affected by " +
-                "this alone, but the branch keeps whatever settings it already had.");
+                "Applying Head Office's settings failed outside the per-row handling that would " +
+                "normally have caught it and reported back why. Nothing else this beat is affected " +
+                "by this alone, but the branch keeps whatever settings it already had.");
         }
 
         try
         {
-            await RunCommandsFromReplyAsync(scope.ServiceProvider, client, headOffice, body, ct);
+            await RunCommandsFromReplyAsync(_serviceProvider, client, headOffice, body, ct);
         }
         catch (Exception ex)
         {
@@ -271,9 +291,22 @@ public class BranchHeartbeatService : BackgroundService
     /// remote stop is billed, logged and synced upward exactly like a local one. Head Office
     /// asking and Head Office writing are not the same thing, and only the first is safe: the
     /// second is what put an unbillable ₹60 session on ADJ-PC-01 in the first place.
+    ///
+    /// Takes the root provider, not an existing scope, and opens a fresh one per command inside
+    /// the loop below - never one scope shared across the whole batch. A batch is any number of
+    /// unrelated commands; sharing one DbContext across all of them means a failed insert in
+    /// command 1 stays tracked as Added after its own SaveChanges throws, and command 2's own
+    /// SaveChanges - or CommitTransactionAsync, same thing underneath - tries to flush it right
+    /// alongside whatever command 2 actually did, and fails for command 1's reason with no
+    /// mention of command 1 anywhere. This already happened once (the 2.4.11 stock-delivery /
+    /// audit-log fault) and reappeared in a different shape (a start_session command failing on
+    /// IX_members_Username - a table StartSessionAsync never touches - because an earlier member
+    /// sync's failed insert was still sitting in the same shared DbContext). Fixing the specific
+    /// insert each time treats the symptom; a fresh scope per command removes the cross-talk
+    /// itself.
     /// </summary>
     private async Task RunCommandsFromReplyAsync(
-        IServiceProvider scoped, HttpClient client, string headOffice, string body, CancellationToken ct)
+        IServiceProvider serviceProvider, HttpClient client, string headOffice, string body, CancellationToken ct)
     {
         List<BranchCommandDto>? commands;
         try
@@ -300,7 +333,8 @@ public class BranchHeartbeatService : BackgroundService
             string message;
             try
             {
-                (succeeded, message) = await RunOneCommandAsync(scoped, command, ct);
+                using var commandScope = serviceProvider.CreateAsyncScope();
+                (succeeded, message) = await RunOneCommandAsync(commandScope.ServiceProvider, command, ct);
             }
             catch (Exception ex)
             {
@@ -365,6 +399,15 @@ public class BranchHeartbeatService : BackgroundService
             case BranchCommands.SetPcState:
                 return await RunSetPcStateAsync(scoped, command.Payload, ct);
 
+            case BranchCommands.AddPc:
+                return await RunAddPcAsync(scoped, command.Payload, ct);
+
+            case BranchCommands.UpdatePc:
+                return await RunUpdatePcAsync(scoped, command.Payload, ct);
+
+            case BranchCommands.DeletePc:
+                return await RunDeletePcAsync(scoped, command.Payload, ct);
+
             case BranchCommands.TransferSession:
                 return await RunTransferSessionAsync(scoped, command.Payload, ct);
 
@@ -386,6 +429,9 @@ public class BranchHeartbeatService : BackgroundService
             case BranchCommands.CancelReservation:
                 return await RunCancelReservationAsync(scoped, command.Payload, ct);
 
+            case BranchCommands.DeleteReservation:
+                return await RunDeleteReservationAsync(scoped, command.Payload, ct);
+
             case BranchCommands.StartReservation:
                 return await RunStartReservationAsync(scoped, command.Payload, ct);
 
@@ -395,11 +441,20 @@ public class BranchHeartbeatService : BackgroundService
             case BranchCommands.ApplyDiscount:
                 return await RunApplyDiscountAsync(scoped, command.Payload, ct);
 
+            case BranchCommands.EditPaymentMethod:
+                return await RunEditPaymentMethodAsync(scoped, command.Payload, ct);
+
             case BranchCommands.DeleteInventoryItem:
                 return await RunDeleteInventoryItemAsync(scoped, command.Payload, ct);
 
             case BranchCommands.SetMemberPassword:
                 return await RunSetMemberPasswordAsync(scoped, command.Payload, ct);
+
+            case BranchCommands.AdminEditMemberValues:
+                return await RunAdminEditMemberValuesAsync(scoped, command.Payload, ct);
+
+            case BranchCommands.RelaySharedStockDelta:
+                return await RunRelaySharedStockDeltaAsync(scoped, command.Payload, ct);
 
             default:
                 return (false, $"This branch does not know the command '{command.CommandType}' yet.");
@@ -677,10 +732,18 @@ public class BranchHeartbeatService : BackgroundService
         var db = scoped.GetRequiredService<AppDbContext>();
         var member = await db.Set<Member>().FirstOrDefaultAsync(m => m.Id == memberId, ct);
 
-        // Not a failure. A member created at another branch, or one this branch has never seen,
-        // simply has nothing here to update - and reporting that as an error would have Head
-        // Office retrying a command that can never apply.
-        if (member is null) return (true, "This member does not exist at this branch.");
+        // Genuinely absent (a member deleted at Head Office, say) and merely "not synced here
+        // yet" look identical from this query alone - a member created seconds ago, or a
+        // password reset requested moments after signup, simply has not reached this branch's
+        // own copy through the ordinary heartbeat push yet. Treating that as done would be
+        // exactly the old bug: Head Office already told the customer their reset succeeded, and
+        // nothing would ever tell the branch to actually store it. See
+        // BranchCommands.MemberNotYetSyncedMessage for why this exact wording matters: Head
+        // Office's CommandResult handler leaves the command Pending for this one message
+        // instead of closing it, so it keeps trying on later heartbeats until the member has
+        // arrived and this can actually apply - or the ordinary 48-hour give-up closes it for
+        // a member that truly never will.
+        if (member is null) return (false, BranchCommands.MemberNotYetSyncedMessage);
 
         member.PasswordHash = passwordHash;
         member.ResetToken = null;
@@ -700,6 +763,130 @@ public class BranchHeartbeatService : BackgroundService
         });
 
         return (true, "Password updated at this branch.");
+    }
+
+    /// <summary>
+    /// A Super Admin's direct balance/stat override, carried out on this branch's own copy of
+    /// the member - the one its counter actually reads. Runs through the exact same
+    /// MemberService.AdminEditValuesAsync a local admin-edit screen would call, so the branch
+    /// gets its own Correction wallet transaction and audit entry out of this too, not just a
+    /// changed number with nothing explaining it later.
+    /// </summary>
+    private static async Task<(bool, string)> RunAdminEditMemberValuesAsync(
+        IServiceProvider scoped, string payload, CancellationToken ct)
+    {
+        Guid memberId, adminId;
+        string? adminName;
+        Application.DTOs.Members.AdminEditMemberValuesDto dto;
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            memberId = root.GetProperty("memberId").GetGuid();
+            adminId = root.GetProperty("adminId").GetGuid();
+            adminName = root.TryGetProperty("adminName", out var n) ? n.GetString() : null;
+            dto = JsonSerializer.Deserialize<Application.DTOs.Members.AdminEditMemberValuesDto>(
+                root.GetProperty("dto").GetRawText(),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? throw new InvalidOperationException("Empty member-edit payload.");
+        }
+        catch
+        {
+            return (false, "The member-edit command arrived without a readable member id and values.");
+        }
+
+        var db = scoped.GetRequiredService<AppDbContext>();
+        var member = await db.Set<Member>().AsNoTracking().FirstOrDefaultAsync(m => m.Id == memberId, ct);
+
+        // Same reasoning as RunSetMemberPasswordAsync just above - see that comment. A member
+        // this branch has not yet received via its own heartbeat push is not distinguishable
+        // here from one that never will arrive, so this retries rather than closing quietly.
+        if (member is null) return (false, BranchCommands.MemberNotYetSyncedMessage);
+
+        try
+        {
+            var memberService = scoped.GetRequiredService<IMemberService>();
+            // remoteAdminName (never null here - this command only ever comes from Head Office)
+            // is what tells AdminEditValuesAsync this actor's id is a Head Office id, not a
+            // local one: WalletTransaction.AdminId is FK'd to this branch's own `users` table,
+            // which has never heard of a Head Office account, so writing adminId there failed
+            // outright on every single remote balance edit. See that method's own comment.
+            var result = await memberService.AdminEditValuesAsync(
+                member.HomeBranchId ?? Guid.Empty, adminId, memberId, dto, adminName ?? "Head Office");
+
+            return (true, $"Updated at this branch. Gaming balance now Rs {result.GamingBalance}.");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.GetBaseException().Message);
+        }
+    }
+
+    /// <summary>
+    /// A sibling branch's shared food/snacks stock moving by some amount, applied here as the
+    /// same movement to this branch's own local copy of that item.
+    ///
+    /// Clamped to zero. Two branches sharing one pantry can each only ever know their own count
+    /// between sync beats, so a same-moment sale at both is still possible - each branch's own
+    /// local sale already refused to oversell against what it knew (FoodOrderService), but the
+    /// two branches' otherwise-valid sales can still add up to more than the shared item ever
+    /// had. Letting the total go negative here just moves that same overselling into the
+    /// stock count itself instead of preventing it; zero is the honest floor for "how much is
+    /// left," and the sibling branch that sold into an already-empty shelf is the one this
+    /// shows up for by seeing 0 instead of the sale count it expected.
+    /// </summary>
+    private static async Task<(bool, string)> RunRelaySharedStockDeltaAsync(
+        IServiceProvider scoped, string payload, CancellationToken ct)
+    {
+        Guid inventoryItemId, relayEventId;
+        int delta;
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            inventoryItemId = root.GetProperty("inventoryItemId").GetGuid();
+            delta = root.GetProperty("delta").GetInt32();
+            relayEventId = root.GetProperty("relayEventId").GetGuid();
+        }
+        catch
+        {
+            return (false, "The shared-stock command arrived without a readable item id and amount.");
+        }
+
+        var db = scoped.GetRequiredService<AppDbContext>();
+
+        // The dedupe guard: a redelivery of the exact same relay (this command retried, or
+        // Head Office's own fan-out retried after a partial failure) must not move the count
+        // twice. See InventoryLog.SourceRelayEventId.
+        if (await db.Set<InventoryLog>().AnyAsync(l => l.SourceRelayEventId == relayEventId, ct))
+            return (true, "Already applied.");
+
+        var item = await db.Set<InventoryItem>().FirstOrDefaultAsync(i => i.Id == inventoryItemId, ct);
+
+        // Not a failure worth logging as one: this branch's own copy of a shared item is
+        // materialised by the ordinary catalogue push (BranchHeartbeatController.
+        // ConfigForBranchIfChangedAsync), which cannot have landed after a sale already
+        // happened at a sibling for an item nobody here has ever heard of. Retrying on the
+        // next beat gives that push a chance to arrive first.
+        if (item is null) return (false, "This branch does not know this shared item yet.");
+
+        item.CurrentStock = Math.Max(0, item.CurrentStock + delta);
+
+        db.Set<InventoryLog>().Add(new InventoryLog
+        {
+            Id = Guid.NewGuid(),
+            InventoryId = item.Id,
+            BranchId = item.BranchId,
+            Action = "shared_sync",
+            Quantity = delta,
+            Reason = "Shared stock update from a linked branch",
+            SourceRelayEventId = relayEventId,
+            CreatedAt = DateTimeOffset.UtcNow,
+        });
+
+        await db.SaveChangesAsync(ct);
+
+        return (true, $"Applied. {item.ItemName} now at {item.CurrentStock}.");
     }
 
     private static async Task<(bool, string)> RunDeleteInventoryItemAsync(
@@ -892,6 +1079,43 @@ public class BranchHeartbeatService : BackgroundService
         }
     }
 
+    private static async Task<(bool, string)> RunDeleteReservationAsync(
+        IServiceProvider scoped, string payload, CancellationToken ct)
+    {
+        Guid reservationId;
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            reservationId = doc.RootElement.GetProperty("reservationId").GetGuid();
+        }
+        catch
+        {
+            return (false, "The remove command arrived without a readable reservation id.");
+        }
+
+        var db = scoped.GetRequiredService<AppDbContext>();
+        var reservation = await db.Set<Reservation>().AsNoTracking()
+            .FirstOrDefaultAsync(r => r.Id == reservationId, ct);
+        // Already gone at this branch (an operator here may have removed it themselves in the
+        // time this took to arrive) - the correct outcome either way is that it no longer exists.
+        if (reservation is null) return (true, "Already removed - nothing to do.");
+
+        var actorId = await OnShiftOrAnyOperatorAsync(db, reservation.BranchId, ct);
+        if (actorId is null)
+            return (false, "This branch has no operator at all to record the removal against.");
+
+        try
+        {
+            var reservationService = scoped.GetRequiredService<IReservationService>();
+            await reservationService.DeleteReservationAsync(reservation.BranchId, actorId.Value, reservationId);
+            return (true, $"Removed the booking for {reservation.CustomerName}.");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.GetBaseException().Message);
+        }
+    }
+
     private static async Task<(bool, string)> RunStartReservationAsync(
         IServiceProvider scoped, string payload, CancellationToken ct)
     {
@@ -1019,6 +1243,163 @@ public class BranchHeartbeatService : BackgroundService
         await db.SaveChangesAsync(ct);
 
         return (true, $"{pc.PcNumber} is now {state.ToString().ToLowerInvariant()}.");
+    }
+
+    /// <summary>
+    /// Adds a PC or console because Head Office asked - mirrors PcsController.Create exactly
+    /// (duplicate check, pricing-profile fallback, console-vs-PC initial state), since that
+    /// controller action is the one this replaces when the caller is at Head Office rather
+    /// than at the branch itself.
+    /// </summary>
+    private static async Task<(bool, string)> RunAddPcAsync(
+        IServiceProvider scoped, string payload, CancellationToken ct)
+    {
+        AppleEsportsErp.Application.DTOs.Settings.CreatePcDto? dto;
+        try
+        {
+            dto = JsonSerializer.Deserialize<AppleEsportsErp.Application.DTOs.Settings.CreatePcDto>(payload);
+        }
+        catch
+        {
+            dto = null;
+        }
+
+        if (dto is null || string.IsNullOrWhiteSpace(dto.PcNumber))
+            return (false, "The add-PC command arrived without a readable PC to create.");
+
+        var db = scoped.GetRequiredService<AppDbContext>();
+
+        var exists = await db.Pcs.AnyAsync(
+            p => p.BranchId == dto.BranchId && p.PcNumber == dto.PcNumber && !p.IsDeleted, ct);
+        if (exists)
+            return (false, $"PC number {dto.PcNumber} already exists at this branch.");
+
+        var pricingProfile = dto.PricingProfileId.HasValue
+            ? await db.PricingProfiles.FirstOrDefaultAsync(
+                p => p.Id == dto.PricingProfileId.Value && p.BranchId == dto.BranchId, ct)
+            : await db.PricingProfiles.FirstOrDefaultAsync(
+                p => p.BranchId == dto.BranchId && p.IsActive, ct);
+
+        if (pricingProfile is null)
+            return (false, "This branch has no Pricing Profile yet - create one before adding a PC.");
+
+        var isConsole = string.Equals(dto.Zone, "Console", StringComparison.OrdinalIgnoreCase);
+
+        var pc = new Pc
+        {
+            // Head Office's own id when this command came from there (see CreatePcDto.Id), so
+            // its mirror and this branch's own row are the same row from the start, not two
+            // that happen to share a PcNumber. Without this the branch generated its own fresh
+            // id, Head Office's heartbeat-apply never learns a fresh id (it only ever updates
+            // one it already recognises), and every state change on this PC was silently
+            // ignored at Head Office forever. A fresh id only for a PC added locally at a
+            // branch's own Settings page, which has no mirror to match.
+            Id = dto.Id ?? Guid.NewGuid(),
+            PcNumber = dto.PcNumber,
+            PcName = dto.PcName ?? dto.PcNumber,
+            BranchId = dto.BranchId,
+            IpAddress = isConsole ? null : dto.IpAddress,
+            Specs = dto.Specs ?? "{}",
+            Zone = dto.Zone ?? "Standard",
+            HardwareNotes = dto.HardwareNotes,
+            PricingProfileId = pricingProfile.Id,
+            State = isConsole ? PcState.Idle : PcState.AwaitingSetup,
+            IsActive = true,
+            IsDeleted = false,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        db.Pcs.Add(pc);
+        await db.SaveChangesAsync(ct);
+
+        return (true, $"{pc.PcNumber} added to the fleet.");
+    }
+
+    /// <summary>
+    /// Edits a PC's details on this branch's own database, carried out here so a change made
+    /// from Head Office actually reaches the machine that shows it - see the comment on
+    /// PcsController.Update for the fault this replaces.
+    /// </summary>
+    private static async Task<(bool, string)> RunUpdatePcAsync(
+        IServiceProvider scoped, string payload, CancellationToken ct)
+    {
+        AppleEsportsErp.Application.DTOs.Settings.UpdatePcCommandDto? dto;
+        try
+        {
+            dto = JsonSerializer.Deserialize<AppleEsportsErp.Application.DTOs.Settings.UpdatePcCommandDto>(payload);
+        }
+        catch
+        {
+            dto = null;
+        }
+
+        if (dto is null || string.IsNullOrWhiteSpace(dto.PcNumber))
+            return (false, "The update-PC command arrived without a readable PC to update.");
+
+        var db = scoped.GetRequiredService<AppDbContext>();
+        var pc = await db.Pcs.FirstOrDefaultAsync(p => p.Id == dto.Id && !p.IsDeleted, ct);
+
+        if (pc is null)
+            return (false, "No such PC exists at this branch to update.");
+
+        var exists = await db.Pcs.AnyAsync(
+            p => p.BranchId == pc.BranchId && p.PcNumber == dto.PcNumber && p.Id != dto.Id && !p.IsDeleted, ct);
+        if (exists)
+            return (false, $"PC number {dto.PcNumber} already exists at this branch.");
+
+        var isConsole = string.Equals(dto.Zone, "Console", StringComparison.OrdinalIgnoreCase);
+
+        pc.PcNumber = dto.PcNumber;
+        pc.PcName = dto.PcName ?? dto.PcNumber;
+        pc.IpAddress = isConsole ? null : dto.IpAddress;
+        pc.Specs = dto.Specs ?? "{}";
+        pc.Zone = dto.Zone ?? "Standard";
+        pc.HardwareNotes = dto.HardwareNotes;
+        pc.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+
+        return (true, $"{pc.PcNumber} updated.");
+    }
+
+    /// <summary>
+    /// Soft-deletes a PC on this branch's own database - the other half of the same fault:
+    /// removing a PC from Head Office's Settings page used to only ever remove it from Head
+    /// Office's own mirror. The branch's own copy, and its own heartbeat's PcsTotal count, kept
+    /// counting the row forever, which is the confirmed root cause of a branch reporting far
+    /// more PCs than are physically real.
+    /// </summary>
+    private static async Task<(bool, string)> RunDeletePcAsync(
+        IServiceProvider scoped, string payload, CancellationToken ct)
+    {
+        AppleEsportsErp.Application.DTOs.Settings.DeletePcCommandDto? dto;
+        try
+        {
+            dto = JsonSerializer.Deserialize<AppleEsportsErp.Application.DTOs.Settings.DeletePcCommandDto>(payload);
+        }
+        catch
+        {
+            dto = null;
+        }
+
+        if (dto is null || dto.Id == Guid.Empty)
+            return (false, "The delete-PC command arrived without a readable PC to remove.");
+
+        var db = scoped.GetRequiredService<AppDbContext>();
+        var pc = await db.Pcs.FirstOrDefaultAsync(p => p.Id == dto.Id && !p.IsDeleted, ct);
+
+        // Already gone locally - not a failure. Nothing left to do, which is exactly what was
+        // asked for.
+        if (pc is null)
+            return (true, "Already removed from this branch - nothing to do.");
+
+        pc.IsDeleted = true;
+        pc.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await db.SaveChangesAsync(ct);
+
+        return (true, $"{pc.PcNumber} removed from the fleet.");
     }
 
     private static async Task<(bool, string)> RunStopSessionAsync(
@@ -1438,6 +1819,51 @@ public class BranchHeartbeatService : BackgroundService
     }
 
     /// <summary>
+    /// Corrects a bill's payment method at the branch that actually holds it - same reasoning
+    /// as RunApplyDiscountAsync, actor carried explicitly for the same accountability reason.
+    /// </summary>
+    private static async Task<(bool, string)> RunEditPaymentMethodAsync(
+        IServiceProvider scoped, string payload, CancellationToken ct)
+    {
+        Guid billId, actorId;
+        string actorRole;
+        Application.DTOs.Billing.EditPaymentMethodDto dto;
+        try
+        {
+            using var doc = JsonDocument.Parse(payload);
+            var root = doc.RootElement;
+            billId = root.GetProperty("billId").GetGuid();
+            actorId = root.GetProperty("actorId").GetGuid();
+            actorRole = root.GetProperty("actorRole").GetString() ?? Roles.SuperAdmin;
+            dto = JsonSerializer.Deserialize<Application.DTOs.Billing.EditPaymentMethodDto>(
+                payload, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                ?? throw new InvalidOperationException("Empty payment-correction payload.");
+        }
+        catch
+        {
+            return (false, "The payment-correction command arrived without a readable bill id and amounts.");
+        }
+
+        var db = scoped.GetRequiredService<AppDbContext>();
+        var bill = await db.Bills.AsNoTracking().FirstOrDefaultAsync(b => b.Id == billId, ct);
+
+        if (bill is null) return (false, "No such bill exists at this branch.");
+
+        try
+        {
+            var billingService = scoped.GetRequiredService<IBillingService>();
+            await billingService.EditPaymentMethodAsync(
+                bill.BranchId, actorId, actorRole, billId, dto);
+
+            return (true, $"Payment method corrected to {dto.NewPaymentType}.");
+        }
+        catch (Exception ex)
+        {
+            return (false, ex.GetBaseException().Message);
+        }
+    }
+
+    /// <summary>
     /// Takes whatever settings Head Office sent back and makes this branch match them.
     ///
     /// This is the direction that never existed. A super admin could grant an operator End of
@@ -1448,7 +1874,7 @@ public class BranchHeartbeatService : BackgroundService
     /// Head Office sends nothing at all when this branch is already correct, so the usual case
     /// is a few hundred bytes and this method does nothing.
     /// </summary>
-    private async Task ApplyConfigFromReplyAsync(AppDbContext db, string body, CancellationToken ct)
+    private async Task ApplyConfigFromReplyAsync(string body, CancellationToken ct)
     {
         BranchConfigDto? config;
         try
@@ -1468,78 +1894,201 @@ public class BranchHeartbeatService : BackgroundService
         }
 
         if (config is null) return;
-        if (config.Operators.Count == 0 && config.MenuItems.Count == 0 && config.Members.Count == 0) return;
+        if (config.Operators.Count == 0 && config.MenuItems.Count == 0 && config.Members.Count == 0
+            && config.PricingProfiles.Count == 0 && config.Admins.Count == 0) return;
 
-        var known = await db.Operators.ToDictionaryAsync(o => o.Id, ct);
-        var changed = 0;
+        // Every row gets its own scope and its own SaveChangesAsync - deliberately, and this is
+        // the fix for a real, silent, permanent failure mode found on Citylight. All of an
+        // update's operators, menu items and members used to be tracked on ONE shared DbContext
+        // and flushed with ONE SaveChangesAsync at the end. A single colliding row - a leftover,
+        // orphaned Operator sharing a Username with a brand new one Head Office was pushing down,
+        // exactly the kind of debris an old, heavily-used branch accumulates over years - made
+        // that one call throw, which meant NOTHING in the batch was applied: not the colliding
+        // operator, not the other nine perfectly fine ones, not that beat's menu or member
+        // changes either. And because the fingerprint this branch reports is only updated after
+        // a successful save (below), Head Office kept resending the exact same batch every beat,
+        // which kept failing on the exact same row, forever - a branch permanently stuck unable
+        // to learn of ANY new operator, permission change, menu item or member, with nothing
+        // anywhere telling the owner why, because the only trace was one log line on that one
+        // branch's own machine. Isolating each row means the one that keeps colliding keeps
+        // failing on its own, loudly, while everything else lands normally on every beat.
+        var anyFailed = false;
+        var opsAdded = 0;
+        var menuAdded = 0;
+        var membersAdded = 0;
+        var pricingAdded = 0;
+        var adminsAdded = 0;
 
         foreach (var incoming in config.Operators)
         {
-            if (!known.TryGetValue(incoming.Id, out var op))
+            try
             {
-                // Somebody hired at Head Office who has never existed here. Created with the
-                // same id, so everything they later do lines up on both sides rather than
-                // arriving as a stranger.
-                op = new Operator
-                {
-                    Id = incoming.Id,
-                    BranchId = _branchId,
-                    Status = OperatorStatus.LoggedOut,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                };
-                db.Operators.Add(op);
-                changed++;
+                using var scope = _serviceProvider.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (await ApplyOneOperatorAsync(db, _branchId, incoming, ct)) opsAdded++;
+                if (db.ChangeTracker.HasChanges()) await db.SaveChangesAsync(ct);
             }
-
-            op.FullName = incoming.FullName;
-            op.Username = incoming.Username;
-            op.Email = incoming.Email;
-            op.PasswordHash = incoming.PasswordHash;
-            op.MobileNumber = incoming.MobileNumber;
-            op.AccessPin = incoming.AccessPin;
-            op.IsGlobalAdmin = incoming.IsGlobalAdmin;
-            op.DashboardPermissions = incoming.DashboardPermissions;
-            op.UpdatedAt = DateTimeOffset.UtcNow;
-
-            // Only the barred/not-barred decision comes down. Active and LoggedOut say whether
-            // somebody is standing at this counter, which Head Office cannot know and must
-            // never overwrite - doing so would sign out the operator halfway through a shift.
-            if (incoming.IsBlocked)
+            catch (Exception ex)
             {
-                if (op.Status is not (OperatorStatus.Suspended or OperatorStatus.Disabled))
-                    op.Status = OperatorStatus.Suspended;
-            }
-            else if (op.Status is OperatorStatus.Suspended or OperatorStatus.Disabled)
-            {
-                op.Status = OperatorStatus.LoggedOut;   // unbarred; duty is decided here
+                anyFailed = true;
+                LogConfigRowFailure("operator", incoming.Username, incoming.Id, ex);
             }
         }
 
-        var menuChanged = await ApplyMenuItemsAsync(db, _branchId, config.MenuItems, ct);
-        var membersChanged = await ApplyMembersAsync(db, config.Members, ct);
-
-        if (db.ChangeTracker.HasChanges())
+        foreach (var item in config.MenuItems)
         {
-            await db.SaveChangesAsync(ct);
+            try
+            {
+                using var scope = _serviceProvider.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (await ApplyOneMenuItemAsync(db, _branchId, item, ct)) menuAdded++;
+                if (db.ChangeTracker.HasChanges()) await db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                anyFailed = true;
+                LogConfigRowFailure("menu item", item.ItemName, item.Id, ex);
+            }
+        }
 
-            // Recorded once, not every beat: the fingerprint now matches so Head Office stops
-            // sending it. Worth a line in the log, because "the shop suddenly behaves
-            // differently" should always have something to point at.
+        foreach (var item in config.Members)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (await ApplyOneMemberAsync(db, item, ct)) membersAdded++;
+                if (db.ChangeTracker.HasChanges()) await db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                anyFailed = true;
+                LogConfigRowFailure("member", item.FullName, item.Id, ex);
+            }
+        }
+
+        foreach (var item in config.PricingProfiles)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (await ApplyOnePricingProfileAsync(db, _branchId, item, ct)) pricingAdded++;
+                if (db.ChangeTracker.HasChanges()) await db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                anyFailed = true;
+                LogConfigRowFailure("pricing profile", item.Name, item.Id, ex);
+            }
+        }
+
+        foreach (var item in config.Admins)
+        {
+            try
+            {
+                using var scope = _serviceProvider.CreateAsyncScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+                if (await ApplyOneAdminAsync(db, item, ct)) adminsAdded++;
+                if (db.ChangeTracker.HasChanges()) await db.SaveChangesAsync(ct);
+            }
+            catch (Exception ex)
+            {
+                anyFailed = true;
+                LogConfigRowFailure("admin", item.FullName, item.Id, ex);
+            }
+        }
+
+        if (opsAdded + menuAdded + membersAdded + pricingAdded + adminsAdded > 0)
+        {
             _logger.LogInformation(
                 "Settings updated from Head Office: {OpCount} operator(s), {OpNew} new; " +
-                "{MenuCount} menu item(s), {MenuNew} new; {MemberCount} member(s), {MemberNew} new. " +
+                "{MenuCount} menu item(s), {MenuNew} new; {MemberCount} member(s), {MemberNew} new; " +
+                "{PricingCount} pricing profile(s), {PricingNew} new; {AdminCount} admin(s), {AdminNew} new. " +
                 "Version {Version}.",
-                config.Operators.Count, changed,
-                config.MenuItems.Count, menuChanged,
-                config.Members.Count, membersChanged,
+                config.Operators.Count, opsAdded,
+                config.MenuItems.Count, menuAdded,
+                config.Members.Count, membersAdded,
+                config.PricingProfiles.Count, pricingAdded,
+                config.Admins.Count, adminsAdded,
                 config.Version);
         }
 
-        _configVersion = config.Version;
+        // Advanced only when every row landed cleanly. A row that keeps failing means Head
+        // Office keeps resending this same batch next beat too - which is exactly what should
+        // happen, since that row still needs fixing - but every OTHER row in it lands again
+        // regardless (harmlessly; every apply here is an idempotent upsert), so a single bad
+        // row no longer holds the rest of the branch's settings hostage.
+        if (!anyFailed) _configVersion = config.Version;
+    }
+
+    /// <summary>Logged at most every <see cref="ComplainAtMost"/> - the same row fails on the same schedule as the beat itself otherwise, which is every three seconds forever.</summary>
+    private void LogConfigRowFailure(string kind, string? label, Guid id, Exception ex)
+    {
+        if (DateTimeOffset.UtcNow - _lastConfigRowComplaint <= ComplainAtMost) return;
+        _lastConfigRowComplaint = DateTimeOffset.UtcNow;
+
+        _logger.LogError(ex,
+            "Could not apply the {Kind} Head Office sent ({Label}, {Id}). Every other operator, " +
+            "menu item and member in this update is applied independently and is not affected - " +
+            "only this one row is stuck, and will keep being retried every beat until whatever is " +
+            "colliding with it locally (most likely a leftover row sharing the same name/username) " +
+            "is found and removed.",
+            kind, label, id);
     }
 
     /// <summary>
-    /// Makes this branch's menu match Head Office's catalog for it.
+    /// One operator, one row. Returns true when it was newly created here.
+    ///
+    /// Somebody hired at Head Office who has never existed here is created with the same id, so
+    /// everything they later do lines up on both sides rather than arriving as a stranger.
+    /// </summary>
+    private static async Task<bool> ApplyOneOperatorAsync(
+        AppDbContext db, Guid branchId, BranchOperatorConfigDto incoming, CancellationToken ct)
+    {
+        var op = await db.Operators.FirstOrDefaultAsync(o => o.Id == incoming.Id, ct);
+        var isNew = op is null;
+
+        if (op is null)
+        {
+            op = new Operator
+            {
+                Id = incoming.Id,
+                BranchId = branchId,
+                Status = OperatorStatus.LoggedOut,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            db.Operators.Add(op);
+        }
+
+        op.FullName = incoming.FullName;
+        op.Username = incoming.Username;
+        op.Email = incoming.Email;
+        op.PasswordHash = incoming.PasswordHash;
+        op.MobileNumber = incoming.MobileNumber;
+        op.AccessPin = incoming.AccessPin;
+        op.IsGlobalAdmin = incoming.IsGlobalAdmin;
+        op.DashboardPermissions = incoming.DashboardPermissions;
+        op.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // Only the barred/not-barred decision comes down. Active and LoggedOut say whether
+        // somebody is standing at this counter, which Head Office cannot know and must
+        // never overwrite - doing so would sign out the operator halfway through a shift.
+        if (incoming.IsBlocked)
+        {
+            if (op.Status is not (OperatorStatus.Suspended or OperatorStatus.Disabled))
+                op.Status = OperatorStatus.Suspended;
+        }
+        else if (op.Status is OperatorStatus.Suspended or OperatorStatus.Disabled)
+        {
+            op.Status = OperatorStatus.LoggedOut;   // unbarred; duty is decided here
+        }
+
+        return isNew;
+    }
+
+    /// <summary>
+    /// Makes this branch's menu match Head Office's catalog for it, one item at a time.
     ///
     /// This is the fix for a super admin adding a food item at Head Office and it never
     /// appearing at the counter - the Menu Editor is branch-scoped storage, and an item added
@@ -1553,70 +2102,140 @@ public class BranchHeartbeatService : BackgroundService
     /// trading state and change at the counter, not at Head Office. A shop that just sold its
     /// last plate of fries must not have Head Office silently restock it on the next beat.
     /// </summary>
-    private static async Task<int> ApplyMenuItemsAsync(
-        AppDbContext db, Guid branchId, List<BranchMenuItemConfigDto> incoming, CancellationToken ct)
+    private static async Task<bool> ApplyOneMenuItemAsync(
+        AppDbContext db, Guid branchId, BranchMenuItemConfigDto item, CancellationToken ct)
     {
-        if (incoming.Count == 0) return 0;
+        var row = await db.Set<InventoryItem>().FirstOrDefaultAsync(i => i.Id == item.Id, ct);
+        var isNew = row is null;
 
-        var known = await db.Set<InventoryItem>().ToDictionaryAsync(i => i.Id, ct);
-        var added = 0;
-
-        foreach (var item in incoming)
+        if (row is null)
         {
-            if (!known.TryGetValue(item.Id, out var row))
+            row = new InventoryItem
             {
-                row = new InventoryItem
-                {
-                    Id = item.Id,
-                    BranchId = branchId,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                };
-                db.Add(row);
-                added++;
-            }
-
-            // Compared before writing, and this matters more than it looks now that the menu
-            // also travels upward. Assigning the same value still marks the row Modified, which
-            // SyncCapture would faithfully record as a change and send back to Head Office -
-            // every item, every time a config arrived, describing nothing that had happened.
-            var differs =
-                row.ItemName != item.ItemName
-                || row.Category != item.Category
-                || row.Price != item.Price
-                || row.ImageUrl != item.ImageUrl;
-
-            if (differs)
-            {
-                row.ItemName = item.ItemName;
-                row.Category = item.Category;
-                row.Price = item.Price;
-                row.ImageUrl = item.ImageUrl;
-            }
-
-            // A branch marking something Out of Stock is its own call and stays exactly as it
-            // is; only Head Office's Disabled/not-Disabled decision moves this needle, and only
-            // when it actually says something - "disabled" pulls an item from sale everywhere,
-            // "not disabled" must not silently un-hide something the branch itself paused.
-            if (item.IsDisabled && row.Status != FoodAvailability.Disabled)
-            {
-                row.Status = FoodAvailability.Disabled;
-                differs = true;
-            }
-            else if (!item.IsDisabled && row.Status == FoodAvailability.Disabled)
-            {
-                row.Status = FoodAvailability.Available;
-                differs = true;
-            }
-
-            if (differs) row.UpdatedAt = DateTimeOffset.UtcNow;
+                Id = item.Id,
+                BranchId = branchId,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            db.Add(row);
         }
 
-        return added;
+        // Compared before writing, and this matters more than it looks now that the menu
+        // also travels upward. Assigning the same value still marks the row Modified, which
+        // SyncCapture would faithfully record as a change and send back to Head Office -
+        // every item, every time a config arrived, describing nothing that had happened.
+        var differs =
+            row.ItemName != item.ItemName
+            || row.Category != item.Category
+            || row.Price != item.Price
+            || row.ImageUrl != item.ImageUrl;
+
+        if (differs)
+        {
+            row.ItemName = item.ItemName;
+            row.Category = item.Category;
+            row.Price = item.Price;
+            row.ImageUrl = item.ImageUrl;
+        }
+
+        // A branch marking something Out of Stock is its own call and stays exactly as it
+        // is; only Head Office's Disabled/not-Disabled decision moves this needle, and only
+        // when it actually says something - "disabled" pulls an item from sale everywhere,
+        // "not disabled" must not silently un-hide something the branch itself paused.
+        if (item.IsDisabled && row.Status != FoodAvailability.Disabled)
+        {
+            row.Status = FoodAvailability.Disabled;
+            differs = true;
+        }
+        else if (!item.IsDisabled && row.Status == FoodAvailability.Disabled)
+        {
+            row.Status = FoodAvailability.Available;
+            differs = true;
+        }
+
+        if (differs) row.UpdatedAt = DateTimeOffset.UtcNow;
+
+        return isNew;
     }
 
     /// <summary>
-    /// Makes this branch recognise every member Head Office knows about, with the wallet
-    /// balance Head Office currently holds for them.
+    /// Makes this branch's pricing match Head Office's for one profile, packages included.
+    ///
+    /// This is the fix for the same class of bug as the menu editor, one layer further down: a
+    /// branch running the full local install (its own database, not just a thin agent) has its
+    /// own separate copy of PricingProfiles, written once at adoption and never touched again.
+    /// A rate changed, or a custom package added, at Head Office's own dashboard was invisible
+    /// at the counter - confirmed live at Citylight 144Hz, where new packages showed correctly
+    /// on Head Office's own screen and the never-updated 1/2/3-hour multiples kept showing at
+    /// the actual PC, because the two were reading two different databases.
+    ///
+    /// Every package Head Office currently has on this profile is sent, active or not (a
+    /// deactivated package still needs to arrive with IsActive=false so the branch stops
+    /// offering it - it does not simply vanish from the payload), so there is nothing extra to
+    /// reconcile here beyond an ordinary upsert.
+    /// </summary>
+    private static async Task<bool> ApplyOnePricingProfileAsync(
+        AppDbContext db, Guid branchId, BranchPricingProfileConfigDto profile, CancellationToken ct)
+    {
+        var row = await db.Set<PricingProfile>()
+            .Include(p => p.Packages)
+            .FirstOrDefaultAsync(p => p.Id == profile.Id, ct);
+        var isNew = row is null;
+
+        if (row is null)
+        {
+            row = new PricingProfile
+            {
+                Id = profile.Id,
+                BranchId = branchId,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            db.Add(row);
+        }
+
+        if (row.Name != profile.Name) row.Name = profile.Name;
+        if (row.BaseHourlyRate != profile.BaseHourlyRate) row.BaseHourlyRate = profile.BaseHourlyRate;
+        if (row.BufferMinutes != profile.BufferMinutes) row.BufferMinutes = profile.BufferMinutes;
+        if (row.IsActive != profile.IsActive) row.IsActive = profile.IsActive;
+        if (row.RefreshRate != profile.RefreshRate) row.RefreshRate = profile.RefreshRate;
+        if (row.SystemSpecs != profile.SystemSpecs) row.SystemSpecs = profile.SystemSpecs;
+        row.UpdatedAt = DateTimeOffset.UtcNow;
+
+        var existingPackages = row.Packages?.ToDictionary(pkg => pkg.Id) ?? new Dictionary<Guid, PricingPackage>();
+
+        foreach (var incoming in profile.Packages)
+        {
+            if (existingPackages.TryGetValue(incoming.Id, out var pkgRow))
+            {
+                pkgRow.Name = incoming.Name;
+                pkgRow.DurationMinutes = incoming.DurationMinutes;
+                pkgRow.Price = incoming.Price;
+                pkgRow.SortOrder = incoming.SortOrder;
+                pkgRow.IsActive = incoming.IsActive;
+                pkgRow.UpdatedAt = DateTimeOffset.UtcNow;
+            }
+            else
+            {
+                db.Add(new PricingPackage
+                {
+                    Id = incoming.Id,
+                    PricingProfileId = profile.Id,
+                    Name = incoming.Name,
+                    DurationMinutes = incoming.DurationMinutes,
+                    Price = incoming.Price,
+                    SortOrder = incoming.SortOrder,
+                    IsActive = incoming.IsActive,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow,
+                });
+            }
+        }
+
+        return isNew;
+    }
+
+    /// <summary>
+    /// Makes this branch recognise one member Head Office knows about, with the wallet balance
+    /// Head Office currently holds for them.
     ///
     /// This is what lets someone who joined at Adajan spend their wallet at Katargam: without
     /// it, a branch that has never seen a member locally has no row for them at all. Balance is
@@ -1625,56 +2244,104 @@ public class BranchHeartbeatService : BackgroundService
     /// branch that just took a top-up of its own must not have that top-up erased because Head
     /// Office's reply, built moments earlier, has not caught up yet.
     /// </summary>
-    private static async Task<int> ApplyMembersAsync(
-        AppDbContext db, List<BranchMemberConfigDto> incoming, CancellationToken ct)
+    private static async Task<bool> ApplyOneMemberAsync(
+        AppDbContext db, BranchMemberConfigDto item, CancellationToken ct)
     {
-        if (incoming.Count == 0) return 0;
+        var member = await db.Members.FirstOrDefaultAsync(m => m.Id == item.Id, ct);
+        var isNew = member is null;
 
-        var known = await db.Members.ToDictionaryAsync(m => m.Id, ct);
-        var added = 0;
-
-        foreach (var item in incoming)
+        if (member is null)
         {
-            if (!known.TryGetValue(item.Id, out var member))
+            member = new Member
             {
-                member = new Member
-                {
-                    Id = item.Id,
-                    GamingBalance = item.GamingBalance,
-                    FoodBalance = item.FoodBalance,
-                    BalanceAsOf = item.BalanceAsOf,
-                    Status = item.IsBlocked ? MemberStatus.Suspended : MemberStatus.Active,
-                    JoinDate = DateTimeOffset.UtcNow,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                };
-                db.Members.Add(member);
-                added++;
-            }
-            else if (item.BalanceAsOf is { } incomingAsOf
-                     && (member.BalanceAsOf is not { } localAsOf || incomingAsOf > localAsOf))
-            {
-                member.GamingBalance = item.GamingBalance;
-                member.FoodBalance = item.FoodBalance;
-                member.BalanceAsOf = incomingAsOf;
-            }
-
-            member.FullName = item.FullName;
-            member.MemberNumber = item.MemberNumber;
-            member.MobileNumber = item.MobileNumber;
-            member.Email = item.Email;
-            member.Username = item.Username;
-            member.UpdatedAt = DateTimeOffset.UtcNow;
-
-            // Same rule as operators: only the barred decision comes down. There is no local
-            // "on shift" equivalent for a member to protect, but Active/Vip is still this
-            // branch's own read on a member's standing and is left alone either way.
-            if (item.IsBlocked && member.Status is not MemberStatus.Suspended)
-                member.Status = MemberStatus.Suspended;
-            else if (!item.IsBlocked && member.Status is MemberStatus.Suspended)
-                member.Status = MemberStatus.Active;
+                Id = item.Id,
+                PasswordHash = item.PasswordHash,
+                GamingBalance = item.GamingBalance,
+                FoodBalance = item.FoodBalance,
+                BalanceAsOf = item.BalanceAsOf,
+                Status = item.IsBlocked ? MemberStatus.Suspended : MemberStatus.Active,
+                JoinDate = DateTimeOffset.UtcNow,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            db.Members.Add(member);
+        }
+        else if (item.BalanceAsOf is { } incomingAsOf
+                 && (member.BalanceAsOf is not { } localAsOf || incomingAsOf > localAsOf))
+        {
+            member.GamingBalance = item.GamingBalance;
+            member.FoodBalance = item.FoodBalance;
+            member.BalanceAsOf = incomingAsOf;
         }
 
-        return added;
+        member.FullName = item.FullName;
+        member.MemberNumber = item.MemberNumber;
+        member.MobileNumber = item.MobileNumber;
+        member.Email = item.Email;
+        member.Username = item.Username;
+
+        // Never store a blank hash - BCrypt.Verify against "" throws rather than returning
+        // false, so a member this branch already knew how to log in would suddenly be unable
+        // to at all, the moment a beat happened to carry an empty value. Head Office should
+        // never send one, but this stays the same "only ever move forward" rule Head Office's
+        // own RunSetMemberPasswordAsync already applies for the exact same reason.
+        if (!string.IsNullOrWhiteSpace(item.PasswordHash))
+            member.PasswordHash = item.PasswordHash;
+        member.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // Same rule as operators: only the barred decision comes down. There is no local
+        // "on shift" equivalent for a member to protect, but Active/Vip is still this
+        // branch's own read on a member's standing and is left alone either way.
+        if (item.IsBlocked && member.Status is not MemberStatus.Suspended)
+            member.Status = MemberStatus.Suspended;
+        else if (!item.IsBlocked && member.Status is MemberStatus.Suspended)
+            member.Status = MemberStatus.Active;
+
+        return isNew;
+    }
+
+    /// <summary>
+    /// Creates or updates one Admin-level Users-table account locally, so Quick Admin Switch at
+    /// this branch can actually find someone made "the right way" at Head Office - see
+    /// BranchConfigDto.Admins for why nothing here ever arrived before.
+    ///
+    /// Never touches Role - a row this loop creates is always an Admin, and a row it finds
+    /// already local stays whatever it already is, so this can never turn a branch's own local
+    /// SuperAdmin (created at that branch's own first-time setup, entirely unrelated to Head
+    /// Office's copy) into anything else.
+    /// </summary>
+    private static async Task<bool> ApplyOneAdminAsync(
+        AppDbContext db, BranchAdminConfigDto item, CancellationToken ct)
+    {
+        var admin = await db.Users.FirstOrDefaultAsync(u => u.Id == item.Id, ct);
+        var isNew = admin is null;
+
+        if (admin is null)
+        {
+            admin = new User
+            {
+                Id = item.Id,
+                Role = Roles.Admin,
+                CreatedAt = DateTimeOffset.UtcNow,
+            };
+            db.Users.Add(admin);
+        }
+
+        admin.FullName = item.FullName;
+        admin.Email = item.Email;
+        admin.PasswordHash = item.PasswordHash;
+        admin.AccessPin = item.AccessPin;
+        admin.DashboardPermissions = item.DashboardPermissions;
+        admin.UpdatedAt = DateTimeOffset.UtcNow;
+
+        // Same rule as operators and members: only the barred decision comes down, and only in
+        // the direction that actually enforces it - never used to quietly reinstate someone
+        // whatever this branch's own local record already says about them.
+        if (item.IsBlocked && admin.Status is not UserStatus.Suspended)
+            admin.Status = UserStatus.Suspended;
+        else if (!item.IsBlocked && admin.Status is UserStatus.Suspended)
+            admin.Status = UserStatus.Active;
+
+        return isNew;
     }
 
     /// <summary>

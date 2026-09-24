@@ -23,6 +23,7 @@ public static class AuditActions
     // Reservations
     public const string ReservationCreate = "reservation_create";
     public const string ReservationCancel = "reservation_cancel";
+    public const string ReservationDelete = "reservation_delete";
     public const string ReservationOverride = "reservation_override";
     public const string ReservationExpire = "reservation_expire";
 
@@ -31,6 +32,7 @@ public static class AuditActions
     public const string BillComplete = "bill_complete";
     public const string PaymentProcess = "payment_process";
     public const string DiscountApply = "discount_apply";
+    public const string PaymentMethodEdit = "payment_method_edit";
 
     /// <summary>
     /// A customer credit (money owed from an earlier session left unpaid) was settled.

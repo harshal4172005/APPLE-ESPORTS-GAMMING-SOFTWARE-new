@@ -50,6 +50,21 @@ public class Session
     public decimal FoodAmount { get; set; }
     public decimal TotalAmount { get; set; }
 
+    /// <summary>
+    /// The fixed-price PricingPackage this session (or its most recent extension) was actually
+    /// sold against, if any. Null for Pay-As-You-Go and for a plain duration with no matching
+    /// catalog package — those were never a committed prepaid price, only a client-side guess.
+    /// </summary>
+    public Guid? PricingPackageId { get; set; }
+
+    /// <summary>
+    /// The committed prepaid total for this session — the sum of the original package price
+    /// (if one matched at Start) plus every extension's matched package price since. This is
+    /// what Stop honors within a grace window, instead of forfeiting the whole deal and
+    /// rebilling the entire session pro-rata for landing a few minutes off the plan.
+    /// </summary>
+    public decimal? PackagePrice { get; set; }
+
     // State
     public SessionState State { get; set; } = SessionState.Active;
     public string GamingType { get; set; } = "standard";

@@ -13,6 +13,12 @@ const TX_ICONS = {
   'adjustment': HelpCircle
 };
 
+// Display-only override for transaction types whose default (underscore-to-space) label would
+// still read "wallet" — `tx.transactionType` itself is left exactly as the backend sends it.
+const TX_LABELS = {
+  wallet_topup: 'Member Amount Top-Up',
+};
+
 const TransactionFeed = memo(({ transactions }) => {
   // Sorting descending by date to show newest first
   const sorted = [...transactions].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -48,7 +54,7 @@ const TransactionFeed = memo(({ transactions }) => {
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="font-heading font-bold text-text uppercase tracking-wider text-sm">
-                      {tx.transactionType.replace('_', ' ')}
+                      {TX_LABELS[tx.transactionType] ?? tx.transactionType.replace('_', ' ')}
                     </span>
                     {tx.pcNumber && (
                       <span className="bg-bg-2 border border-border text-text-2 text-[9px] px-1.5 py-0.5 rounded font-mono flex items-center gap-1">

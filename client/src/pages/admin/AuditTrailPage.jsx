@@ -108,7 +108,7 @@ export default function AuditTrailPage() {
         <h1 className="text-lg font-heading font-bold text-text">Audit Trail</h1>
       </div>
       <p className="text-xs text-text-3 mb-5">
-        Every login, session, payment, wallet change and edit, at every branch. Updates on its own every 15 seconds.
+        Every login, session, payment, Member Amount change and edit, at every branch. Updates on its own every 15 seconds.
       </p>
 
       {/* Filters */}

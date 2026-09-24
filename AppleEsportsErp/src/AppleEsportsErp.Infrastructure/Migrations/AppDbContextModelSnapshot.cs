@@ -365,6 +365,9 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasDefaultValueSql("NOW()");
 
+                    b.Property<Guid?>("FoodGroupId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -388,6 +391,8 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .HasDefaultValueSql("NOW()");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("FoodGroupId");
 
                     b.HasIndex("Name")
                         .IsUnique();
@@ -1055,11 +1060,17 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                     b.Property<string>("Gender")
                         .HasColumnType("text");
 
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("boolean");
+
                     b.Property<string>("MaritalStatus")
                         .HasColumnType("text");
 
                     b.Property<string>("Nationality")
                         .HasColumnType("text");
+
+                    b.Property<Guid?>("OperatorId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("PermanentAddress")
                         .HasColumnType("text");
@@ -1114,50 +1125,33 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                     b.HasIndex("EmployeeNumber")
                         .IsUnique();
 
+                    b.HasIndex("OperatorId");
+
                     b.HasIndex("SubmittedBy");
 
                     b.ToTable("employees", (string)null);
                 });
 
-            modelBuilder.Entity("AppleEsportsErp.Domain.Entities.EodSnapshot", b =>
+            modelBuilder.Entity("AppleEsportsErp.Domain.Entities.FoodGroup", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid");
-
-                    b.Property<Guid>("BranchId")
-                        .HasColumnType("uuid");
+                        .HasColumnType("uuid")
+                        .HasDefaultValueSql("uuid_generate_v4()");
 
                     b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone");
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("NOW()");
 
-                    b.Property<Guid>("GeneratedByOperatorId")
-                        .HasColumnType("uuid");
-
-                    b.Property<DateTimeOffset>("ReportDate")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("SchemaVersion")
+                    b.Property<string>("Name")
                         .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<string>("SnapshotData")
-                        .IsRequired()
-                        .HasColumnType("text");
-
-                    b.Property<int>("SnapshotVersion")
-                        .HasColumnType("integer");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("timestamp with time zone");
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BranchId");
-
-                    b.HasIndex("GeneratedByOperatorId");
-
-                    b.ToTable("EodSnapshots");
+                    b.ToTable("food_groups", (string)null);
                 });
 
             modelBuilder.Entity("AppleEsportsErp.Domain.Entities.FoodOrder", b =>
@@ -1437,6 +1431,9 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                     b.Property<string>("Reason")
                         .HasColumnType("text");
 
+                    b.Property<Guid?>("SourceRelayEventId")
+                        .HasColumnType("uuid");
+
                     b.HasKey("Id");
 
                     b.HasIndex("BranchId");
@@ -1448,6 +1445,11 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .HasDatabaseName("idx_inv_logs_item");
 
                     b.HasIndex("OperatorId");
+
+                    b.HasIndex("SourceRelayEventId")
+                        .IsUnique()
+                        .HasDatabaseName("idx_inv_logs_relay_event")
+                        .HasFilter("\"SourceRelayEventId\" IS NOT NULL");
 
                     b.ToTable("inventory_logs", (string)null);
                 });
@@ -2065,6 +2067,12 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .HasColumnType("uuid")
                         .HasDefaultValueSql("uuid_generate_v4()");
 
+                    b.Property<string>("AgentVersion")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AppVersion")
+                        .HasColumnType("text");
+
                     b.Property<Guid>("BranchId")
                         .HasColumnType("uuid");
 
@@ -2085,6 +2093,12 @@ namespace AppleEsportsErp.Infrastructure.Migrations
 
                     b.Property<Guid?>("CurrentSessionId")
                         .HasColumnType("uuid");
+
+                    b.Property<decimal?>("CurrentSessionPackagePrice")
+                        .HasColumnType("numeric");
+
+                    b.Property<int?>("CurrentSessionPlannedDurationMin")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset?>("CurrentSessionStartTime")
                         .HasColumnType("timestamp with time zone");
@@ -2131,6 +2145,9 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .IsRequired()
                         .HasMaxLength(20)
                         .HasColumnType("character varying(20)");
+
+                    b.Property<bool>("PoweredOff")
+                        .HasColumnType("boolean");
 
                     b.Property<Guid?>("PricingProfileId")
                         .HasColumnType("uuid");
@@ -2181,6 +2198,44 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("pcs", (string)null);
+                });
+
+            modelBuilder.Entity("AppleEsportsErp.Domain.Entities.PricingPackage", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("DurationMinutes")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("Price")
+                        .HasColumnType("numeric");
+
+                    b.Property<Guid>("PricingProfileId")
+                        .HasColumnType("uuid");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PricingProfileId");
+
+                    b.ToTable("PricingPackages");
                 });
 
             modelBuilder.Entity("AppleEsportsErp.Domain.Entities.PricingProfile", b =>
@@ -2236,6 +2291,11 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .HasPrecision(18, 2)
                         .HasColumnType("numeric(18,2)")
                         .HasDefaultValue(0m);
+
+                    b.Property<bool>("Arrived")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<Guid>("BranchId")
                         .HasColumnType("uuid");
@@ -2391,6 +2451,9 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                     b.Property<Guid>("OperatorId")
                         .HasColumnType("uuid");
 
+                    b.Property<decimal?>("PackagePrice")
+                        .HasColumnType("numeric");
+
                     b.Property<int>("PausedSeconds")
                         .HasColumnType("integer");
 
@@ -2399,6 +2462,9 @@ namespace AppleEsportsErp.Infrastructure.Migrations
 
                     b.Property<int?>("PlannedDurationMin")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("PricingPackageId")
+                        .HasColumnType("uuid");
 
                     b.Property<Guid?>("ShiftId")
                         .HasColumnType("uuid");
@@ -2860,11 +2926,19 @@ namespace AppleEsportsErp.Infrastructure.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
+                    b.Property<string>("AgentFileName")
+                        .HasColumnType("text");
+
+                    b.Property<string>("AgentSha256")
+                        .HasColumnType("text");
+
+                    b.Property<long>("AgentSizeBytes")
+                        .HasColumnType("bigint");
+
                     b.Property<DateTime?>("ApprovedAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ApprovedByUserId")
-                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<bool>("ApprovedForRollout")
@@ -2965,6 +3039,12 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .HasColumnType("character varying(20)");
 
                     b.Property<string>("Reason")
+                        .HasColumnType("text");
+
+                    b.Property<Guid?>("RemoteAdminId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("RemoteAdminName")
                         .HasColumnType("text");
 
                     b.Property<Guid?>("ShiftId")
@@ -3075,6 +3155,16 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .IsRequired();
 
                     b.Navigation("Bill");
+                });
+
+            modelBuilder.Entity("AppleEsportsErp.Domain.Entities.Branch", b =>
+                {
+                    b.HasOne("AppleEsportsErp.Domain.Entities.FoodGroup", "FoodGroup")
+                        .WithMany("Branches")
+                        .HasForeignKey("FoodGroupId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.Navigation("FoodGroup");
                 });
 
             modelBuilder.Entity("AppleEsportsErp.Domain.Entities.BranchCommand", b =>
@@ -3281,6 +3371,11 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("AppleEsportsErp.Domain.Entities.Operator", "Operator")
+                        .WithMany()
+                        .HasForeignKey("OperatorId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
                     b.HasOne("AppleEsportsErp.Domain.Entities.Operator", "SubmittedByOperator")
                         .WithMany()
                         .HasForeignKey("SubmittedBy")
@@ -3288,26 +3383,9 @@ namespace AppleEsportsErp.Infrastructure.Migrations
 
                     b.Navigation("Branch");
 
+                    b.Navigation("Operator");
+
                     b.Navigation("SubmittedByOperator");
-                });
-
-            modelBuilder.Entity("AppleEsportsErp.Domain.Entities.EodSnapshot", b =>
-                {
-                    b.HasOne("AppleEsportsErp.Domain.Entities.Branch", "Branch")
-                        .WithMany()
-                        .HasForeignKey("BranchId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("AppleEsportsErp.Domain.Entities.Operator", "GeneratedByOperator")
-                        .WithMany()
-                        .HasForeignKey("GeneratedByOperatorId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Branch");
-
-                    b.Navigation("GeneratedByOperator");
                 });
 
             modelBuilder.Entity("AppleEsportsErp.Domain.Entities.FoodOrder", b =>
@@ -3560,6 +3638,17 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                     b.Navigation("CurrentSession");
 
                     b.Navigation("LastOperator");
+
+                    b.Navigation("PricingProfile");
+                });
+
+            modelBuilder.Entity("AppleEsportsErp.Domain.Entities.PricingPackage", b =>
+                {
+                    b.HasOne("AppleEsportsErp.Domain.Entities.PricingProfile", "PricingProfile")
+                        .WithMany("Packages")
+                        .HasForeignKey("PricingProfileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("PricingProfile");
                 });
@@ -3821,6 +3910,11 @@ namespace AppleEsportsErp.Infrastructure.Migrations
                     b.Navigation("DenominationCounts");
                 });
 
+            modelBuilder.Entity("AppleEsportsErp.Domain.Entities.FoodGroup", b =>
+                {
+                    b.Navigation("Branches");
+                });
+
             modelBuilder.Entity("AppleEsportsErp.Domain.Entities.FoodOrder", b =>
                 {
                     b.Navigation("Items");
@@ -3856,6 +3950,8 @@ namespace AppleEsportsErp.Infrastructure.Migrations
 
             modelBuilder.Entity("AppleEsportsErp.Domain.Entities.PricingProfile", b =>
                 {
+                    b.Navigation("Packages");
+
                     b.Navigation("Pcs");
                 });
 

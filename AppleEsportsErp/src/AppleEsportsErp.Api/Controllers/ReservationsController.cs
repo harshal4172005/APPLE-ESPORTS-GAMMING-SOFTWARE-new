@@ -64,6 +64,15 @@ public class ReservationsController : ControllerBase
         return Ok(ApiResponse<PaginatedResult<ReservationDto>>.Ok(result));
     }
 
+    /// <summary>Every reservation (any state) in a date range - the History view, separate from
+    /// the live "pending only" to-do list GetActiveReservations feeds.</summary>
+    [HttpGet("history")]
+    public async Task<IActionResult> GetReservationHistory([FromQuery] DateOnly fromDate, [FromQuery] DateOnly toDate)
+    {
+        var result = await _reservationService.GetReservationHistoryAsync(GetBranchId(), fromDate, toDate);
+        return Ok(ApiResponse<List<ReservationDto>>.Ok(result));
+    }
+
     [HttpPost]
     public async Task<IActionResult> CreateReservation([FromBody] CreateReservationDto dto, CancellationToken ct)
     {
@@ -88,7 +97,8 @@ public class ReservationsController : ControllerBase
                     reservationTime = dto.ReservationTime,
                     durationMin = dto.DurationMin,
                     notes = dto.Notes,
-                    advanceDeposit = dto.AdvanceDeposit,
+                    advanceDepositCash = dto.AdvanceDepositCash,
+                    advanceDepositOnline = dto.AdvanceDepositOnline,
                     gracePeriodMin = dto.GracePeriodMin,
                 }, ct);
             }
@@ -121,6 +131,38 @@ public class ReservationsController : ControllerBase
         }
 
         var result = await _reservationService.CancelReservationAsync(GetBranchId(), (await this.GetOperatorIdAsync()), id, dto);
+        return Ok(ApiResponse<ReservationDto>.Ok(result));
+    }
+
+    /// <summary>The "Remove" button - permanently deletes a reservation, no reason kept.</summary>
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteReservation(Guid id, CancellationToken ct)
+    {
+        if (_remote.MustTravel)
+        {
+            var branchId = await _db.Set<AppleEsportsErp.Domain.Entities.Reservation>().AsNoTracking()
+                .Where(r => r.Id == id).Select(r => r.BranchId).FirstOrDefaultAsync(ct);
+
+            if (branchId == Guid.Empty)
+                return NotFound(ApiResponse<object>.Fail("Head Office has no such reservation.", "RESERVATION_NOT_FOUND"));
+
+            return await SendToBranchAsync(branchId, AppleEsportsErp.Api.Services.BranchCommands.DeleteReservation, new
+            {
+                reservationId = id,
+            }, ct);
+        }
+
+        await _reservationService.DeleteReservationAsync(GetBranchId(), (await this.GetOperatorIdAsync()), id);
+        return Ok(ApiResponse<object>.Ok(null));
+    }
+
+    /// <summary>A plain "the customer is here" reminder flag - see ReservationService.
+    /// SetArrivedAsync. Never routed to a branch even when called from Head Office: nothing a
+    /// branch needs to carry out follows from it.</summary>
+    [HttpPut("{id}/arrived")]
+    public async Task<IActionResult> SetArrived(Guid id, [FromBody] SetArrivedDto dto, CancellationToken ct)
+    {
+        var result = await _reservationService.SetArrivedAsync(GetBranchId(), id, dto.Arrived);
         return Ok(ApiResponse<ReservationDto>.Ok(result));
     }
 

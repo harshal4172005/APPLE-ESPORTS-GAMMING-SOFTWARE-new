@@ -24,7 +24,10 @@ public class HealthController : ControllerBase
             ["Timestamp"] = DateTime.UtcNow,
             ["Environment"] = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") ?? "Production",
             ["MachineName"] = Environment.MachineName,
-            ["Version"] = "v2.0"
+            // The actual running assembly version, not a hardcoded string - this used to read
+            // "v2.0" unconditionally, the same drift the sidebar footer had (see
+            // VersionController.GetRunningVersion, which both now share the logic of).
+            ["Version"] = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown"
         };
 
         bool allHealthy = true;

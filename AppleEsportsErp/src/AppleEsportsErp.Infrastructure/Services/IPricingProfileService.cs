@@ -8,4 +8,8 @@ public interface IPricingProfileService
     Task<PricingProfileDto> CreateAsync(CreatePricingProfileDto dto);
     Task<PricingProfileDto> UpdateAsync(Guid id, UpdatePricingProfileDto dto);
     Task DeleteAsync(Guid id);
+
+    Task<PricingPackageDto> CreatePackageAsync(CreatePricingPackageDto dto);
+    Task<PricingPackageDto> UpdatePackageAsync(Guid id, UpdatePricingPackageDto dto);
+    Task DeletePackageAsync(Guid id);
 }

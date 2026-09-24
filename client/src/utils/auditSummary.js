@@ -54,8 +54,8 @@ const SUMMARIES = {
   denomination_count: () => 'counted the drawer\'s notes and coins',
 
   member_create: (d) => `registered member ${d?.FullName ?? ''} (${d?.MemberNumber ?? '?'})`,
-  wallet_recharge: (d) => `topped up a wallet by ${money(d?.Amount)}${d?.PaymentType ? ` (${d.PaymentType})` : ''}`,
-  wallet_deduction: (d) => `deducted ${money(d?.Amount)} from a wallet${d?.Reason ? ` (${d.Reason})` : ''}`,
+  wallet_recharge: (d) => `topped up Member Amount by ${money(d?.Amount)}${d?.PaymentType ? ` (${d.PaymentType})` : ''}`,
+  wallet_deduction: (d) => `deducted ${money(d?.Amount)} from Member Amount${d?.Reason ? ` (${d.Reason})` : ''}`,
   points_redeem: (d) => `redeemed ${d?.Points ?? ''} loyalty points`.trim(),
 
   operator_create: (d) => `added operator ${d?.FullName ?? ''}`.trim(),
@@ -75,6 +75,14 @@ const SUMMARIES = {
   eod_finalize: () => 'finalised End of Day',
   force_close: (d) => `force-closed a shift${d?.reason ? ` (${d.reason})` : ''}`,
   settings_change: (d) => `changed a setting${d?.Key ? `: ${d.Key}` : ''}`,
+
+  // Written by Head Office itself, from the branch's own heartbeat - not by anyone taking an
+  // action. If a PC's own "pc_shutdown" row (written at the branch, by whoever pressed the
+  // button) has no matching row like this one for the same PC around the same time, that gap
+  // is the sync problem itself: the branch said it, and Head Office never heard it.
+  pc_powered_off_synced: (d) => d?.poweredOff
+    ? `Head Office confirmed ${d?.pcNumber ?? 'a PC'} is shut down (via the branch's heartbeat)`
+    : `Head Office confirmed ${d?.pcNumber ?? 'a PC'} powered back on (via the branch's heartbeat)`,
 
   remote_command_issued: (d) => {
     const label = REMOTE_COMMAND_LABELS[d?.commandType] ?? d?.commandType ?? 'do something';
@@ -158,5 +166,16 @@ export function summarize(action, details, success = true) {
   return pairs ? `${titleCase(action)} — ${pairs}` : titleCase(action);
 }
 
+// Display-only overrides for action codes whose auto-generated (titleCase) label would still
+// read "Wallet" — the `value` stays the real action code the backend expects, only the label
+// shown in the dropdown changes.
+const ACTION_LABEL_OVERRIDES = {
+  wallet_recharge: 'Member Amount Top-Up',
+  wallet_deduction: 'Member Amount Deduction',
+};
+
 /** For the action filter dropdown - every code this file knows how to describe, readably labelled. */
-export const KNOWN_ACTIONS = Object.keys(SUMMARIES).map((value) => ({ value, label: titleCase(value) }));
+export const KNOWN_ACTIONS = Object.keys(SUMMARIES).map((value) => ({
+  value,
+  label: ACTION_LABEL_OVERRIDES[value] ?? titleCase(value),
+}));

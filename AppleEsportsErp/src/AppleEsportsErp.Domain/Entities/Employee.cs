@@ -52,10 +52,20 @@ public class Employee
     // System Fields
     public string Status { get; set; } = "Active";
     public Guid? SubmittedBy { get; set; }
+    public bool IsDeleted { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
+
+    /// <summary>
+    /// The Operator account this HR record's own joining form created, if it created one -
+    /// never a match guessed later by name or phone. Set once, at creation, in
+    /// EmployeeService.CreateEmployeeAsync. Lets removing this employee record suspend the
+    /// right account rather than one that merely looks like it.
+    /// </summary>
+    public Guid? OperatorId { get; set; }
 
     // Navigation
     public Branch? Branch { get; set; }
     public Operator? SubmittedByOperator { get; set; }
+    public Operator? Operator { get; set; }
 }

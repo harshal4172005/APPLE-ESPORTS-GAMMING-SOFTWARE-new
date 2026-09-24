@@ -13,7 +13,7 @@ export default function EodPage() {
         <EmptyState
           icon="📊"
           title="End of Day Dashboard"
-          message="Complete daily revenue breakdown: gaming, food, cash, online, wallets. SOP §18 report coming next."
+          message="Complete daily revenue breakdown: gaming, food, cash, online, Member Amounts. SOP §18 report coming next."
         />
       </div>
     </div>

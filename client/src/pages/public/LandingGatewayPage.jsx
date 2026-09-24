@@ -29,6 +29,28 @@ export default function LandingGatewayPage() {
     }).catch(err => console.error("Failed to fetch setup status", err));
   }, [navigate]);
 
+  // True when this PC currently has an Operator signed in with an active shift. Visiting the
+  // Admin/Super Admin portal now only clears cookies (AuthContext.clearSession -> POST
+  // /auth/session/clear), never the shift itself - but bouncing an operator's screen away
+  // without warning is still worth flagging, and Quick-Switch is the actual right tool for
+  // "an admin needs the counter for a minute" without leaving the operator's screen at all.
+  const activeOperatorWarning = () => {
+    try {
+      const stored = JSON.parse(localStorage.getItem('user') || 'null');
+      const role = (stored?.role || stored?.Role || '').toLowerCase();
+      if (role === 'operator' && stored?.shiftId) {
+        return window.confirm(
+          'An operator shift is open on this PC. Continuing will sign the operator out of ' +
+          'this screen (their shift stays open and unaffected).\n\n' +
+          'If an admin just needs the counter for a moment, Admin Quick-Switch (from the ' +
+          'operator dashboard) keeps the operator signed in throughout - Cancel this and use ' +
+          'that instead unless you specifically need the full Admin/Super Admin portal.'
+        );
+      }
+    } catch { /* malformed localStorage, nothing to warn about */ }
+    return true;
+  };
+
   const cards = [
     {
       id: 'user',
@@ -59,7 +81,7 @@ export default function LandingGatewayPage() {
       description: 'Multi-branch management portal.',
       icon: <Shield className="w-12 h-12 text-accent mb-4 group-hover:scale-110 transition-transform" />,
       onClick: () => {
-        navigate('/login/admin');
+        if (activeOperatorWarning()) navigate('/login/admin');
       },
     },
     {
@@ -68,6 +90,7 @@ export default function LandingGatewayPage() {
       description: 'Manage branches, analytics and global operations.',
       icon: <ShieldAlert className="w-12 h-12 text-accent mb-4 group-hover:scale-110 transition-transform" />,
       onClick: () => {
+        if (!activeOperatorWarning()) return;
         if (setupStatus?.needsSuperAdminSetup) navigate('/setup/superadmin');
         else navigate('/login/superadmin');
       },

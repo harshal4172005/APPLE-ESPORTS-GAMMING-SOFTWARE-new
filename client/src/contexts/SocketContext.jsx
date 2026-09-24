@@ -63,6 +63,13 @@ const CRITICAL_HUBS = [
 export function SocketProvider({ children }) {
   const { isAuthenticated, logout, fetchCurrentUser } = useAuth();
   const [connected, setConnected] = useState(false);
+  // Per-hub health, for a component that only cares about ONE hub rather than the
+  // all-four "is everything on this screen live" badge. Without this, subscribing to
+  // pc-status meant subscribing to the health of notifications, sessions and billing too -
+  // a blip on any one of the other three silently tore down the pc-status listener along
+  // with it, and it stayed torn down until every hub recovered together. A PC that was
+  // shut down or started during that window never got its live push at all, not even late.
+  const [hubStatus, setHubStatus] = useState({});
   const hubsRef = useRef({});
 
   // ── Connect to all hubs when authenticated ──
@@ -72,6 +79,7 @@ export function SocketProvider({ children }) {
       Object.values(hubsRef.current).forEach(hub => hub?.stop());
       hubsRef.current = {};
       setConnected(false);
+      setHubStatus({});
       return;
     }
 
@@ -84,6 +92,7 @@ export function SocketProvider({ children }) {
     const publishHealth = () => {
       if (!isSubscribed) return;
       setConnected(CRITICAL_HUBS.every((h) => hubHealth[h] === true));
+      setHubStatus({ ...hubHealth });
     };
 
     const connectHubs = async () => {
@@ -209,8 +218,16 @@ export function SocketProvider({ children }) {
     throw new Error('Hub is not connected');
   }, []);
 
+  // Whether one specific hub is up right now, independent of the other three. Use this to
+  // gate a subscription that only needs its own hub healthy - `connected` is for the
+  // all-four "everything on this screen is live" badge, not for deciding whether it is safe
+  // to listen for one particular event.
+  const isHubUp = useCallback((hubPath) => hubStatus[hubPath] === true, [hubStatus]);
+
   const value = {
     connected,
+    hubStatus,
+    isHubUp,
     getHub,
     subscribe,
     emit,

@@ -35,14 +35,14 @@ export function minutesRemainingFor(remainingBalance, ratePerHour) {
 // Change these together with the C# versions.
 
 // A bill is rounded to the nearest 10 rupees BEFORE the wallet is deducted, down for a remainder
-// of 0-5 and up for 6-9. That rounding is why stopping "when the balance is nearly used up" is
-// not enough: a member with Rs 27 stopped at Rs 26 of play is billed Rs 30 and ends up owing
-// Rs 3, having been stopped for running out of money.
+// of 0-4 and up for 5-9 (standard round-half-up). That rounding is why stopping "when the balance
+// is nearly used up" is not enough: a member with Rs 27 stopped at Rs 26 of play is billed Rs 30
+// and ends up owing Rs 3, having been stopped for running out of money.
 export function roundBillTotal(amount) {
   const value = Number(amount) || 0;
   if (value <= 0) return 0;
   const remainder = value % 10;
-  return remainder <= 5 ? value - remainder : value + (10 - remainder);
+  return remainder < 5 ? value - remainder : value + (10 - remainder);
 }
 
 // The elapsed minutes at which to stop, so the member is charged no more than they hold.
@@ -56,8 +56,8 @@ export function affordableMinutes(ratePerHour, bufferMinutes, balance, safetyRup
   if (rate <= 0) return Infinity;
   if (bal <= 0) return buffer;
 
-  // Starts above the balance because rounding can come down by as much as 5 rupees, so play
-  // worth Rs 15 is charged Rs 10.
+  // Starts above the balance because rounding can come down by as much as 4 rupees, so play
+  // worth Rs 14 is charged Rs 10. The +5 headroom here is deliberately more than that.
   let raw = bal + 5;
   while (raw > 0 && roundBillTotal(raw + safetyRupees) > bal) raw -= 0.5;
 

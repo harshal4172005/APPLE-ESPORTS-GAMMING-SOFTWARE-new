@@ -42,7 +42,16 @@ public class SessionStartDto
 public class SessionExtendDto
 {
     public decimal AdditionalMinutes { get; set; }
+
+    /// <summary>
+    /// No longer used to price anything - SessionService.ExtendSessionAsync computes the real
+    /// charge itself, from the branch's own plans for AdditionalMinutes, and ignores whatever
+    /// arrives here. Kept only so an older client sending it does not fail validation; a client
+    /// billing a fixed-duration extension at a plain hourly rate (Rs 200 for a 4-hour plan
+    /// priced at Rs 180) was exactly the bug this stopped trusting.
+    /// </summary>
     public decimal AdditionalAmount { get; set; }
+
     public string PackageName { get; set; } = null!;
 }
 

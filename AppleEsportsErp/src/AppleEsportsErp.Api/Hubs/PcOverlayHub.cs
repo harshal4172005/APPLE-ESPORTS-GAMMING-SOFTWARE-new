@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using System.Collections.Concurrent;
 using System.Text.Json.Serialization;
+using AppleEsportsErp.Application.Interfaces;
 using AppleEsportsErp.Domain.Entities;
 using AppleEsportsErp.Domain.Enums;
 using AppleEsportsErp.Infrastructure.Data;
@@ -23,6 +24,7 @@ public class PcOverlayHub : Hub
     private readonly IHubContext<FoodOrderHub> _foodOrderHub;
     private readonly IHubContext<SessionHub> _sessionHub;
     private readonly IHubContext<NotificationHub> _notificationHub;
+    private readonly IHubNotificationService _hubNotificationService;
     private readonly AppDbContext _db;
 
     public PcOverlayHub(
@@ -31,6 +33,7 @@ public class PcOverlayHub : Hub
         IHubContext<FoodOrderHub> foodOrderHub,
         IHubContext<SessionHub> sessionHub,
         IHubContext<NotificationHub> notificationHub,
+        IHubNotificationService hubNotificationService,
         AppDbContext db)
     {
         _logger = logger;
@@ -38,6 +41,7 @@ public class PcOverlayHub : Hub
         _foodOrderHub = foodOrderHub;
         _sessionHub = sessionHub;
         _notificationHub = notificationHub;
+        _hubNotificationService = hubNotificationService;
         _db = db;
     }
 
@@ -45,6 +49,21 @@ public class PcOverlayHub : Hub
     {
         await Groups.AddToGroupAsync(Context.ConnectionId, $"pc:{pcId}");
         _logger.LogInformation("PC Overlay Connected: {PcId} (ConnectionId: {ConnectionId})", pcId, Context.ConnectionId);
+
+        // The PC is back and running its overlay again, which by itself is proof it is not the
+        // powered-off machine SendShutdownCommand marked a moment ago - true whether it came back
+        // from an operator's command, someone pressing the power button themselves, or an
+        // unplanned reboot. This is the one place that is true for every PC regardless of how it
+        // went down, so it is the one place this flag gets cleared. See Pc.PoweredOff.
+        var pc = await GetPcAsync(pcId);
+        if (pc != null && pc.PoweredOff)
+        {
+            pc.PoweredOff = false;
+            pc.UpdatedAt = DateTimeOffset.UtcNow;
+            await _db.SaveChangesAsync();
+
+            await _hubNotificationService.BroadcastPcStatusChangeAsync(pc.BranchId, pc.Id);
+        }
     }
 
     public async Task Heartbeat(HeartbeatPayload payload)

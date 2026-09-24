@@ -28,11 +28,26 @@ public class SystemDesksController : ControllerBase
 
     [HttpGet("online/active")]
     [Authorize(Roles = Roles.Operator + "," + Roles.Admin + "," + Roles.SuperAdmin)]
-    public async Task<IActionResult> GetActiveOnlineDesk()
+    public async Task<IActionResult> GetActiveOnlineDesk([FromQuery] DateOnly? fromDate = null, [FromQuery] DateOnly? toDate = null)
     {
         try
         {
-            var result = await _systemDesksService.GetActiveOnlineDeskAsync(GetBranchId(), await this.GetShiftIdAsync());
+            var result = await _systemDesksService.GetActiveOnlineDeskAsync(GetBranchId(), await this.GetShiftIdAsync(), fromDate, toDate);
+            return Ok(new { success = true, data = result });
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpGet("cash/active")]
+    [Authorize(Roles = Roles.Operator + "," + Roles.Admin + "," + Roles.SuperAdmin)]
+    public async Task<IActionResult> GetActiveCashDesk([FromQuery] DateOnly? fromDate = null, [FromQuery] DateOnly? toDate = null)
+    {
+        try
+        {
+            var result = await _systemDesksService.GetActiveCashDeskAsync(GetBranchId(), await this.GetShiftIdAsync(), fromDate, toDate);
             return Ok(new { success = true, data = result });
         }
         catch (Exception ex)
@@ -43,11 +58,11 @@ public class SystemDesksController : ControllerBase
 
     [HttpGet("wallet/active")]
     [Authorize(Roles = Roles.Operator + "," + Roles.Admin + "," + Roles.SuperAdmin)]
-    public async Task<IActionResult> GetActiveWalletDesk()
+    public async Task<IActionResult> GetActiveWalletDesk([FromQuery] DateOnly? fromDate = null, [FromQuery] DateOnly? toDate = null)
     {
         try
         {
-            var result = await _systemDesksService.GetActiveWalletDeskAsync(GetBranchId(), await this.GetShiftIdAsync());
+            var result = await _systemDesksService.GetActiveWalletDeskAsync(GetBranchId(), await this.GetShiftIdAsync(), fromDate, toDate);
             return Ok(new { success = true, data = result });
         }
         catch (Exception ex)

@@ -1,43 +1,144 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Lock, AlertTriangle, Calculator, LogOut, ArrowLeft } from 'lucide-react';
+import { Calculator, Plus, AlertTriangle, WifiOff, Calendar } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
+import { useSocket } from '../../contexts/SocketContext';
 import api from '../../config/api';
+import { format } from 'date-fns';
 import PageHeader from '../../components/layout/PageHeader';
-import DenominationCounter from '../../components/cash/DenominationCounter';
-import { generateIdempotencyKey } from '../../utils/idempotency';
+import OpenRegisterModal from '../../components/cash/OpenRegisterModal';
+import AddTransactionModal from '../../components/cash/AddTransactionModal';
+import TransactionFeed from '../../components/cash/TransactionFeed';
+
+const todayIso = () => format(new Date(), 'yyyy-MM-dd');
+
+// Remembered per-browser, same convention as Online Desk / Member Amount Desk, so reopening
+// the ledger keeps whatever range was last being looked at instead of always snapping to today.
+const readStoredDate = (key) => {
+  try {
+    return localStorage.getItem(key) || todayIso();
+  } catch {
+    return todayIso();
+  }
+};
 
 export default function CashDeskPage() {
-  const navigate = useNavigate();
-  const { isSuperAdmin, user, logout } = useAuth();
-  const { activeBranch, switchBranch } = useBranch();
+  const { isSuperAdmin, user } = useAuth();
+  const { activeBranch } = useBranch();
+  const { subscribe, connected, SIGNALR_HUBS } = useSocket();
 
   const [register, setRegister] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  const [isLocking, setIsLocking] = useState(false);
-  const [isClosing, setIsClosing] = useState(false);
+  const [isAddTxModalOpen, setIsAddTxModalOpen] = useState(false);
 
-  // The one question the system cannot work out for itself: is anyone coming in after this
-  // operator? It decides whether the day's takings are totalled and emailed now, and whether
-  // the system going quiet tonight is the shop being shut or a fault. Off by default, because
-  // a handover between shifts is the ordinary case and wrongly closing the day would send half
-  // a day's figures as though they were the whole day's.
-  const [closesTradingDay, setClosesTradingDay] = useState(false);
+  // The Ledger itself is date-filterable - a shift ending must never mean the cash it moved
+  // becomes harder to find. Kept separate from `register`, which stays the live, right-now
+  // drawer regardless of what range the Ledger below is currently showing.
+  const [fromDate, setFromDate] = useState(() => readStoredDate('cashDesk.fromDate'));
+  const [toDate, setToDate] = useState(() => readStoredDate('cashDesk.toDate'));
+  const [ledger, setLedger] = useState(null);
+  const [ledgerLoading, setLedgerLoading] = useState(true);
+  const [ledgerError, setLedgerError] = useState(null);
 
-  // Stock is shown, not asserted. A tick box saying "I have checked the stock" with nothing to
-  // check it against is decoration: it teaches staff to tick without looking, and then the one
-  // night something really is missing, that gets ticked too.
-  const [stockChecked, setStockChecked] = useState(false);
-  const [inventory, setInventory] = useState(null);
-  const [counted, setCounted] = useState({});
-  const [stockBusy, setStockBusy] = useState(false);
-  const [stockError, setStockError] = useState('');
-  const [isCancelling, setIsCancelling] = useState(false);
+  useEffect(() => {
+    try { localStorage.setItem('cashDesk.fromDate', fromDate); } catch { /* ignore */ }
+  }, [fromDate]);
+
+  useEffect(() => {
+    try { localStorage.setItem('cashDesk.toDate', toDate); } catch { /* ignore */ }
+  }, [toDate]);
 
   const targetBranchId = isSuperAdmin ? activeBranch?.id : user?.branchId;
+
+  const fetchLedger = useCallback(async () => {
+    if (isSuperAdmin && !targetBranchId) {
+      setLedger(null);
+      setLedgerLoading(false);
+      return;
+    }
+    setLedgerLoading(true);
+    try {
+      setLedgerError(null);
+      const { data } = await api.get('/system-desks/cash/active', {
+        params: { branchId: targetBranchId, fromDate, toDate },
+      });
+      setLedger(data.data);
+    } catch (err) {
+      setLedgerError(err.response?.data?.message || 'Failed to fetch cash desk ledger.');
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, [targetBranchId, isSuperAdmin, fromDate, toDate]);
+
+  useEffect(() => { fetchLedger(); }, [fetchLedger]);
+
+  // Same live events the drawer above already reacts to - a correction or a new cash
+  // transaction should appear in the Ledger immediately, not only after changing the date range.
+  useEffect(() => {
+    if (!connected || !targetBranchId) return;
+    const unsubLedger = subscribe(SIGNALR_HUBS.CASH, 'CashRegisterUpdated', () => {
+      fetchLedger();
+    });
+    return () => unsubLedger();
+  }, [connected, subscribe, SIGNALR_HUBS.CASH, targetBranchId, fetchLedger]);
+
+  const resetLedgerToToday = () => {
+    setFromDate(todayIso());
+    setToDate(todayIso());
+  };
+
+  const ledgerSection = (
+    <div className="flex-1 bg-bg-2 border border-border rounded-xl p-4 flex flex-col min-h-0">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4 border-b border-border pb-3">
+        <h3 className="text-text font-bold uppercase tracking-wider text-sm flex items-center gap-2">
+          Shift Transaction Ledger
+          <span className="bg-bg-3 px-2 py-0.5 rounded-full text-[10px] text-text-3 font-mono border border-border">Append Only</span>
+        </h3>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Calendar className="w-4 h-4 text-text-3 shrink-0" />
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            className="bg-bg-3 border border-border rounded-lg px-2.5 py-1 text-xs text-text"
+          />
+          <span className="text-text-3 text-xs">to</span>
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate}
+            max={todayIso()}
+            onChange={(e) => setToDate(e.target.value)}
+            className="bg-bg-3 border border-border rounded-lg px-2.5 py-1 text-xs text-text"
+          />
+          <button
+            onClick={resetLedgerToToday}
+            className="text-xs font-medium text-accent hover:text-accent/80 transition-colors"
+          >
+            Today
+          </button>
+        </div>
+      </div>
+
+      {ledgerError && (
+        <div className="bg-neon-red/10 border border-neon-red/30 text-neon-red p-3 rounded-xl mb-4 flex items-center gap-2 text-sm">
+          <AlertTriangle className="w-4 h-4" /> {ledgerError}
+        </div>
+      )}
+
+      {ledgerLoading ? (
+        <div className="flex justify-center py-8">
+          <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <TransactionFeed transactions={ledger?.transactions || []} />
+      )}
+    </div>
+  );
 
   const fetchActiveRegister = useCallback(async () => {
     if (isSuperAdmin && !targetBranchId) {
@@ -52,7 +153,7 @@ export default function CashDeskPage() {
       setRegister(data.data);
     } catch (err) {
       if (err.response?.status === 404) {
-        setRegister(null);
+        setRegister(null); // No active register => triggers OpenRegisterModal
       } else {
         setError(err.response?.data?.error || err.response?.data?.message || 'Failed to fetch cash register');
       }
@@ -66,108 +167,23 @@ export default function CashDeskPage() {
     fetchActiveRegister();
   }, [fetchActiveRegister]);
 
-  const handleStartVerification = async () => {
-    setIsLocking(true);
-    try {
-      await api.post('/cash-desk/verify-start', {}, {
-        headers: { 'X-Idempotency-Key': generateIdempotencyKey() }
-      });
-      await fetchActiveRegister();
-    } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to lock register for verification.');
-    } finally {
-      setIsLocking(false);
-    }
-  };
-
-  // Loaded once the cash is counted, which is when this screen reaches the stock step.
+  // Real-Time SignalR Updates
   useEffect(() => {
-    if (register?.status !== 'Verified' || isSuperAdmin || inventory !== null) return;
-    let alive = true;
-    (async () => {
-      try {
-        const { data } = await api.get('/inventory');
-        const items = data?.data?.items || data?.data || [];
-        if (!alive) return;
-        setInventory(items);
-        const seed = {};
-        items.forEach((i) => { seed[i.id] = String(i.currentStock ?? i.CurrentStock ?? 0); });
-        setCounted(seed);
-      } catch (err) {
-        if (alive) setStockError(err.response?.data?.error || 'Could not load the stock list.');
-      }
-    })();
-    return () => { alive = false; };
-  }, [register?.status, isSuperAdmin, inventory]);
+    if (!connected || !targetBranchId) return;
 
-  // Only items whose count the operator actually changed get written back.
-  const confirmStock = async () => {
-    setStockBusy(true);
-    setStockError('');
-    try {
-      for (const item of inventory || []) {
-        const was = Number(item.currentStock ?? item.CurrentStock ?? 0);
-        const now = Number(counted[item.id]);
-        if (!Number.isNaN(now) && now !== was) {
-          await api.patch('/inventory/' + item.id + '/stock', { currentStock: now });
-        }
-      }
-      setStockChecked(true);
-    } catch (err) {
-      setStockError(err.response?.data?.error || 'Could not save the stock counts.');
-    } finally {
-      setStockBusy(false);
-    }
-  };
+    const unsubCash = subscribe(SIGNALR_HUBS.CASH, 'CashRegisterUpdated', () => {
+      fetchActiveRegister(); // Re-fetch on any cash event (multi-operator sync)
+    });
 
-  const handleCloseShift = async () => {
-    setIsClosing(true);
-    try {
-      await api.post(`/cash-desk/close/${register.id}`, {}, {
-        headers: { 'X-Idempotency-Key': generateIdempotencyKey() }
-      });
-
-      if (isSuperAdmin) {
-        // Super Admin/Admin have no personal shift to end — just return to the
-        // All Branches view instead of logging out.
-        switchBranch(null);
-        navigate('/app/dashboard');
-      } else {
-        // Operator's shift is over — log them out, carrying their answer about the day so the
-        // server can close the trading day and send its totals.
-        logout({ closesTradingDay });
-      }
-    } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to close shift.');
-      setIsClosing(false);
-    }
-  };
-
-  const handleBackButton = async () => {
-    if (register?.status !== 'Verifying') {
-      navigate(-1);
-      return;
-    }
-
-    setIsCancelling(true);
-    try {
-      // Undo the lock — register goes back to Open, shift is untouched.
-      await api.post(`/cash-desk/cancel-verification/${register.id}`, {}, {
-        headers: { 'X-Idempotency-Key': generateIdempotencyKey() }
-      });
-      navigate(-1);
-    } catch (err) {
-      setError(err.response?.data?.error || err.response?.data?.message || 'Failed to cancel verification.');
-      setIsCancelling(false);
-    }
-  };
+    return () => unsubCash();
+  }, [connected, subscribe, SIGNALR_HUBS.CASH, targetBranchId, fetchActiveRegister]);
 
   if (isSuperAdmin && !activeBranch) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-        <Lock className="w-12 h-12 text-text-3 mb-4" />
+        <Calculator className="w-12 h-12 text-text-3 mb-4" />
         <h2 className="text-xl font-heading font-bold text-text mb-2">Select a Branch</h2>
-        <p className="text-text-2">You must select a branch to access the Cash Register.</p>
+        <p className="text-text-2">You must select a branch to view the Cash Desk.</p>
       </div>
     );
   }
@@ -180,39 +196,49 @@ export default function CashDeskPage() {
     );
   }
 
-  // 1. If no active register, nothing to close.
+  // 1. If no register is open, force the operator to open it - the Ledger still shows
+  // underneath, since it is a look back at cash movements regardless of whether a drawer
+  // happens to be open right now.
   if (!register) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center">
-        <AlertTriangle className="w-12 h-12 text-neon-orange mb-4" />
-        <h2 className="text-xl font-heading font-bold text-text mb-2">No Active Shift</h2>
-        <p className="text-text-2">There is no active cash register open for this shift.</p>
+      <div className="flex flex-col h-full gap-6">
+        <OpenRegisterModal onRegisterOpened={fetchActiveRegister} />
+        {ledgerSection}
       </div>
     );
   }
 
+  // 2. Active Register Dashboard
+  const { expectedDrawerCash, transactions } = register;
+
+  // Financial Alerts (Enterprise Requirements)
+  const isDrawerNegative = expectedDrawerCash < 0;
+  const largeWithdrawalCount = transactions.filter(t => t.cashAmount < -10000).length;
+  const recentAdjustments = transactions.filter(t => t.transactionType === 'adjustment').length;
+
   return (
-    <div className="h-full flex flex-col max-w-4xl mx-auto">
-      <div className="mb-6 flex items-center gap-4">
-        {register.status !== 'Verified' && (
-          <button
-            onClick={handleBackButton}
-            disabled={isCancelling}
-            className="p-2 hover:bg-bg-3 rounded-lg transition-colors text-text-3 hover:text-text shrink-0"
-            title={register.status === 'Verifying' ? 'Cancel verification and go back' : 'Go back'}
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-        )}
-        <div className="flex-1">
-          <PageHeader
-            title="Cash Register"
-            subtitle="End of Shift Reconciliation"
-            icon="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-            badge="SECURE"
-          />
-        </div>
+    <div className="h-full flex flex-col">
+      <div className="flex justify-between items-start mb-6">
+        <PageHeader
+          title="Cash Desk"
+          subtitle="Live Cash Flow Control Center"
+          icon="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"
+          badge="LIVE"
+        />
+
+        <button
+          onClick={() => setIsAddTxModalOpen(true)}
+          className="btn-primary flex items-center gap-2 shadow-lg shadow-accent/20"
+        >
+          <Plus className="w-5 h-5" /> Add Entry
+        </button>
       </div>
+
+      {!connected && (
+        <div className="bg-neon-orange/10 border border-neon-orange/30 text-neon-orange p-3 rounded-xl mb-4 flex items-center gap-2 text-sm font-bold uppercase tracking-wider">
+          <WifiOff className="w-4 h-4" /> OFFLINE: Real-time synchronization is disconnected.
+        </div>
+      )}
 
       {error && (
         <div className="bg-neon-red/10 border border-neon-red/30 text-neon-red p-3 rounded-xl mb-4 flex items-center gap-2 text-sm">
@@ -220,177 +246,68 @@ export default function CashDeskPage() {
         </div>
       )}
 
-      {/* STEP 1: Lock Register */}
-      {register.status === 'Open' && (
-        <div className="flex-1 flex flex-col items-center justify-center border border-border bg-bg-2 rounded-xl p-8 text-center">
-          <div className="w-20 h-20 bg-neon-orange/10 text-neon-orange rounded-full flex items-center justify-center mb-6">
-            <Lock className="w-10 h-10" />
-          </div>
-          <h2 className="text-2xl font-heading font-bold uppercase tracking-widest text-text mb-3">
-            Initiate Snapshot Lock
-          </h2>
-          <p className="text-text-2 text-sm max-w-md mb-8 leading-relaxed">
-            Starting verification will lock the active Cash Register. New payments, inward cash, and adjustments will be temporarily blocked to prevent reconciliation drift.
-          </p>
-          <button
-            onClick={handleStartVerification}
-            disabled={isLocking}
-            className="btn-primary w-full max-w-sm py-4 shadow-lg shadow-accent/20 flex justify-center items-center"
-          >
-            {isLocking ? (
-              <div className="w-5 h-5 rounded-full border-2 border-current border-t-transparent animate-spin" />
-            ) : (
-              'Lock Register & Start Count'
-            )}
-          </button>
-        </div>
-      )}
+      {/* Financial KPIs */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
 
-      {/* STEP 2: Denomination Verification */}
-      {register.status === 'Verifying' && (
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="bg-neon-orange/10 border border-neon-orange/30 text-neon-orange p-3 rounded-xl mb-4 flex items-center gap-2 text-xs font-bold uppercase tracking-wider">
-            <Lock className="w-4 h-4 shrink-0" /> Snapshot Locked. Register is immune to external cash flow changes.
-          </div>
-          <DenominationCounter 
-            expectedTotal={register.expectedDrawerCash} 
-            onVerified={fetchActiveRegister} 
-          />
-        </div>
-      )}
-
-      {/* STEP 3: Finalize Shift */}
-      {register.status === 'Verified' && (
-        <div className="flex-1 flex flex-col items-center justify-center border border-accent/30 bg-bg-2 rounded-xl p-8 text-center shadow-[0_0_30px_rgba(255,51,102,0.1)]">
-          <div className="w-20 h-20 bg-accent/10 text-accent rounded-full flex items-center justify-center mb-6">
-            <Calculator className="w-10 h-10" />
-          </div>
-          <h2 className="text-2xl font-heading font-bold uppercase tracking-widest text-text mb-3">
-            Verification Complete
-          </h2>
-          <div className="bg-bg-3 border border-border rounded-xl p-6 w-full max-w-md mb-8 text-left">
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-text-3 text-xs font-bold uppercase tracking-wider">Expected Drawer</span>
-              <span className="text-text font-mono font-bold">₹{register.expectedDrawerCash}</span>
-            </div>
-            <div className="flex justify-between items-center mb-3">
-              <span className="text-text-3 text-xs font-bold uppercase tracking-wider">Counted Total</span>
-              <span className="text-text font-mono font-bold">₹{register.physicalCashCounted}</span>
-            </div>
-            <div className="flex justify-between items-center border-t border-border pt-3">
-              <span className="text-text-3 text-xs font-bold uppercase tracking-wider">Discrepancy</span>
-              <span className={`font-mono font-bold ${register.cashDifference === 0 ? 'text-neon-blue' : 'text-neon-red'}`}>
-                ₹{register.cashDifference}
+        {/* KPI 1: Expected Drawer (The Source of Truth) */}
+        <div className={`col-span-1 lg:col-span-2 p-6 rounded-xl border flex flex-col justify-center ${
+          isDrawerNegative ? 'bg-neon-red/5 border-neon-red' : 'bg-bg-2 border-border shadow-[0_0_20px_rgba(255,255,255,0.02)]'
+        }`}>
+          <div className="flex justify-between items-start mb-2">
+            <h3 className="text-text-3 font-bold uppercase tracking-widest text-sm flex items-center gap-2">
+              <Calculator className="w-4 h-4" /> Expected Drawer Total
+            </h3>
+            {isDrawerNegative && (
+              <span className="bg-neon-red/20 text-neon-red text-[10px] px-2 py-1 rounded-full font-bold uppercase flex items-center gap-1">
+                <AlertTriangle className="w-3 h-3" /> Negative Drawer
               </span>
-            </div>
+            )}
           </div>
-          {/* Stock, then the day. Both asked here rather than on a later screen, because this
-              is the last moment the operator is still standing at the counter. */}
-          {!isSuperAdmin && (
-            <div className="w-full max-w-md mb-6 space-y-3 text-left">
-              <div className="bg-bg-3 border border-border rounded-xl p-4">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-text text-sm font-bold">Check the stock</span>
-                  {stockChecked && <span className="text-neon-green text-[11px] font-bold">CONFIRMED</span>}
-                </div>
-                <p className="text-text-3 text-[11px] mb-3 leading-relaxed">
-                  Count what is actually on the shelf. Change any number that does not match, then confirm.
-                </p>
+          <div className={`font-mono text-5xl font-bold tracking-tight ${isDrawerNegative ? 'text-neon-red' : 'text-accent drop-shadow-[0_0_12px_rgba(255,51,102,0.3)]'}`}>
+            ₹{expectedDrawerCash}
+          </div>
+          <p className="text-text-3 text-xs mt-3 italic">
+            Physical drawer cash must exactly match this total at EOD.
+          </p>
+        </div>
 
-                {inventory === null && !stockError && (
-                  <p className="text-text-3 text-xs">Loading the stock list...</p>
-                )}
-
-                {inventory !== null && inventory.length === 0 && (
-                  <p className="text-text-3 text-xs">Nothing is stocked at this branch, so there is nothing to count.</p>
-                )}
-
-                {inventory !== null && inventory.length > 0 && (
-                  <div className="max-h-56 overflow-auto -mx-1 px-1">
-                    <table className="w-full text-xs">
-                      <thead className="text-text-3 text-[10px] uppercase tracking-wider">
-                        <tr>
-                          <th className="text-left font-normal pb-2">Item</th>
-                          <th className="text-right font-normal pb-2">System says</th>
-                          <th className="text-right font-normal pb-2 w-24">On the shelf</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {inventory.map((item) => {
-                          const was = Number(item.currentStock ?? item.CurrentStock ?? 0);
-                          const now = Number(counted[item.id]);
-                          const differs = !Number.isNaN(now) && now !== was;
-                          return (
-                            <tr key={item.id} className="border-t border-border/60">
-                              <td className="py-2 text-text-2">{item.itemName || item.ItemName || item.name}</td>
-                              <td className="py-2 text-right font-mono text-text-3">{was}</td>
-                              <td className="py-2 text-right">
-                                <input
-                                  type="number"
-                                  min="0"
-                                  value={counted[item.id] ?? ''}
-                                  onChange={(e) => { setCounted({ ...counted, [item.id]: e.target.value }); setStockChecked(false); }}
-                                  className={differs
-                                    ? 'w-20 bg-bg-2 border border-neon-orange text-neon-orange rounded px-2 py-1 text-right font-mono text-xs'
-                                    : 'w-20 bg-bg-2 border border-border text-text rounded px-2 py-1 text-right font-mono text-xs'}
-                                />
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-
-                {stockError && <p className="text-neon-red text-[11px] mt-2">{stockError}</p>}
-
-                {!stockChecked && inventory !== null && (
-                  <button
-                    onClick={confirmStock}
-                    disabled={stockBusy}
-                    className="w-full mt-3 py-2 rounded-lg text-xs font-bold uppercase tracking-wider bg-accent/10 border border-accent/40 text-accent hover:bg-accent/20 transition-colors disabled:opacity-50"
-                  >
-                    {stockBusy ? 'Saving...' : 'Confirm these counts'}
-                  </button>
-                )}
-              </div>
-
-              <label className="flex items-start gap-3 bg-bg-3 border border-border rounded-xl p-4 cursor-pointer hover:border-neon-red/40 transition-colors">
-                <input
-                  type="checkbox"
-                  checked={closesTradingDay}
-                  onChange={(e) => setClosesTradingDay(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 accent-neon-red cursor-pointer flex-shrink-0"
-                />
-                <span>
-                  <span className="block text-text text-sm font-bold">This is the last shift of the day</span>
-                  <span className="block text-text-3 text-[11px] mt-1 leading-relaxed">
-                    Only tick this if the shop is closing now and nobody is taking over. The
-                    day's totals are sent to the owner, and the system knows it has been shut
-                    rather than gone wrong.
-                  </span>
-                </span>
-              </label>
+        {/* Alerts Panel */}
+        <div className="p-4 rounded-xl border border-border bg-bg-2 flex flex-col gap-3">
+          <h3 className="text-text-2 font-bold uppercase tracking-wider text-xs border-b border-border-2 pb-2">
+            Financial Alerts
+          </h3>
+          {largeWithdrawalCount > 0 && (
+            <div className="text-xs text-neon-orange flex gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {largeWithdrawalCount} Large withdrawal(s) recorded this shift.
             </div>
           )}
-
-          <button
-            onClick={handleCloseShift}
-            disabled={isClosing || (!isSuperAdmin && !stockChecked)}
-            className="w-full max-w-md py-4 rounded-xl font-bold uppercase tracking-widest text-sm transition-all bg-accent hover:bg-accent-hover text-white shadow-lg shadow-accent/20 flex justify-center items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {isClosing ? (
-              <div className="w-5 h-5 rounded-full border-2 border-white border-t-transparent animate-spin" />
-            ) : (
-              <><LogOut className="w-5 h-5" /> {closesTradingDay ? 'Close The Day & Log Out' : 'End Shift & Log Out'}</>
-            )}
-          </button>
-
-          {!isSuperAdmin && !stockChecked && (
-            <p className="text-text-3 text-[11px] mt-3">Confirm the stock counts before you can finish.</p>
+          {recentAdjustments > 0 && (
+            <div className="text-xs text-neon-purple flex gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {recentAdjustments} Manual adjustment(s) recorded.
+            </div>
+          )}
+          {isDrawerNegative && (
+            <div className="text-xs text-neon-red flex gap-2">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Cash drawer is mathematically negative. Check inwards.
+            </div>
+          )}
+          {largeWithdrawalCount === 0 && recentAdjustments === 0 && !isDrawerNegative && (
+            <div className="text-xs text-text-3 italic text-center py-4">
+              All systems nominal.
+            </div>
           )}
         </div>
+
+      </div>
+
+      {ledgerSection}
+
+      {isAddTxModalOpen && (
+        <AddTransactionModal
+          register={register}
+          onClose={() => setIsAddTxModalOpen(false)}
+          onTransactionAdded={fetchActiveRegister}
+        />
       )}
     </div>
   );

@@ -85,7 +85,7 @@ export const printBill = async (billId, fullBillObject = null) => {
 
     if (idString.startsWith('TOPUP-')) {
       if (!fullBillObject) {
-        alert('Cannot print wallet top-up receipt without full row data.');
+        alert('Cannot print Member Amount top-up receipt without full row data.');
         return;
       }
 
@@ -99,7 +99,7 @@ export const printBill = async (billId, fullBillObject = null) => {
         <!DOCTYPE html>
         <html>
           <head>
-            <title>Wallet Top-Up Receipt</title>
+            <title>Member Amount Top-Up Receipt</title>
             <style>
               body {
                 font-family: 'Courier New', Courier, monospace;
@@ -124,7 +124,7 @@ export const printBill = async (billId, fullBillObject = null) => {
             <div class="text-center border-b">
               <h2 style="margin:0; font-size: 18px;">APPLE ESPORTS</h2>
               <p style="margin:2px 0;">Gaming Cafe</p>
-              <p style="margin:2px 0; font-size: 10px;">WALLET TOP-UP RECEIPT</p>
+              <p style="margin:2px 0; font-size: 10px;">MEMBER AMOUNT TOP-UP RECEIPT</p>
             </div>
             <div class="border-b" style="margin-top: 5px;">
               <div class="flex"><span>Ref:</span><span>${idString}</span></div>

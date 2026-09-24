@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace AppleEsportsErp.Application.DTOs.Settings;
 
@@ -9,6 +10,10 @@ public class CreateBranchDto
     public string OpeningTime { get; set; } = "10:00";
     public string ClosingTime { get; set; } = "02:00";
     public string? ConfiguredReservationDurations { get; set; }
+
+    /// <summary>Null (the default) means this branch's food/snacks stay fully independent.
+    /// See FoodGroup.</summary>
+    public Guid? FoodGroupId { get; set; }
 }
 
 public class UpdateBranchDto
@@ -18,6 +23,7 @@ public class UpdateBranchDto
     public string OpeningTime { get; set; } = null!;
     public string ClosingTime { get; set; } = null!;
     public string? ConfiguredReservationDurations { get; set; }
+    public Guid? FoodGroupId { get; set; }
 }
 
 public class BranchDto
@@ -30,6 +36,29 @@ public class BranchDto
     public string Status { get; set; } = null!;
     public DateTimeOffset CreatedAt { get; set; }
     public string? ConfiguredReservationDurations { get; set; }
+    public Guid? FoodGroupId { get; set; }
+    public string? FoodGroupName { get; set; }
+}
+
+/// <summary>A named link between branches that share one food/snacks menu and stock count —
+/// see FoodGroup.</summary>
+public class FoodGroupDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = null!;
+    public DateTimeOffset CreatedAt { get; set; }
+    public List<FoodGroupBranchDto> Branches { get; set; } = new();
+}
+
+public class FoodGroupBranchDto
+{
+    public Guid Id { get; set; }
+    public string Name { get; set; } = null!;
+}
+
+public class CreateFoodGroupDto
+{
+    public string Name { get; set; } = null!;
 }
 
 public class CreateOperatorDto
@@ -99,6 +128,16 @@ public class AuditLogDto
 
 public class CreatePcDto
 {
+    /// <summary>
+    /// Set by Head Office itself when queuing a remote add (see PcsController.Create), so the
+    /// row it creates in its own mirror and the row the branch creates locally share the same
+    /// identity from the start - without this, the branch's own row got a fresh id nothing at
+    /// Head Office had ever seen, and its heartbeat reports on that id were silently ignored
+    /// forever (ApplyPcStatesAsync only ever updates an id it already recognises, never creates
+    /// one). Left null for a PC added locally at a branch's own Settings page, which has no
+    /// mirror to keep in step with.
+    /// </summary>
+    public Guid? Id { get; set; }
     public string PcNumber { get; set; } = null!;
     public string? PcName { get; set; }
     public Guid BranchId { get; set; }
@@ -117,4 +156,16 @@ public class UpdatePcDto
     public string? Specs { get; set; }
     public string? Zone { get; set; }
     public string? HardwareNotes { get; set; }
+}
+
+/// <summary>UpdatePcDto plus the id of the PC being edited, for the branch_commands payload - see BranchCommands.UpdatePc.</summary>
+public class UpdatePcCommandDto : UpdatePcDto
+{
+    public Guid Id { get; set; }
+}
+
+/// <summary>For BranchCommands.DeletePc's payload - nothing else about the PC needs to travel, only which one.</summary>
+public class DeletePcCommandDto
+{
+    public Guid Id { get; set; }
 }

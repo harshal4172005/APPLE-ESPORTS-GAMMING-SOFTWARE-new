@@ -13,7 +13,25 @@ public class PcStatusDto
     // Agent Connectivity
     public bool IsAgentOnline { get; set; }
     public string? ConnectionMode { get; set; }
-    
+
+    /// <summary>The version this PC's own agent last reported on a heartbeat. Null means it has
+    /// never reported one - either it has not connected since this field existed, or (for a
+    /// console) it has no agent to report one at all.</summary>
+    public string? AgentVersion { get; set; }
+
+    /// <summary>The version of AppleEsports.exe itself this PC last reported - the program a
+    /// customer actually plays through, separate from the screen-lock agent above. See
+    /// Pc.AppVersion for why the two are tracked apart.</summary>
+    public string? AppVersion { get; set; }
+
+    /// <summary>
+    /// True if PcStatusHub's shutdown command was sent to this PC and it has not reconnected
+    /// since (see Pc.PoweredOff). Combined on the frontend with State being Active/AwaitingBilling
+    /// to tell "shut down, idle" (red) apart from "shut down while a session is still billing"
+    /// (orange) - two states that look identical from this field alone.
+    /// </summary>
+    public bool PoweredOff { get; set; }
+
     // Active session details (if busy or awaiting billing)
     public Guid? ActiveSessionId { get; set; }
     public Guid? ActiveBillId { get; set; }

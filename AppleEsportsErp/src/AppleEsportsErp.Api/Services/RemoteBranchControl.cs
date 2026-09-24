@@ -150,6 +150,9 @@ public static class BranchCommands
     public const string StopSession = "stop_session";
     public const string StartSession = "start_session";
     public const string SetPcState = "set_pc_state";
+    public const string AddPc = "add_pc";
+    public const string UpdatePc = "update_pc";
+    public const string DeletePc = "delete_pc";
     public const string TransferSession = "transfer_session";
 
     /// <summary>
@@ -168,6 +171,27 @@ public static class BranchCommands
     /// internet down, which pointing every login at Head Office would have quietly broken.
     /// </summary>
     public const string SetMemberPassword = "set_member_password";
+
+    /// <summary>
+    /// What RunSetMemberPasswordAsync/RunAdminEditMemberValuesAsync report back when the member
+    /// simply has not reached this branch's own database yet - a brand-new member, or a
+    /// password reset requested within moments of signing up, before the ordinary heartbeat
+    /// config push (BranchConfigDto.Members) has had its next cycle to deliver them here.
+    ///
+    /// This is the exact fix for "the member got a success message but cannot log in": the old
+    /// code treated "member not found here" as Succeeded outright, which closed the command for
+    /// good the instant it was checked. Head Office had genuinely reset the password in its own
+    /// copy, told the member so, and then never told the branch anything at all - the command
+    /// was marked done, not pending, so nothing ever tried again once the member did arrive a
+    /// few seconds later.
+    ///
+    /// BranchHeartbeatController.CommandResult checks for this exact string and, only for it,
+    /// leaves the command Pending instead of closing it Failed - so it rides the next heartbeat
+    /// and every one after that, same as a genuine delivery failure would, until either it
+    /// actually succeeds or the ordinary 48-hour give-up window closes it for real.
+    /// </summary>
+    public const string MemberNotYetSyncedMessage =
+        "This member has not synced to this branch yet - will retry once it has.";
 
     /// <summary>
     /// Money collected at Head Office on the customer's behalf, credited to the branch's own
@@ -218,6 +242,7 @@ public static class BranchCommands
 
     /// <summary>Cancels a booking - see CreateReservation for why this has to travel too.</summary>
     public const string CancelReservation = "cancel_reservation";
+    public const string DeleteReservation = "delete_reservation";
 
     /// <summary>
     /// Converts a booking into a running session, at the counter that actually has the PC.
@@ -242,6 +267,13 @@ public static class BranchCommands
     public const string ApplyDiscount = "apply_discount";
 
     /// <summary>
+    /// Corrects an already-completed bill's payment method at the branch that actually holds
+    /// the bill, its register, and its cash - same reasoning as ApplyDiscount and ProcessPayment.
+    /// The actor is carried explicitly, for the same accountability reason ApplyDiscount does.
+    /// </summary>
+    public const string EditPaymentMethod = "edit_payment_method";
+
+    /// <summary>
     /// Removes a menu item from the branch's own catalogue - permanently deletes it there too
     /// if nothing local references it, deactivates it otherwise. Without this, a delete at Head
     /// Office only ever removed Head Office's copy: the branch's row sat there untouched, and
@@ -250,4 +282,28 @@ public static class BranchCommands
     /// "Permanently deleted" was never actually true for anything requested from Head Office.
     /// </summary>
     public const string DeleteInventoryItem = "delete_inventory_item";
+
+    /// <summary>
+    /// A Super Admin's direct override of a member's wallet balance or lifetime stats, told to
+    /// the branch that actually holds this member's row instead of just written into Head
+    /// Office's own copy.
+    ///
+    /// Same shape as every other command here: Head Office's dashboard reads its own copy and
+    /// shows the new number immediately, which is exactly the trap this file's own class
+    /// comment describes - it demos perfectly and does nothing, because the gaming PC at the
+    /// counter checks the branch's row, not Head Office's. An operator watching that PC would
+    /// see the old balance forever, no matter what Head Office's screen said.
+    /// </summary>
+    public const string AdminEditMemberValues = "admin_edit_member_values";
+
+    /// <summary>
+    /// A shared food/snacks item's stock moving by some amount at a sibling branch, relayed by
+    /// Head Office so this branch's own count moves by the same amount. Carries a delta, not a
+    /// fresh total - see SharedStockCapture and SyncInboxController.RelaySharedStockDeltaAsync
+    /// for why. Clamped to zero on arrival (BranchHeartbeatService.RunRelaySharedStockDeltaAsync)
+    /// - two branches occasionally selling "the last one" within the same few seconds of each
+    /// other can still happen, but the shared count itself never persists below what's honestly
+    /// left.
+    /// </summary>
+    public const string RelaySharedStockDelta = "relay_shared_stock_delta";
 }

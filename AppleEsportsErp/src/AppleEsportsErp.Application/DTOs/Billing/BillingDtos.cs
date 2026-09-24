@@ -91,3 +91,24 @@ public class ProcessPaymentDto
     public string? CustomerName { get; set; }
     public string? CustomerPhone { get; set; }
 }
+
+/// <summary>
+/// Corrects how an already-completed bill was paid — e.g. it was marked Online, the bank
+/// later declined the transaction, and the customer paid Cash on the spot instead. Wallet is
+/// deliberately not an option here: a wallet payment was apportioned across a member's Gaming
+/// and Food balances in a split that isn't retained per-payment, so reversing or re-applying
+/// it correctly isn't possible from this DTO alone — moving money into or out of a member's
+/// wallet stays a job for a fresh payment/refund, not this correction.
+/// </summary>
+public class EditPaymentMethodDto
+{
+    [Required]
+    public PaymentType NewPaymentType { get; set; }
+
+    public decimal CashAmount { get; set; }
+    public decimal OnlineAmount { get; set; }
+
+    [Required]
+    [MinLength(1)]
+    public string Reason { get; set; } = null!;
+}
