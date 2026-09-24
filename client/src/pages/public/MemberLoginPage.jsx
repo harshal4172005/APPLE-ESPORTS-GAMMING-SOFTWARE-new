@@ -100,7 +100,7 @@ export default function MemberLoginPage() {
               <UserCheck className="w-8 h-8 text-neon-secondary" />
             </div>
             <h1 className="font-outfit text-3xl font-bold text-white tracking-wide">Member Login</h1>
-            <p className="text-text-muted font-inter mt-2 text-sm">Access your wallet and start sessions directly.</p>
+            <p className="text-text-muted font-inter mt-2 text-sm">Access your Member Amount and start sessions directly.</p>
           </div>
 
           {isForgotPassword ? (

@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
-import { ShieldCheck, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { authAPI } from '../../api/auth.api';
 
 export default function ResetPasswordPage() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
   const [email, setEmail] = useState('');
@@ -17,9 +16,14 @@ export default function ResetPasswordPage() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    // Extract from URL and store securely in sessionStorage
-    const urlEmail = searchParams.get('email');
-    const urlToken = searchParams.get('token');
+    // The link now carries email/token in the URL fragment (#...), not the query string
+    // (?...) - a fragment is never sent to the server at all, so it can never end up in an
+    // access log the way a query string does. Read the fragment first; fall back to the query
+    // string only so a reset email already sitting in someone's inbox from before this change
+    // still works instead of breaking outright.
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const urlEmail = hashParams.get('email') || searchParams.get('email');
+    const urlToken = hashParams.get('token') || searchParams.get('token');
 
     if (!urlEmail || !urlToken) {
       // Try to get from sessionStorage as fallback
@@ -93,14 +97,6 @@ export default function ResetPasswordPage() {
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-accent/20 rounded-full blur-[120px] pointer-events-none" />
       
       <div className="relative z-10 w-full max-w-md bg-bg-2/80 backdrop-blur-xl border border-border/60 p-8 shadow-2xl rounded-lg">
-        <button 
-          onClick={() => navigate('/')}
-          className="flex items-center text-text-2 hover:text-accent transition-colors mb-6 text-sm"
-        >
-          <ArrowLeft className="w-4 h-4 mr-2" />
-          Back to Gateway
-        </button>
-
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-accent/20 mb-4">
             <ShieldCheck className="w-8 h-8 text-accent" />

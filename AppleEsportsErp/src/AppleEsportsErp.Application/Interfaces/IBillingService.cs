@@ -16,5 +16,10 @@ public interface IBillingService
     /// </summary>
     Task<BillDto> ApplyDiscountAsync(Guid branchId, Guid actorId, string actorRole, Guid id, ApplyDiscountDto dto);
     Task<BillDto> ProcessPaymentAsync(Guid branchId, Guid operatorId, Guid shiftId, Guid id, ProcessPaymentDto dto);
+
+    /// <summary>Corrects only the payment method on an already-completed bill. See
+    /// BillingService.EditPaymentMethodAsync for why Wallet is refused and how the cash delta
+    /// is booked to today's register rather than rewriting the original payment day.</summary>
+    Task<BillDto> EditPaymentMethodAsync(Guid branchId, Guid actorId, string actorRole, Guid id, EditPaymentMethodDto dto);
     Task<BillDto> RemoveBillItemAsync(Guid branchId, Guid operatorId, Guid billId, Guid billItemId);
 }

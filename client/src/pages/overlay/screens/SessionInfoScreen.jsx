@@ -66,12 +66,12 @@ export default function SessionInfoScreen() {
       const profile = res.data?.data;
 
       if (!profile) {
-        setResumeError('Could not read your wallet. Please see the operator.');
+        setResumeError('Could not read your Member Amount. Please see the operator.');
         return;
       }
 
       if (profile.gamingBalance < MIN_GAMING_BALANCE_TO_START) {
-        setResumeError(`Your Gaming wallet is still ₹${profile.gamingBalance.toFixed(2)}. Please complete the top-up at the counter.`);
+        setResumeError(`Your Gaming Member Amount is still ₹${profile.gamingBalance.toFixed(2)}. Please complete the top-up at the counter.`);
         return;
       }
 
@@ -79,7 +79,7 @@ export default function SessionInfoScreen() {
       localStorage.removeItem('walletEmptyAlert');
       navigate(`/pc-overlay/${pcId}/login`);
     } catch (err) {
-      setResumeError(err.response?.data?.error || 'Could not check your wallet. Please see the operator.');
+      setResumeError(err.response?.data?.error || 'Could not check your Member Amount. Please see the operator.');
     } finally {
       setResumeChecking(false);
     }
@@ -135,7 +135,7 @@ export default function SessionInfoScreen() {
             <AlertTriangle className="w-12 h-12 text-neon-red mx-auto mb-4" />
             <h2 className="font-heading text-2xl font-bold text-neon-red tracking-wide uppercase mb-2">Session Ended</h2>
             <p className="text-neon-red font-body font-bold text-lg">
-              Your gaming wallet is empty.<br/>Your bill has been paid from your wallet.
+              Your gaming Member Amount is empty.<br/>Your bill has been paid from your Member Amount.
             </p>
             <p className="text-text-2 font-body text-sm mt-3">
               Top up at the counter, then tap below to jump straight back in.
@@ -240,8 +240,15 @@ export default function SessionInfoScreen() {
       {/* Session Status Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
+          {/* pcId here is the raw route param the desktop client's overlay window opens with -
+              the PC's internal Guid (see desktop-client/AppConfig.cs's PcId), never meant to be
+              read by a customer. It used to be the fallback here, so on the rare response where
+              sessionData.pcName came back empty this heading showed a bare GUID like
+              "F702A3E4-F94D-4A57-A587-4EAEBC28A693" instead of anything meaningful - even though
+              sessionData.customerName is already always populated (backend defaults it to
+              "Guest") and rendered correctly a few sections below under the Customer label. */}
           <h1 className="font-heading text-3xl font-bold text-text tracking-wider uppercase">
-            {sessionData.pcName || pcId}
+            {sessionData.pcName || sessionData.customerName || 'Session'}
           </h1>
           <div className="flex items-center gap-2 mt-1">
             <span className="w-2 h-2 rounded-full bg-neon-green shadow-[0_0_5px_#22d3a6]" />

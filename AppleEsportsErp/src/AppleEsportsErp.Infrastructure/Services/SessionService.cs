@@ -255,7 +255,27 @@ public class SessionService : ISessionService
             }
 
             var now = DateTimeOffset.UtcNow;
-            
+
+            // Same rule as ExtendSessionAsync, and the same reason: a fixed-duration plan has
+            // one true price, the one on the branch's own PricingPackage for that exact
+            // duration, and a client's own calculation of it is a preview, never the authority.
+            // Only overrides when a plan actually exists for this exact duration - Pay-As-You-Go
+            // (DurationMinutes 0) and any duration with no matching package keep trusting the
+            // caller's figure, same as before, since there is nothing here to check it against.
+            decimal expectedAmount = dto.ExpectedAmount;
+            PricingPackage? matchingPackage = null;
+            if (dto.DurationMinutes > 0)
+            {
+                matchingPackage = await _db.Set<PricingPackage>().AsNoTracking()
+                    .Where(pkg => pkg.PricingProfileId == pc.PricingProfileId
+                        && pkg.IsActive && pkg.DurationMinutes == (int)dto.DurationMinutes)
+                    .OrderBy(pkg => pkg.SortOrder)
+                    .FirstOrDefaultAsync();
+
+                if (matchingPackage != null)
+                    expectedAmount = matchingPackage.Price;
+            }
+
             var session = new Session
             {
                 Id = Guid.NewGuid(),
@@ -268,8 +288,13 @@ public class SessionService : ISessionService
                 StartTime = now,
                 EndTime = dto.DurationMinutes > 0 ? now.AddMinutes((double)dto.DurationMinutes) : null,
                 PlannedDurationMin = dto.DurationMinutes > 0 ? (int)dto.DurationMinutes : null,
-                TotalAmount = dto.ExpectedAmount,
-                GamingAmount = dto.ExpectedAmount,
+                TotalAmount = expectedAmount,
+                GamingAmount = expectedAmount,
+                // Only a real catalog package is a committed prepaid price Stop should honor
+                // later — a plain duration with no matching package is just the client's guess,
+                // same as before this field existed.
+                PricingPackageId = matchingPackage?.Id,
+                PackagePrice = matchingPackage?.Price,
                 GamingType = dto.PackageName,
                 State = SessionState.Active,
                 Notes = dto.Notes,
@@ -293,10 +318,10 @@ public class SessionService : ISessionService
                 ShiftId = shiftId == Guid.Empty ? null : shiftId,
                 CustomerName = dto.CustomerName,
                 MemberId = dto.MemberId,
-                GamingAmount = dto.ExpectedAmount,
+                GamingAmount = expectedAmount,
                 FoodAmount = 0,
-                Subtotal = dto.ExpectedAmount,
-                TotalAmount = dto.ExpectedAmount,
+                Subtotal = expectedAmount,
+                TotalAmount = expectedAmount,
                 Status = BillStatus.Pending,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -311,8 +336,8 @@ public class SessionService : ISessionService
                 ItemType = "gaming",
                 ItemName = $"Base Session ({dto.DurationMinutes}m)",
                 Quantity = 1,
-                UnitPrice = dto.ExpectedAmount,
-                TotalPrice = dto.ExpectedAmount,
+                UnitPrice = expectedAmount,
+                TotalPrice = expectedAmount,
                 CreatedAt = now
             };
             
@@ -366,8 +391,17 @@ public class SessionService : ISessionService
                 $"Session started for {dto.CustomerName} on {pc.PcNumber} - Duration: {dto.DurationMinutes}m, Amount: ₹{dto.ExpectedAmount}",
                 dto.ExpectedAmount);
 
-            // Dispatch Unlock Command to the actual PC Agent
-            await _hubNotifier.SendUnlockCommandToAgentAsync(pc.Id, (int)dto.DurationMinutes, dto.CustomerName);
+            // Dispatch Unlock Command to the actual PC Agent - with the actual price the
+            // customer is being charged (package or hourly), see the Session Pricing PRD's
+            // issue 07. The customer's own PC had never shown any price before this at all.
+            var agentPricingProfile = await _db.Set<PricingProfile>().AsNoTracking()
+                .FirstOrDefaultAsync(pp => pp.Id == pc.PricingProfileId);
+            await _hubNotifier.SendUnlockCommandToAgentAsync(
+                pc.Id, (int)dto.DurationMinutes, dto.CustomerName,
+                packagePrice: session.PackagePrice, plannedDurationMin: session.PlannedDurationMin,
+                packageName: matchingPackage?.Name, ratePerHour: agentPricingProfile?.BaseHourlyRate ?? 0m,
+                bufferMinutes: agentPricingProfile?.BufferMinutes ?? SessionPricingCalculator.DefaultBufferMinutes,
+                sessionStartUtc: session.StartTime);
 
             return new SessionDto
             {
@@ -438,11 +472,57 @@ public class SessionService : ISessionService
             // guess) is the honest fallback for legacy sessions that predate that enforcement.
             decimal ratePerHour = session.Pc?.PricingProfile?.BaseHourlyRate ?? SessionPricingCalculator.DefaultRatePerHour;
 
-            // 2. Apply the branch's buffer/grace period & bill for exact elapsed time.
-            // Applies to every session type (fixed package or open/PAYG) — a customer who
-            // ends early is only charged for time actually used, per the branch's live rate.
+            // 2. Honor a genuine prepaid package (PackagePrice, set only from a real catalog
+            // PricingPackage at Start/Extend - never from a client's own guess) within a grace
+            // window equal to the branch's own buffer, in either direction. Ending a few minutes
+            // early still pays the prepaid block in full, same as any prepaid deal; running a few
+            // minutes over still honors it too, rather than re-pricing the whole session pro-rata
+            // for landing just outside an exact minute. Only a genuine overrun - past the grace
+            // window - adds pro-rata billing for the extra minutes on top of the package price,
+            // instead of discarding the deal and rebilling everything from zero.
+            //
+            // A session with no PackagePrice (Pay-As-You-Go, or a plain duration with no matching
+            // catalog package) was never a committed price to begin with, so it always bills the
+            // honest elapsed rate - same as before this existed.
+            //
+            // The buffer's free-cancellation window comes first and wins outright, package or
+            // not: stopping inside it has always meant Rs 0 (see the "Cancelled" labelling right
+            // below), and a package must not override that free window into a full charge just
+            // because a price was committed - nobody signed up to pay for a session they ended
+            // before it ever really started.
             int bufferMinutes = session.Pc?.PricingProfile?.BufferMinutes ?? SessionPricingCalculator.DefaultBufferMinutes;
-            session.GamingAmount = SessionPricingCalculator.CalculateGamingAmount(ratePerHour, bufferMinutes, session.ActualDurationMin!.Value);
+
+            // Safety net: a session with a real planned duration (a package WAS picked at
+            // Start - GamingType and PlannedDurationMin both say so) must never fall through
+            // to plain hourly billing just because PackagePrice itself came back empty. Found
+            // live on Citylight-144Hz: two "1 hr" sessions (₹50 each per the branch's own
+            // Settings) billed ₹80 instead, because PackagePrice was null on both by the time
+            // Stop ran - Pay-As-You-Go hourly took over silently, with no sign anywhere that
+            // the committed package price had been lost. Re-deriving it fresh here, the exact
+            // same lookup Start itself uses, closes that gap regardless of how PackagePrice
+            // went missing - Stop no longer has to trust that Start's write landed.
+            var packagePrice = session.PackagePrice;
+            if (!packagePrice.HasValue && session.PlannedDurationMin is > 0 && session.Pc?.PricingProfileId is { } profileId)
+            {
+                packagePrice = await _db.Set<PricingPackage>().AsNoTracking()
+                    .Where(pkg => pkg.PricingProfileId == profileId
+                        && pkg.IsActive && pkg.DurationMinutes == session.PlannedDurationMin.Value)
+                    .OrderBy(pkg => pkg.SortOrder)
+                    .Select(pkg => (decimal?)pkg.Price)
+                    .FirstOrDefaultAsync();
+
+                // Found it - honor it exactly as if Start had captured it, so this session's
+                // own record stops disagreeing with itself the next time anything reads it.
+                if (packagePrice.HasValue) session.PackagePrice = packagePrice;
+            }
+
+            // Now the same shared call every live-amount screen uses too (see
+            // CalculateLiveGamingAmount's own comment) - this was the one place that already
+            // got the package-vs-hourly branching right; it now just calls the version of
+            // itself every other screen calls, instead of keeping its own private copy of it.
+            session.GamingAmount = SessionPricingCalculator.CalculateLiveGamingAmount(
+                packagePrice, session.PlannedDurationMin,
+                ratePerHour, bufferMinutes, session.ActualDurationMin!.Value);
 
             if (session.ActualDurationMin <= bufferMinutes)
             {
@@ -750,7 +830,14 @@ public class SessionService : ISessionService
                     ? Math.Max(0, session.PlannedDurationMin.Value - (int)elapsed)
                     : 0;   // open/pay-as-you-go session — no countdown to hand the agent
 
-                await _hubNotifier.SendUnlockCommandToAgentAsync(pc.Id, remaining, session.CustomerName ?? "Guest");
+                var resumePricingProfile = await _db.Set<PricingProfile>().AsNoTracking()
+                    .FirstOrDefaultAsync(pp => pp.Id == pc.PricingProfileId);
+                await _hubNotifier.SendUnlockCommandToAgentAsync(
+                    pc.Id, remaining, session.CustomerName ?? "Guest",
+                    packagePrice: session.PackagePrice, plannedDurationMin: session.PlannedDurationMin,
+                    ratePerHour: resumePricingProfile?.BaseHourlyRate ?? 0m,
+                    bufferMinutes: resumePricingProfile?.BufferMinutes ?? SessionPricingCalculator.DefaultBufferMinutes,
+                    sessionStartUtc: session.StartTime);
                 await _hubNotifier.BroadcastPcStatusChangeAsync(branchId, pc.Id);
                 await _hubNotifier.BroadcastSessionUpdateAsync(branchId, session.Id);
             }
@@ -793,7 +880,7 @@ public class SessionService : ISessionService
         try
         {
             var session = await _db.Sessions
-                .Include(s => s.Pc)
+                .Include(s => s.Pc).ThenInclude(p => p!.PricingProfile).ThenInclude(pp => pp!.Packages)
                 .Include(s => s.Bills)
                 .FirstOrDefaultAsync(s => s.Id == sessionId && s.BranchId == branchId);
 
@@ -804,14 +891,37 @@ public class SessionService : ISessionService
                 throw new AppException("Cannot extend inactive session.", System.Net.HttpStatusCode.BadRequest, "SESSION_NOT_ACTIVE");
 
             var now = DateTimeOffset.UtcNow;
-            
+
+            // Priced from the branch's own plans, never from whatever the operator's screen
+            // calculated and sent. An exact-duration custom package wins outright - a 4-hour
+            // extension on a PC whose 4-hour plan is Rs 180 must charge Rs 180, not Rs 200 from
+            // (4 x hourly rate) - the same "plans, not raw multiplication" rule GetPcPlans
+            // already applies to a session's own start. Only a duration with no matching
+            // package (a plain "45 more minutes") falls back to the hourly pro-rata this always
+            // used. See BuildPlansForProfile in PublicController for the same matching logic.
+            var profile = session.Pc?.PricingProfile;
+            var matchingPackage = profile?.Packages?
+                .Where(pkg => pkg.IsActive && pkg.DurationMinutes == (int)dto.AdditionalMinutes)
+                .OrderBy(pkg => pkg.SortOrder)
+                .FirstOrDefault();
+
+            var additionalAmount = matchingPackage?.Price
+                ?? (dto.AdditionalMinutes / 60m) * (profile?.BaseHourlyRate ?? 0m);
+
             session.PlannedDurationMin = (session.PlannedDurationMin ?? 0) + (int)dto.AdditionalMinutes;
             if (session.EndTime.HasValue)
             {
                 session.EndTime = session.EndTime.Value.AddMinutes((double)dto.AdditionalMinutes);
             }
-            session.GamingAmount += dto.AdditionalAmount;
-            session.TotalAmount += dto.AdditionalAmount;
+            session.GamingAmount += additionalAmount;
+            session.TotalAmount += additionalAmount;
+
+            // Every extension - matched to a real package or the hourly pro-rata fallback - is a
+            // charge already committed to the customer the moment it's added, same reasoning as
+            // the original package price at Start. Stop honors this running total within a grace
+            // window rather than forfeiting it for landing a few minutes off the combined plan.
+            session.PricingPackageId ??= matchingPackage?.Id;
+            session.PackagePrice = (session.PackagePrice ?? 0m) + additionalAmount;
             
             var newGamingType = $"{session.GamingType} + {dto.PackageName}";
             if (newGamingType.Length > 150)
@@ -826,7 +936,7 @@ public class SessionService : ISessionService
             if (bill != null)
             {
                 decimal previousGamingAmount = bill.GamingAmount;
-                decimal newRawGamingAmount = previousGamingAmount + dto.AdditionalAmount;
+                decimal newRawGamingAmount = previousGamingAmount + additionalAmount;
 
                 var (displayGaming, displayFood, roundedTotal) = SessionPricingCalculator.ComputeRoundedBreakdown(
                     newRawGamingAmount, bill.FoodAmount, bill.DiscountAmount);
@@ -866,8 +976,27 @@ public class SessionService : ISessionService
                 BranchId = branchId,
                 TargetType = "session",
                 TargetId = session.Id,
-                Details = new { dto.AdditionalMinutes, dto.AdditionalAmount, PcNumber = session.Pc?.PcNumber }
+                Details = new { dto.AdditionalMinutes, AdditionalAmount = additionalAmount, PcNumber = session.Pc?.PcNumber }
             });
+
+            // The customer's own PC never learned about an extension before this at all - no
+            // agent push existed here whatsoever, so its countdown (and, now, its price) sat
+            // frozen at whatever the session was started with until the next full unlock. This
+            // re-unlocks with the new totals; LockScreen.UnlockPc is safe to call while already
+            // unlocked (it just refreshes the remaining time and price, no visible flash).
+            if (session.Pc != null)
+            {
+                var elapsedNow = SessionTimeCalculator.ElapsedMinutes(session.StartTime, session.PausedSeconds, now);
+                var remainingNow = session.PlannedDurationMin.HasValue
+                    ? Math.Max(0, session.PlannedDurationMin.Value - (int)elapsedNow)
+                    : 0;
+                await _hubNotifier.SendUnlockCommandToAgentAsync(
+                    session.PcId, remainingNow, session.CustomerName,
+                    packagePrice: session.PackagePrice, plannedDurationMin: session.PlannedDurationMin,
+                    ratePerHour: session.Pc.PricingProfile?.BaseHourlyRate ?? 0m,
+                    bufferMinutes: session.Pc.PricingProfile?.BufferMinutes ?? SessionPricingCalculator.DefaultBufferMinutes,
+                    sessionStartUtc: session.StartTime);
+            }
 
             await _hubNotifier.BroadcastSessionUpdateAsync(branchId, session.Id);
             await _hubNotifier.BroadcastPcStatusChangeAsync(branchId, session.PcId);

@@ -17,6 +17,7 @@ public class AppDbContext : DbContext
     public DbSet<User> Users => Set<User>();
     public DbSet<Operator> Operators => Set<Operator>();
     public DbSet<PricingProfile> PricingProfiles => Set<PricingProfile>();
+    public DbSet<PricingPackage> PricingPackages => Set<PricingPackage>();
     public DbSet<Pc> Pcs => Set<Pc>();
     public DbSet<Shift> Shifts => Set<Shift>();
     public DbSet<Session> Sessions => Set<Session>();
@@ -42,7 +43,6 @@ public class AppDbContext : DbContext
     public DbSet<Discount> Discounts => Set<Discount>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<SystemConfig> SystemConfigs => Set<SystemConfig>();
-    public DbSet<EodSnapshot> EodSnapshots => Set<EodSnapshot>();
 
     // Decentralized LAN Offline Architecture sync tables
     public DbSet<OfflineSyncSession> OfflineSyncSessions => Set<OfflineSyncSession>();
@@ -96,6 +96,9 @@ public class AppDbContext : DbContext
 
         var entries = SyncCapture.Collect(ChangeTracker);
         if (entries.Count > 0) SyncOutboxEntries.AddRange(entries);
+
+        var stockDeltaEntries = SharedStockCapture.Collect(ChangeTracker);
+        if (stockDeltaEntries.Count > 0) SyncOutboxEntries.AddRange(stockDeltaEntries);
     }
 
     /// <summary>

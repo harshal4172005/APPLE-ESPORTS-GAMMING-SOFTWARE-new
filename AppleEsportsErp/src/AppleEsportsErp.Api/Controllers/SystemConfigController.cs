@@ -4,6 +4,7 @@ using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 using AppleEsportsErp.Api.Extensions;
 using AppleEsportsErp.Application.DTOs.Common;
+using AppleEsportsErp.Application.Interfaces;
 using AppleEsportsErp.Domain.Entities;
 using AppleEsportsErp.Infrastructure.Data;
 using System.Security.Claims;
@@ -16,10 +17,12 @@ namespace AppleEsportsErp.Api.Controllers;
 public class SystemConfigController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IEmailService _emailService;
 
-    public SystemConfigController(AppDbContext db)
+    public SystemConfigController(AppDbContext db, IEmailService emailService)
     {
         _db = db;
+        _emailService = emailService;
     }
 
     [HttpGet]
@@ -77,6 +80,26 @@ public class SystemConfigController : ControllerBase
             config.UpdatedAt
         }));
     }
+
+    /// <summary>
+    /// Sends a real email right now and reports what happened, instead of the silent
+    /// swallow-and-log-to-a-file that a real forgot-password or top-up email uses. This is
+    /// how an admin finds out *why* mail isn't arriving without SSH-ing in to read a log.
+    /// </summary>
+    [HttpPost("test-email")]
+    public async Task<IActionResult> TestEmail([FromBody] TestEmailDto dto)
+    {
+        var (success, message) = await _emailService.SendTestEmailAsync(dto.ToAddress);
+
+        return Ok(success
+            ? ApiResponse<object>.Ok(new { success = true, message })
+            : ApiResponse<object>.Fail(message));
+    }
+}
+
+public class TestEmailDto
+{
+    public string ToAddress { get; set; } = null!;
 }
 
 public class SaveConfigDto

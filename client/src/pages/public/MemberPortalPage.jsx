@@ -124,7 +124,7 @@ export default function MemberPortalPage() {
         headers: { Authorization: `Bearer ${memberToken}` }
       });
       if (res.data.success) {
-        toast.success('Session ended successfully. Amount deducted from wallet.');
+        toast.success('Session ended successfully. Amount deducted from Member Amount.');
         setActiveSession(null);
         // Refresh profile to get updated wallet balance
         const profRes = await api.get('/auth/me'); // Assuming there's a me endpoint, otherwise we can just reload the page or fetch profile again.

@@ -185,7 +185,7 @@ export default function PaymentEngineModal({ bill, onClose, onPaymentSuccess }) 
       return;
     }
     if (walletAmount > 0 && !walletVerified) {
-      setError('Member credentials must be verified before using wallet payment.');
+      setError('Member credentials must be verified before using Member Amount payment.');
       return;
     }
 
@@ -285,7 +285,7 @@ export default function PaymentEngineModal({ bill, onClose, onPaymentSuccess }) 
               <div className="grid grid-cols-3 gap-1.5">
                 <QuickBtn label="Full Cash" onClick={() => payAll('cash')} color="blue" />
                 <QuickBtn label="Full UPI" onClick={() => payAll('online')} color="purple" />
-                {selectedMember && <QuickBtn label="Full Wallet" onClick={() => payAll('wallet')} color="accent" />}
+                {selectedMember && <QuickBtn label="Full Member Amount" onClick={() => payAll('wallet')} color="accent" />}
               </div>
             </div>
 
@@ -381,7 +381,7 @@ export default function PaymentEngineModal({ bill, onClose, onPaymentSuccess }) 
               <div className="flex items-center justify-between mb-3">
                 <div>
                   <label className="flex items-center gap-2 text-text font-bold uppercase tracking-wider text-sm">
-                    <Wallet className="w-4 h-4 text-accent" /> Member Wallet
+                    <Wallet className="w-4 h-4 text-accent" /> Member Amount
                   </label>
                   {selectedMember && memberWallet != null && (
                     <p className="text-[10px] text-text-3 font-mono mt-0.5">
@@ -428,7 +428,7 @@ export default function PaymentEngineModal({ bill, onClose, onPaymentSuccess }) 
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <p className="text-[10px] text-text-3">Search and link a member to pay via wallet:</p>
+                  <p className="text-[10px] text-text-3">Search and link a member to pay via Member Amount:</p>
                   <div className="relative">
                     <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-text-3" />
                     <input

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using AppleEsportsErp.Api.Extensions;
 using AppleEsportsErp.Api.Filters;
 using AppleEsportsErp.Application.Constants;
@@ -17,16 +18,39 @@ namespace AppleEsportsErp.Api.Controllers;
 public class MembersController : ControllerBase
 {
     private readonly IMemberService _memberService;
+    private readonly AppleEsportsErp.Infrastructure.Data.AppDbContext _db;
+    private readonly AppleEsportsErp.Api.Services.IRemoteBranchControl _remote;
 
-    public MembersController(IMemberService memberService)
+    public MembersController(
+        IMemberService memberService,
+        AppleEsportsErp.Infrastructure.Data.AppDbContext db,
+        AppleEsportsErp.Api.Services.IRemoteBranchControl remote)
     {
         _memberService = memberService;
+        _db = db;
+        _remote = remote;
     }
 
-    private Guid GetBranchId() 
+    private Guid GetBranchId()
     {
         var val = HttpContext.Items["BranchId"]?.ToString();
         return string.IsNullOrEmpty(val) ? Guid.Empty : Guid.Parse(val);
+    }
+
+    /// <summary>Same reasoning as BillingController.SendToBranchAsync: turns a Head Office
+    /// instruction into a queued command the branch itself carries out.</summary>
+    private async Task<IActionResult> SendToBranchAsync(
+        Guid branchId, string commandType, object payload, Guid requestedByUserId, CancellationToken ct)
+    {
+        var receipt = await _remote.SendAsync(branchId, commandType, payload, requestedByUserId, ct);
+
+        return Accepted(ApiResponse<object>.Ok(new
+        {
+            queued = true,
+            commandId = receipt.CommandId,
+            branchIsReporting = receipt.BranchIsReporting,
+            message = receipt.Message,
+        }));
     }
 
     [HttpGet]
@@ -41,6 +65,13 @@ public class MembersController : ControllerBase
     {
         var result = await _memberService.GetMemberByIdAsync(id);
         return Ok(ApiResponse<MemberDto>.Ok(result));
+    }
+
+    [HttpGet("{id:guid}/history")]
+    public async Task<IActionResult> GetMemberHistory(Guid id, [FromQuery] DateOnly? fromDate, [FromQuery] DateOnly? toDate)
+    {
+        var result = await _memberService.GetMemberHistoryAsync(id, fromDate, toDate);
+        return Ok(ApiResponse<List<MemberHistoryEntryDto>>.Ok(result));
     }
 
     [HttpGet("phone/{mobileNumber}")]
@@ -91,9 +122,33 @@ public class MembersController : ControllerBase
     /// <summary>Super Admin only: directly override any wallet balance / lifetime stat on a member's profile.</summary>
     [HttpPut("{id:guid}/admin-edit")]
     [Authorize(Policy = "Dashboard:member_value_edit")]
-    public async Task<IActionResult> AdminEditValues(Guid id, [FromBody] AdminEditMemberValuesDto dto)
+    public async Task<IActionResult> AdminEditValues(Guid id, [FromBody] AdminEditMemberValuesDto dto, CancellationToken ct)
     {
         var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+        // A balance written into Head Office's own copy of this member is invisible to the
+        // gaming PC at the counter, which only ever checks the branch's own row - so this has
+        // to travel there and be applied by the branch itself, the same as a discount or a
+        // payment. See RemoteBranchControl's BranchCommands.AdminEditMemberValues.
+        if (_remote.MustTravel)
+        {
+            var homeBranchId = await _db.Set<AppleEsportsErp.Domain.Entities.Member>().AsNoTracking()
+                .Where(m => m.Id == id).Select(m => m.HomeBranchId).FirstOrDefaultAsync(ct);
+
+            if (homeBranchId is null || homeBranchId == Guid.Empty)
+                return NotFound(ApiResponse<object>.Fail(
+                    "Head Office does not know which branch this member belongs to, so this edit " +
+                    "has nowhere to be sent.", "MEMBER_HOME_BRANCH_UNKNOWN"));
+
+            return await SendToBranchAsync(homeBranchId.Value, AppleEsportsErp.Api.Services.BranchCommands.AdminEditMemberValues, new
+            {
+                memberId = id,
+                dto,
+                adminId,
+                adminName = User.FindFirstValue(ClaimTypes.Name),
+            }, adminId, ct);
+        }
+
         var result = await _memberService.AdminEditValuesAsync(GetBranchId(), adminId, id, dto);
         return Ok(ApiResponse<MemberDto>.Ok(result));
     }

@@ -1,13 +1,10 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using AppleEsportsErp.Api.Extensions;
 using AppleEsportsErp.Api.Filters;
 using AppleEsportsErp.Application.DTOs.Common;
 using AppleEsportsErp.Application.DTOs.Eod;
 using AppleEsportsErp.Application.Interfaces;
-using AppleEsportsErp.Application.Constants;
 using AppleEsportsErp.Application.Services;
-using System.Security.Claims;
 
 using Microsoft.EntityFrameworkCore;
 
@@ -51,10 +48,9 @@ public class EodController : ControllerBase
                      && b.CompletedAt <= endUtc)
             .ToListAsync();
 
-        // Bucketed by the 06:00-06:00 IST trading day, the same day boundary
-        // /eod/preview and /eod/finalize use - not the raw UTC calendar date, which
-        // puts a bill rung up at 01:30 IST on the wrong day here and the right day
-        // everywhere else.
+        // Bucketed by the midnight-to-midnight IST day, the same day boundary
+        // /eod/preview uses - not the raw UTC calendar date, which puts a bill rung
+        // up at 01:30 IST on the wrong day here and the right day everywhere else.
         var billsByBusinessDay = bills
             .Select(b => (Bill: b, BusinessDay: IndiaTime.BusinessDayOf(b.CompletedAt!.Value)))
             .ToList();
@@ -113,6 +109,15 @@ public class EodController : ControllerBase
             
             return new {
                 BillId = b.BillNumber,
+                // The bill's real, internal id - BillId above is the human-readable number
+                // (e.g. "BILL-20260917-XXXX"), which every payment-affecting action on this row
+                // needs the actual id for. Correcting a payment method sends this straight to
+                // /api/bills/{id:guid}/payment-method, whose route constraint refuses anything
+                // that is not a real GUID - so sending the display number 404'd outright, with
+                // no error the operator could act on. Confirmed live: every "Save Correction"
+                // press failed this way, for every role, since this screen has existed - not
+                // something the recent Operator-access change introduced.
+                RealBillId = b.Id,
                 Date = b.CompletedAt,
                 Operator = b.Operator != null ? b.Operator.FullName : "Unknown",
                 Customer = string.IsNullOrEmpty(b.CustomerName) ? "Walk-in" : b.CustomerName,
@@ -307,116 +312,29 @@ public class EodController : ControllerBase
     [HttpGet("preview")]
     public async Task<IActionResult> GetPreview([FromQuery] string? date)
     {
-        DateTimeOffset targetDate;
+        // A plain DateOnly, never a DateTimeOffset built from this string. The bug this
+        // replaces: DateTimeOffset.Parse("2026-09-01") has no offset in the input, so .NET
+        // silently assumes the CURRENT PROCESS's own local timezone - India Standard Time on
+        // a branch's own Windows machine, UTC in Head Office's Linux container. Converting
+        // that through .ToUniversalTime() then shifted the date itself, not just the clock
+        // time: "2026-09-01" entered on a branch became 2026-08-31T18:30Z, and every "today"
+        // downstream truncated that back down to 31 August - the report for the date typed
+        // in was silently the previous day's, and only on a branch's own machine.
+        DateOnly businessDay;
 
         if (string.IsNullOrWhiteSpace(date))
         {
-            targetDate = DateTimeOffset.UtcNow.ToUniversalTime();
+            businessDay = IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
         }
-        else if (DateTimeOffset.TryParse(date, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
+        else if (!DateOnly.TryParse(date, System.Globalization.CultureInfo.InvariantCulture,
+                     System.Globalization.DateTimeStyles.None, out businessDay))
         {
-            targetDate = parsed.ToUniversalTime();
-        }
-        else if (DateTime.TryParse(date, out var dateOnly))
-        {
-            // Handle "YYYY-MM-DD" format from React component
-            targetDate = new DateTimeOffset(dateOnly.Date, TimeSpan.Zero);
-        }
-        else
-        {
-            return BadRequest(ApiResponse<object>.Fail("Invalid date format. Use ISO 8601 format or YYYY-MM-DD."));
+            return BadRequest(ApiResponse<object>.Fail("Invalid date format. Use YYYY-MM-DD."));
         }
 
-        var result = await _eodService.GenerateEodReportAsync(GetBranchId(), targetDate);
+        var result = await _eodService.GenerateEodReportAsync(GetBranchId(), businessDay);
         return Ok(ApiResponse<EodReportDto>.Ok(result));
     }
 
-    [HttpGet("validation")]
-    public async Task<IActionResult> GetValidationStatus([FromQuery] string? date)
-    {
-        DateTimeOffset targetDate;
-
-        if (string.IsNullOrWhiteSpace(date))
-        {
-            targetDate = DateTimeOffset.UtcNow.ToUniversalTime();
-        }
-        else if (DateTimeOffset.TryParse(date, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
-        {
-            targetDate = parsed.ToUniversalTime();
-        }
-        else if (DateTime.TryParse(date, out var dateOnly))
-        {
-            // Handle "YYYY-MM-DD" format from React component
-            targetDate = new DateTimeOffset(dateOnly.Date, TimeSpan.Zero);
-        }
-        else
-        {
-            return BadRequest(ApiResponse<object>.Fail("Invalid date format. Use ISO 8601 format or YYYY-MM-DD."));
-        }
-
-        var result = await _eodService.GetValidationStatusAsync(GetBranchId(), targetDate);
-        return Ok(ApiResponse<ValidationStatusDto>.Ok(result));
-    }
-
-    [HttpPost("finalize")]
-    [Authorize(Roles = Roles.SuperAdmin)] // Strictly SuperAdmin as per SOP
-    public async Task<IActionResult> FinalizeEod([FromBody] FinalizeEodRequest request)
-    {
-        DateTimeOffset targetDate;
-
-        if (string.IsNullOrWhiteSpace(request.Date))
-        {
-            targetDate = DateTimeOffset.UtcNow.ToUniversalTime();
-        }
-        else if (DateTimeOffset.TryParse(request.Date, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
-        {
-            targetDate = parsed.ToUniversalTime();
-        }
-        else if (DateTime.TryParse(request.Date, out var dateOnly))
-        {
-            // Handle "YYYY-MM-DD" format from React component
-            targetDate = new DateTimeOffset(dateOnly.Date, TimeSpan.Zero);
-        }
-        else
-        {
-            return BadRequest(ApiResponse<object>.Fail("Invalid date format. Use ISO 8601 format or YYYY-MM-DD."));
-        }
-
-        var result = await _eodService.FinalizeEodAsync(GetBranchId(), (await this.GetOperatorIdAsync()), targetDate);
-        return Ok(ApiResponse<EodSnapshotDto>.Ok(result));
-    }
-
-    [HttpGet("history")]
-    public async Task<IActionResult> GetHistoricalEod([FromQuery] string? date)
-    {
-        if (string.IsNullOrWhiteSpace(date))
-        {
-            return BadRequest(ApiResponse<object>.Fail("Date parameter is required."));
-        }
-
-        DateTimeOffset targetDate;
-        if (DateTimeOffset.TryParse(date, null, System.Globalization.DateTimeStyles.RoundtripKind, out var parsed))
-        {
-            targetDate = parsed.ToUniversalTime();
-        }
-        else if (DateTime.TryParse(date, out var dateOnly))
-        {
-            // Handle "YYYY-MM-DD" format from React component
-            targetDate = new DateTimeOffset(dateOnly.Date, TimeSpan.Zero);
-        }
-        else
-        {
-            return BadRequest(ApiResponse<object>.Fail("Invalid date format. Use ISO 8601 format or YYYY-MM-DD."));
-        }
-
-        var result = await _eodService.GetHistoricalEodAsync(GetBranchId(), targetDate);
-        if (result == null) return NotFound(ApiResponse<EodSnapshotDto>.Fail("No finalized EOD snapshot found for the specified date."));
-        return Ok(ApiResponse<EodSnapshotDto>.Ok(result));
-    }
-}
-
-public class FinalizeEodRequest
-{
-    public string? Date { get; set; }
 }
 

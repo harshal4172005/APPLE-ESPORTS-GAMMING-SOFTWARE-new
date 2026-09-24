@@ -19,10 +19,12 @@ export const createReservation = (payload) =>
 export const cancelReservation = (id, payload) =>
   api.post(`/reservations/${id}/cancel`, payload).then(r => r.data?.data);
 
-/** POST /reservations/:id/start */
-export const startReservedSession = (id) =>
-  api.post(`/reservations/${id}/start`).then(r => r.data?.data);
+/** PUT /reservations/:id/arrived — a plain hand-set reminder flag, not a gate on anything.
+    Starting a session for this customer goes through the ordinary Start Session flow either
+    way, same as a walk-in. */
+export const setReservationArrived = (id, arrived) =>
+  api.put(`/reservations/${id}/arrived`, { arrived }).then(r => r.data?.data);
 
-/** POST /reservations/:id/override */
-export const overrideReservation = (id, payload) =>
-  api.post(`/reservations/${id}/override`, payload).then(r => r.data?.data);
+/** DELETE /reservations/:id — the "Remove" button. Permanent, no reason kept. */
+export const deleteReservation = (id) =>
+  api.delete(`/reservations/${id}`).then(r => r.data);

@@ -12,11 +12,13 @@ import {
   RefreshCw,
   Download,
   Printer,
-  Monitor
+  Monitor,
+  Trash2
 } from 'lucide-react';
 import PageHeader from '../../components/layout/PageHeader';
 import api from '../../config/api';
 import { printBill } from '../../utils/printBill';
+import { useToast } from '../../components/ui/Toast';
 import { getRangeReport, getDiscrepancies } from '../../api/food.api';
 import { getCashReconciliationReport } from '../../api/reports.api';
 import { useBranch } from '../../contexts/BranchContext';
@@ -26,6 +28,35 @@ import { createReport, addStatGrid, addTable, save, ROW_TINT_RED, ROW_TINT_GREEN
 export default function ReportsPage() {
   const { activeBranch } = useBranch();
   const { isSuperAdmin } = useAuth();
+  const toast = useToast();
+  const [deletingBillId, setDeletingBillId] = useState(null);
+
+  // Admin/Super Admin only - a real, irreversible removal from the books, for a genuine
+  // mistake in the record itself (a duplicate row, a test entry), never for correcting an
+  // amount. The server keeps a full audit trail entry of what this destroyed before it goes,
+  // so the deletion itself stays answerable even though the bill no longer does.
+  const handleDeleteBill = async (bill) => {
+    const id = bill.billId || bill.id;
+    if (!id) return;
+    if (!window.confirm(
+      `Permanently delete this bill (${bill.customer || 'Walk-in'}, ₹${(bill.totalRevenue || 0).toFixed(2)})?\n\n` +
+      'This cannot be undone from here - the record is gone for good, not just hidden.'
+    )) return;
+
+    setDeletingBillId(id);
+    try {
+      await api.delete(`/bills/${id}`);
+      setReportData(prev => ({
+        ...prev,
+        allBills: (prev.allBills || []).filter(b => (b.billId || b.id) !== id),
+      }));
+      toast.success('Bill deleted permanently.');
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Could not delete this bill.');
+    } finally {
+      setDeletingBillId(null);
+    }
+  };
 
   // Date range selectors
   const [startDate, setStartDate] = useState(
@@ -544,6 +575,7 @@ export default function ReportsPage() {
                   <th className="py-3 px-4">Note</th>
                   <th className="py-3 px-4">Operator</th>
                   <th className="py-3 px-4 text-center">Print</th>
+                  {isSuperAdmin && <th className="py-3 px-4 text-center print:hidden">Delete</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/40 font-mono">
@@ -604,9 +636,153 @@ export default function ReportsPage() {
                           <Printer className="w-4 h-4" />
                         </button>
                     </td>
+                    {isSuperAdmin && (
+                      <td className="py-3 px-4 text-center print:hidden">
+                        <button
+                          onClick={() => handleDeleteBill(bill)}
+                          disabled={deletingBillId === (bill.billId || bill.id)}
+                          className="p-1.5 bg-bg-3 hover:bg-neon-red hover:text-white transition-colors rounded-lg text-text-2 disabled:opacity-50"
+                          title="Delete permanently"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* ── Gaming Billing Logs ── */}
+      {/* Same rows as Complete Billing above, never altered - this and Food Billing Logs below
+          are two new, separate views built alongside it, not a replacement for it. Each is that
+          one revenue type in isolation with its own running total, for checking gaming and food
+          takings against each other without having to add either column up by hand. */}
+      <div className="card bg-bg-2 border border-border p-6 rounded-xl print:break-before-page">
+        <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2 mb-6">
+          <Gamepad2 className="w-4.5 h-4.5 text-accent" />
+          Gaming Billing Logs
+        </h2>
+
+        <div className="overflow-x-auto">
+          {loading ? (
+            <div className="flex justify-center items-center py-12">
+              <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : !reportData.allBills || reportData.allBills.length === 0 ? (
+            <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
+              No bills found in the selected date range.
+            </div>
+          ) : (
+            <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+              <thead>
+                <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
+                  <th className="py-3 px-4">Date</th>
+                  <th className="py-3 px-4">PC Number</th>
+                  <th className="py-3 px-4">Start Time</th>
+                  <th className="py-3 px-4">End Time</th>
+                  <th className="py-3 px-4">Customer</th>
+                  <th className="py-3 px-4 text-center">Payment</th>
+                  <th className="py-3 px-4 text-right">Gaming Amount</th>
+                  <th className="py-3 px-4">Operator</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40 font-mono">
+                {reportData.allBills.map(bill => (
+                  <tr key={bill.billId} className="hover:bg-bg-3/40 transition-colors">
+                    <td className="py-3 px-4 text-text-2">{new Date(bill.date).toLocaleDateString()}</td>
+                    <td className="py-3 px-4 text-text font-bold">{bill.pcName || '-'}</td>
+                    <td className="py-3 px-4 text-text-2">
+                      {bill.sessionStartTime ? new Date(bill.sessionStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-'}
+                    </td>
+                    <td className="py-3 px-4 text-text-2">
+                      {bill.sessionEndTime ? new Date(bill.sessionEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-'}
+                    </td>
+                    <td className="py-3 px-4 text-text-2 font-sans">{bill.customer}</td>
+                    <td className="py-3 px-4 text-center text-text-3 uppercase">{bill.paymentType}</td>
+                    <td className="py-3 px-4 text-right text-text font-bold">₹{bill.gamingRevenue.toFixed(2)}</td>
+                    <td className="py-3 px-4 text-neon-blue font-bold">{bill.operator}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-border font-bold">
+                  <td colSpan={6} className="py-3 px-4 text-right text-text-2 uppercase tracking-wider text-[10px]">
+                    Total Gaming Revenue
+                  </td>
+                  <td className="py-3 px-4 text-right text-neon-green text-sm">
+                    ₹{reportData.allBills.reduce((sum, b) => sum + (b.gamingRevenue || 0), 0).toFixed(2)}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* ── Food Billing Logs ── */}
+      <div className="card bg-bg-2 border border-border p-6 rounded-xl print:break-before-page">
+        <h2 className="font-heading font-extrabold text-sm uppercase tracking-wider text-text flex items-center gap-2 mb-6">
+          <Utensils className="w-4.5 h-4.5 text-accent" />
+          Food Billing Logs
+        </h2>
+
+        <div className="overflow-x-auto">
+          {loading ? (
+            <div className="flex justify-center items-center py-12">
+              <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : !reportData.allBills || reportData.allBills.length === 0 ? (
+            <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
+              No bills found in the selected date range.
+            </div>
+          ) : (
+            <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+              <thead>
+                <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
+                  <th className="py-3 px-4">Date</th>
+                  <th className="py-3 px-4">PC Number</th>
+                  <th className="py-3 px-4">Start Time</th>
+                  <th className="py-3 px-4">End Time</th>
+                  <th className="py-3 px-4">Customer</th>
+                  <th className="py-3 px-4 text-center">Payment</th>
+                  <th className="py-3 px-4 text-right">Food Amount</th>
+                  <th className="py-3 px-4">Operator</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/40 font-mono">
+                {reportData.allBills.map(bill => (
+                  <tr key={bill.billId} className="hover:bg-bg-3/40 transition-colors">
+                    <td className="py-3 px-4 text-text-2">{new Date(bill.date).toLocaleDateString()}</td>
+                    <td className="py-3 px-4 text-text font-bold">{bill.pcName || '-'}</td>
+                    <td className="py-3 px-4 text-text-2">
+                      {bill.sessionStartTime ? new Date(bill.sessionStartTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-'}
+                    </td>
+                    <td className="py-3 px-4 text-text-2">
+                      {bill.sessionEndTime ? new Date(bill.sessionEndTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true }) : '-'}
+                    </td>
+                    <td className="py-3 px-4 text-text-2 font-sans">{bill.customer}</td>
+                    <td className="py-3 px-4 text-center text-text-3 uppercase">{bill.paymentType}</td>
+                    <td className="py-3 px-4 text-right text-text font-bold">₹{bill.foodRevenue.toFixed(2)}</td>
+                    <td className="py-3 px-4 text-neon-blue font-bold">{bill.operator}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr className="border-t-2 border-border font-bold">
+                  <td colSpan={6} className="py-3 px-4 text-right text-text-2 uppercase tracking-wider text-[10px]">
+                    Total Food Revenue
+                  </td>
+                  <td className="py-3 px-4 text-right text-neon-green text-sm">
+                    ₹{reportData.allBills.reduce((sum, b) => sum + (b.foodRevenue || 0), 0).toFixed(2)}
+                  </td>
+                  <td></td>
+                </tr>
+              </tfoot>
             </table>
           )}
         </div>

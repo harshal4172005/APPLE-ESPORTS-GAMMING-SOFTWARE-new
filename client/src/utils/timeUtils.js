@@ -28,10 +28,11 @@ export const formatTime = (isoString) => {
 // Mirrors the backend's AppleEsportsErp.Application.Services.IndiaTime.
 export const IST_TIME_ZONE = 'Asia/Kolkata';
 
-// Hour (IST) at which one trading day ends and the next begins. Branches
-// run 10:00-02:00, so cutting at midnight would split every night across
-// two reports. Must match IndiaTime.BusinessDayStartHour on the backend.
-const BUSINESS_DAY_START_HOUR = 6;
+// Hour (IST) at which one trading day ends and the next begins. Changed to
+// plain midnight on 2026-08-23 by explicit business decision - see the
+// comment on IndiaTime.BusinessDayStartHour on the backend, which this
+// must always match.
+const BUSINESS_DAY_START_HOUR = 0;
 
 /** The current wall-clock date and hour in IST, read via the IANA zone. */
 function nowIstParts() {
@@ -55,9 +56,7 @@ export const toIstDateString = (dateInput) => {
 export const todayIst = () => nowIstParts().date;
 
 /**
- * The trading day IST is in right now, as 'yyyy-MM-dd'. Before 06:00 IST
- * this is still yesterday's date - a bill rung up at 01:30 belongs to the
- * night that began the previous morning.
+ * The trading day IST is in right now, as 'yyyy-MM-dd' - plain IST calendar date.
  */
 export const currentTradingDayIst = () => {
   const { date, hour } = nowIstParts();
@@ -73,9 +72,9 @@ export const currentTradingDayIst = () => {
 
 /**
  * The [start, end) instant window for one IST trading day, ready to send
- * to the API. 06:00 IST on `tradingDayDate` to 06:00 IST the next day -
+ * to the API. Midnight IST on `tradingDayDate` to midnight IST the next day -
  * the same window AppleEsportsErp.Application.Services.IndiaTime.BusinessDayRange
- * computes on the backend for /eod/preview and /eod/finalize.
+ * computes on the backend for /eod/preview.
  */
 export const tradingDayRangeIst = (tradingDayDate) => {
   // +05:30 is IST's fixed, DST-free offset - explicit here so the instant

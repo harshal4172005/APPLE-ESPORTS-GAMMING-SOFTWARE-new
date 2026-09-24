@@ -14,6 +14,12 @@ public class InventoryLog
     public string? Reason { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
+    /// <summary>Set only when this row was written by applying a shared-stock relay from a
+    /// sibling branch (see BranchHeartbeatService.RunRelaySharedStockDeltaAsync). Unique when
+    /// not null — lets a redelivered relay instruction be recognised and skipped instead of
+    /// double-applying the same stock movement.</summary>
+    public Guid? SourceRelayEventId { get; set; }
+
     // Navigation
     public InventoryItem InventoryItem { get; set; } = null!;
     public Branch Branch { get; set; } = null!;

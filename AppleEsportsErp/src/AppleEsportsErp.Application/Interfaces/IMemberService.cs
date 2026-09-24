@@ -12,5 +12,13 @@ public interface IMemberService
     Task<MemberDto> UpdateMemberAsync(Guid branchId, Guid operatorId, Guid id, UpdateMemberDto dto);
     Task DeleteMemberAsync(Guid branchId, Guid operatorId, Guid id);
     Task<MemberLoginResponseDto> LoginMemberAsync(MemberLoginDto dto);
-    Task<MemberDto> AdminEditValuesAsync(Guid branchId, Guid adminId, Guid id, AdminEditMemberValuesDto dto);
+    /// <summary>See MemberService.AdminEditValuesAsync: <paramref name="remoteAdminName"/> is
+    /// set only when applying this on behalf of a Head Office admin acting remotely.</summary>
+    Task<MemberDto> AdminEditValuesAsync(Guid branchId, Guid adminId, Guid id, AdminEditMemberValuesDto dto, string? remoteAdminName = null);
+
+    /// <summary>Everything that happened for one member - gaming sessions and wallet
+    /// top-ups/deductions together, across every branch they've ever played at (a member's
+    /// wallet is not branch-locked, so neither is this). Optional date range; open-ended
+    /// when either end is omitted.</summary>
+    Task<List<MemberHistoryEntryDto>> GetMemberHistoryAsync(Guid memberId, DateOnly? fromDate, DateOnly? toDate);
 }

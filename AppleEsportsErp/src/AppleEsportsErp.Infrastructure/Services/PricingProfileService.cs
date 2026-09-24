@@ -21,24 +21,44 @@ public class PricingProfileService : IPricingProfileService
     public async Task<IEnumerable<PricingProfileDto>> GetAllByBranchAsync(Guid branchId)
     {
         var profiles = await _db.PricingProfiles
+            .Include(p => p.Packages)
             .Where(p => p.BranchId == branchId && p.IsActive)
             .OrderBy(p => p.BaseHourlyRate)
             .ToListAsync();
 
-        return profiles.Select(p => new PricingProfileDto
-        {
-            Id = p.Id,
-            Name = p.Name,
-            BaseHourlyRate = p.BaseHourlyRate,
-            BufferMinutes = p.BufferMinutes,
-            BranchId = p.BranchId,
-            IsActive = p.IsActive,
-            CreatedAt = p.CreatedAt,
-            UpdatedAt = p.UpdatedAt,
-            RefreshRate = p.RefreshRate,
-            SystemSpecs = p.SystemSpecs
-        });
+        return profiles.Select(MapToDto);
     }
+
+    private static PricingProfileDto MapToDto(PricingProfile p) => new()
+    {
+        Id = p.Id,
+        Name = p.Name,
+        BaseHourlyRate = p.BaseHourlyRate,
+        BufferMinutes = p.BufferMinutes,
+        BranchId = p.BranchId,
+        IsActive = p.IsActive,
+        CreatedAt = p.CreatedAt,
+        UpdatedAt = p.UpdatedAt,
+        RefreshRate = p.RefreshRate,
+        SystemSpecs = p.SystemSpecs,
+        Packages = p.Packages
+            .Where(pkg => pkg.IsActive)
+            .OrderBy(pkg => pkg.SortOrder)
+            .ThenBy(pkg => pkg.DurationMinutes)
+            .Select(MapPackageToDto)
+            .ToList()
+    };
+
+    private static PricingPackageDto MapPackageToDto(PricingPackage pkg) => new()
+    {
+        Id = pkg.Id,
+        PricingProfileId = pkg.PricingProfileId,
+        Name = pkg.Name,
+        DurationMinutes = pkg.DurationMinutes,
+        Price = pkg.Price,
+        SortOrder = pkg.SortOrder,
+        IsActive = pkg.IsActive
+    };
 
     public async Task<PricingProfileDto> CreateAsync(CreatePricingProfileDto dto)
     {
@@ -60,19 +80,7 @@ public class PricingProfileService : IPricingProfileService
         await _db.SaveChangesAsync();
         await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);
 
-        return new PricingProfileDto
-        {
-            Id = profile.Id,
-            Name = profile.Name,
-            BaseHourlyRate = profile.BaseHourlyRate,
-            BufferMinutes = profile.BufferMinutes,
-            BranchId = profile.BranchId,
-            IsActive = profile.IsActive,
-            CreatedAt = profile.CreatedAt,
-            UpdatedAt = profile.UpdatedAt,
-            RefreshRate = profile.RefreshRate,
-            SystemSpecs = profile.SystemSpecs
-        };
+        return MapToDto(profile);
     }
 
     public async Task<PricingProfileDto> UpdateAsync(Guid id, UpdatePricingProfileDto dto)
@@ -91,19 +99,7 @@ public class PricingProfileService : IPricingProfileService
         await _db.SaveChangesAsync();
         await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);
 
-        return new PricingProfileDto
-        {
-            Id = profile.Id,
-            Name = profile.Name,
-            BaseHourlyRate = profile.BaseHourlyRate,
-            BufferMinutes = profile.BufferMinutes,
-            BranchId = profile.BranchId,
-            IsActive = profile.IsActive,
-            CreatedAt = profile.CreatedAt,
-            UpdatedAt = profile.UpdatedAt,
-            RefreshRate = profile.RefreshRate,
-            SystemSpecs = profile.SystemSpecs
-        };
+        return MapToDto(profile);
     }
 
     public async Task DeleteAsync(Guid id)
@@ -114,6 +110,66 @@ public class PricingProfileService : IPricingProfileService
         // Soft delete so historical session data isn't affected
         profile.IsActive = false;
         profile.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _db.SaveChangesAsync();
+        await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);
+    }
+
+    public async Task<PricingPackageDto> CreatePackageAsync(CreatePricingPackageDto dto)
+    {
+        var profile = await _db.PricingProfiles.FindAsync(dto.PricingProfileId)
+            ?? throw new NotFoundException("Pricing profile not found.");
+
+        var package = new PricingPackage
+        {
+            Id = Guid.NewGuid(),
+            PricingProfileId = dto.PricingProfileId,
+            Name = dto.Name,
+            DurationMinutes = dto.DurationMinutes,
+            Price = dto.Price,
+            SortOrder = dto.SortOrder,
+            IsActive = true,
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+
+        _db.PricingPackages.Add(package);
+        await _db.SaveChangesAsync();
+        await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);
+
+        return MapPackageToDto(package);
+    }
+
+    public async Task<PricingPackageDto> UpdatePackageAsync(Guid id, UpdatePricingPackageDto dto)
+    {
+        var package = await _db.PricingPackages.FindAsync(id)
+            ?? throw new NotFoundException("Pricing package not found.");
+        var profile = await _db.PricingProfiles.FindAsync(package.PricingProfileId)
+            ?? throw new NotFoundException("Pricing profile not found.");
+
+        package.Name = dto.Name;
+        package.DurationMinutes = dto.DurationMinutes;
+        package.Price = dto.Price;
+        package.SortOrder = dto.SortOrder;
+        package.IsActive = dto.IsActive;
+        package.UpdatedAt = DateTimeOffset.UtcNow;
+
+        await _db.SaveChangesAsync();
+        await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);
+
+        return MapPackageToDto(package);
+    }
+
+    public async Task DeletePackageAsync(Guid id)
+    {
+        var package = await _db.PricingPackages.FindAsync(id)
+            ?? throw new NotFoundException("Pricing package not found.");
+        var profile = await _db.PricingProfiles.FindAsync(package.PricingProfileId)
+            ?? throw new NotFoundException("Pricing profile not found.");
+
+        // Soft delete, same as profiles - keeps historical bills referencing it intact
+        package.IsActive = false;
+        package.UpdatedAt = DateTimeOffset.UtcNow;
 
         await _db.SaveChangesAsync();
         await _hubNotifier.BroadcastPricingProfileUpdateAsync(profile.BranchId);

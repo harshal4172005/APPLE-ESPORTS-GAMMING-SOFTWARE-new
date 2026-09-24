@@ -7,6 +7,8 @@ using AppleEsportsErp.Infrastructure.Data;
 using AppleEsportsErp.Domain.Entities;
 using AppleEsportsErp.Domain.Enums;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Application.Services;
+using AppleEsportsErp.Api.Services;
 
 namespace AppleEsportsErp.Api.Controllers;
 
@@ -19,12 +21,15 @@ public class SyncInboxController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IEmailService _email;
+    private readonly IRemoteBranchControl _remote;
     private readonly ILogger<SyncInboxController> _logger;
 
-    public SyncInboxController(AppDbContext db, IEmailService email, ILogger<SyncInboxController> logger)
+    public SyncInboxController(
+        AppDbContext db, IEmailService email, IRemoteBranchControl remote, ILogger<SyncInboxController> logger)
     {
         _db = db;
         _email = email;
+        _remote = remote;
         _logger = logger;
     }
 
@@ -174,6 +179,135 @@ public class SyncInboxController : ControllerBase
     }
 
     /// <summary>
+    /// The other half of "make sure both sides are the same": everything above this line only
+    /// ever asks "did a delivery attempt happen for this row". It says nothing about whether a
+    /// row that was already delivered and applied still agrees with what the branch holds right
+    /// now - a later correction to an already-closed register, or any future code path that
+    /// changes a watched row without going through whatever SyncCapture is hooked into, would
+    /// leave this side holding a stale copy forever with nothing anywhere flagging it.
+    ///
+    /// A branch periodically fingerprints every row it has recently cared about and sends the
+    /// fingerprints here (see SyncManifestReconcilerService). This compares each one against
+    /// Head Office's own copy of the same row and hands back exactly the rows that disagree -
+    /// missing entirely, or present but different - so the branch can resend just those, in
+    /// full, without either side ever transmitting rows that already match.
+    /// </summary>
+    [HttpPost("reconcile")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ReconcileManifest([FromBody] ReconcileManifestDto dto)
+    {
+        if (dto?.Entries == null || dto.Entries.Count == 0)
+            return Ok(ApiResponse<ReconcileResultDto>.Ok(new ReconcileResultDto()));
+
+        var mismatched = new List<ReconcileMismatchDto>();
+
+        foreach (var entry in dto.Entries)
+        {
+            var type = SyncCapture.TypeForAggregate(entry.AggregateType ?? "");
+            if (type is null) continue;
+
+            var current = await _db.FindAsync(type, entry.AggregateId);
+            if (current is null)
+            {
+                mismatched.Add(new ReconcileMismatchDto
+                {
+                    AggregateType = entry.AggregateType!,
+                    AggregateId = entry.AggregateId,
+                    Reason = "missing",
+                });
+                continue;
+            }
+
+            var ourChecksum = SyncCapture.ComputeChecksum(_db.Entry(current));
+            if (!string.Equals(ourChecksum, entry.Checksum, StringComparison.OrdinalIgnoreCase))
+            {
+                mismatched.Add(new ReconcileMismatchDto
+                {
+                    AggregateType = entry.AggregateType!,
+                    AggregateId = entry.AggregateId,
+                    Reason = "different",
+                });
+            }
+        }
+
+        if (mismatched.Count > 0)
+        {
+            _logger.LogWarning(
+                "Reconciliation with branch {BranchId}: checked {Checked}, {Count} row(s) disagree: {Rows}",
+                dto.BranchId, dto.Entries.Count, mismatched.Count,
+                string.Join(", ", mismatched.Select(m => $"{m.AggregateType}:{m.AggregateId} ({m.Reason})")));
+        }
+        else
+        {
+            _logger.LogInformation(
+                "Reconciliation with branch {BranchId}: checked {Checked} row(s), all agree.",
+                dto.BranchId, dto.Entries.Count);
+        }
+
+        return Ok(ApiResponse<ReconcileResultDto>.Ok(new ReconcileResultDto { Mismatched = mismatched }));
+    }
+
+    /// <summary>
+    /// The row-level checks above answer "does the data agree". This answers the question one
+    /// layer up: "would the two screens actually show the same thing" - the exact headline
+    /// numbers a branch's own dashboard displays (PC states, who is on duty, today's EOD
+    /// totals), computed here from Head Office's own mirrored copy of this branch's data using
+    /// the same EOD service the branch itself calls.
+    ///
+    /// A branch compares this against its own local answer to the same question. If the two
+    /// disagree even though ReconcileManifest finds no row-level mismatch, the underlying data
+    /// genuinely agrees and something in how one side is computing or displaying it does not -
+    /// a real bug to go looking for, not something more syncing will fix. If ReconcileManifest
+    /// also found a mismatch, this is just that fix still working its way through.
+    /// </summary>
+    [HttpGet("parity-snapshot")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ParitySnapshot([FromQuery] Guid branchId, [FromServices] IEodService eodService)
+    {
+        var snapshot = await BuildParitySnapshotAsync(_db, eodService, branchId);
+        return Ok(ApiResponse<ParitySnapshotDto>.Ok(snapshot));
+    }
+
+    /// <summary>
+    /// Shared by <see cref="ParitySnapshot"/> so this is never a second, subtly different
+    /// formula from whichever one actually ends up wrong - a branch calls the equivalent local
+    /// version of this exact method, not a hand-rolled comparison shaped for this endpoint alone.
+    /// </summary>
+    public static async Task<ParitySnapshotDto> BuildParitySnapshotAsync(
+        AppDbContext db, IEodService eodService, Guid branchId)
+    {
+        var pcCounts = await db.Pcs.AsNoTracking()
+            .Where(p => p.BranchId == branchId && !p.IsDeleted && p.State != PcState.AwaitingSetup)
+            .GroupBy(p => p.State)
+            .Select(g => new { State = g.Key, Count = g.Count() })
+            .ToListAsync();
+
+        int CountOf(PcState s) => pcCounts.FirstOrDefault(x => x.State == s)?.Count ?? 0;
+
+        var operatorsOnDuty = await db.Shifts.AsNoTracking()
+            .CountAsync(s => s.BranchId == branchId && s.Status == ShiftStatus.Active);
+
+        var today = IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
+        var eod = await eodService.GenerateEodReportAsync(branchId, today);
+
+        return new ParitySnapshotDto
+        {
+            TotalPcs = pcCounts.Sum(x => x.Count),
+            PcsActive = CountOf(PcState.Active),
+            PcsAwaitingBilling = CountOf(PcState.AwaitingBilling),
+            PcsIdle = CountOf(PcState.Idle),
+            PcsMaintenance = CountOf(PcState.UnderMaintenance),
+            OperatorsOnDuty = operatorsOnDuty,
+            EodNetRevenue = eod.Revenue.NetRevenue,
+            EodGamingRevenue = eod.Revenue.TotalGamingRevenue,
+            EodFoodRevenue = eod.Revenue.TotalFoodRevenue,
+            EodCashTotal = eod.PaymentMethods.TotalCash,
+            EodOnlineTotal = eod.PaymentMethods.TotalOnline,
+            ExpectedDrawerCash = eod.Cash.ExpectedCashInDrawer,
+        };
+    }
+
+    /// <summary>
     /// Re-attempts every currently unapplied entry, from any branch, regardless of when it
     /// arrived.
     ///
@@ -186,7 +320,14 @@ public class SyncInboxController : ControllerBase
     /// </summary>
     public async Task<int> RetryUnappliedEntriesAsync(CancellationToken ct)
     {
-        var pending = await _db.SyncInboxEntries.Where(e => !e.Applied).ToListAsync(ct);
+        // Applied=true only ever gets set alongside ApplyError=null (see the two success paths
+        // above) — so a row holding both is a state current code cannot produce and never a
+        // false alarm to retry again. It is how one specific entry got stuck for good in the
+        // past: it was inconsistently left Applied=true with a real ApplyError already recorded,
+        // which is invisible to a query that only looks for Applied=false. Catching that shape
+        // here as well means a stale row like that heals itself the moment this sweep next
+        // finds its missing dependency, instead of staying stuck forever.
+        var pending = await _db.SyncInboxEntries.Where(e => !e.Applied || e.ApplyError != null).ToListAsync(ct);
         var appliedCount = 0;
 
         foreach (var entry in pending.OrderBy(e => SyncApplyPriority(e.EventType)).ThenBy(e => e.OccurredAt))
@@ -228,9 +369,17 @@ public class SyncInboxController : ControllerBase
         "member.created" => 0,
         "shift.changed" => 0,
 
+        // Leads for the same reason member.created does: nearly everything else in this
+        // switch - sessions, payments, cash transactions - refuses to apply at all until the
+        // operator it names already exists here. See SyncCapture.Watched's own note on why
+        // this event exists.
+        "operator.changed" => 0,
+
         // Behind member.created, ahead of everything money-shaped: it needs its member to exist
         // and nothing else needs it, so it neither blocks a batch nor gets blocked by one.
         "member.reset_requested" => 1,
+        "member.updated" => 1,
+        "member.balance_adjusted" => 1,
 
         "bill.changed" => 1,
         "reservation.changed" => 1,
@@ -252,7 +401,8 @@ public class SyncInboxController : ControllerBase
 
         "food_order.status_changed" => 4,
 
-        _ => 5,   // inventory_item.changed, audit_log.changed, email.send_requested - independent
+        _ => 5,   // inventory_item.changed, inventory_stock_delta.changed, audit_log.changed,
+                  // email.send_requested - independent of everything else
     };
 
     /// <summary>
@@ -276,6 +426,33 @@ public class SyncInboxController : ControllerBase
 
             case "member.reset_requested":
                 await ApplyMemberResetTokenAsync(held, root);
+                break;
+
+            // A member's profile edited at the branch after they were first created - most
+            // commonly adding/correcting their email on a walk-in registration that started
+            // with none. See MemberService.UpdateMemberAsync's own comment for the exact bug
+            // this closes: Head Office's copy silently going stale forever.
+            case "member.updated":
+                await ApplyMemberUpdateAsync(held, root);
+                break;
+
+            // A member's wallet balance or lifetime stat changed at the branch - via
+            // MemberService.AdminEditValuesAsync, whether that edit was made locally by a
+            // branch admin or relayed here from a Head Office Super Admin. Neither path ever
+            // told Head Office's own copy of this member before, so its dashboard kept showing
+            // the balance from before the edit until something unrelated happened to resync it.
+            case "member.balance_adjusted":
+                await ApplyMemberBalanceAdjustAsync(held, root);
+                break;
+
+            // An operator created or edited at a branch's own counter - see SyncCapture.
+            // Watched's note on why this exists. PasswordHash/AccessPin travel through
+            // UpsertRowAsync the same as every other column here, which is no more exposure
+            // than the existing downward direction already has: Head Office hands the same
+            // two fields to every OTHER branch already, in the config reply every heartbeat
+            // can receive.
+            case "operator.changed":
+                await UpsertRowAsync<Operator>(held, root);
                 break;
 
             case "session.started":
@@ -358,6 +535,13 @@ public class SyncInboxController : ControllerBase
                 await UpsertRowAsync<InventoryItem>(held, root);
                 break;
 
+            // A shop's shared stock moving by some amount - see SharedStockCapture for why
+            // this travels as a delta rather than a fresh total, and RelaySharedStockDeltaAsync
+            // below for what Head Office does with it.
+            case "inventory_stock_delta.changed":
+                await RelaySharedStockDeltaAsync(held, root);
+                break;
+
             // Food orders never travelled up at all before this. A walk-in order's money
             // happened to arrive because its Bill is separately watched, but a session-linked
             // order updated nothing synced until the food was marked delivered - and even then
@@ -413,6 +597,50 @@ public class SyncInboxController : ControllerBase
     /// not arrived yet is kept, minus the reference, instead of being rejected outright and
     /// taking the day's takings with it.
     /// </summary>
+    /// <summary>
+    /// A shop's food/snacks stock moving by some amount, told to every other branch sharing the
+    /// same food group so their own count moves by the same amount too.
+    ///
+    /// A branch not in any food group (<see cref="Branch.FoodGroupId"/> null) is untouched by
+    /// this entirely - there is nobody to tell, so this simply returns. For a grouped branch,
+    /// the selling branch has already applied this same change to its own local copy, offline,
+    /// the instant it happened; this is purely about telling its siblings, via the same
+    /// queued-instruction channel already used for a remote payment or discount.
+    /// </summary>
+    private async Task RelaySharedStockDeltaAsync(SyncInboxEntry held, JsonElement root)
+    {
+        var inventoryItemId = ReadGuid(root, "inventoryItemId") ?? held.AggregateId;
+        var delta = ReadInt(root, "delta") ?? 0;
+        if (delta == 0) return;
+
+        var foodGroupId = await _db.Branches.AsNoTracking()
+            .Where(b => b.Id == held.BranchId)
+            .Select(b => b.FoodGroupId)
+            .FirstOrDefaultAsync();
+
+        if (foodGroupId is null) return;
+
+        var siblingIds = await _db.Branches.AsNoTracking()
+            .Where(b => b.FoodGroupId == foodGroupId && b.Id != held.BranchId)
+            .Select(b => b.Id)
+            .ToListAsync();
+
+        foreach (var siblingId in siblingIds)
+        {
+            // The relay's own stable id, not a fresh one, even on a retry of this same entry -
+            // see InventoryLog.SourceRelayEventId. Without it, a retry that got partway through
+            // fanning out to several siblings before failing would queue a second command for
+            // each on the next attempt, and a sibling with no way to recognise the duplicate
+            // would apply the same movement twice.
+            await _remote.SendAsync(siblingId, BranchCommands.RelaySharedStockDelta, new
+            {
+                inventoryItemId,
+                delta,
+                relayEventId = held.Id,
+            }, Guid.Empty, CancellationToken.None);
+        }
+    }
+
     private async Task UpsertRowAsync<TEntity>(
         SyncInboxEntry held, JsonElement root, IReadOnlySet<string>? excludeFields = null)
         where TEntity : class, new()
@@ -455,7 +683,16 @@ public class SyncInboxController : ControllerBase
 
             // The primary key is set from the branch's id when creating, and never touched
             // afterwards - an update must not be able to move a row to a different id.
-            if (property.Metadata.IsPrimaryKey() && existing is not null) continue;
+            //
+            // BranchId follows the same rule, for a reason that only started mattering once
+            // two different branches could legitimately send a row sharing the same id (see
+            // BranchHeartbeatService.ApplyOneMenuItemAsync, which deliberately reuses a shared
+            // item's Guid across a food group's branches). Without this, whichever branch's
+            // echo of that shared item happened to sync up last would silently flip who
+            // Head Office thinks owns the row - and a generic upsert has no way to tell "this
+            // branch legitimately owns it" apart from "this branch's echo just landed last".
+            // Owning branch is decided once, at creation, exactly like the id itself.
+            if ((property.Metadata.IsPrimaryKey() || name == "BranchId") && existing is not null) continue;
 
             var clr = Nullable.GetUnderlyingType(property.Metadata.ClrType) ?? property.Metadata.ClrType;
 
@@ -612,9 +849,17 @@ public class SyncInboxController : ControllerBase
         if (string.IsNullOrWhiteSpace(fullName))
             throw new InvalidOperationException($"Member {memberId} arrived with no name.");
 
-        // Not branch-scoped, and correctly so: a member joins at one shop and plays at any of
-        // them, which is the whole reason their wallet has to live at Head Office rather than
-        // on one till.
+        // Gameplay itself is deliberately not branch-scoped - a member joins at one shop and
+        // plays at any of them, which is the whole reason their wallet lives at Head Office
+        // rather than on one till. HomeBranchId below does not change that; nothing gates play
+        // on it. It exists for a single, narrower purpose - CompletePasswordResetAsync and
+        // WalletService's setup-token flow both need to know which branch's own copy of this
+        // member actually gets checked at login, so they know where to send a changed password.
+        // Leaving it null (as this used to) answers that question with "nowhere": Head Office
+        // would validate a reset link, update its own copy, tell the customer "success" - and
+        // never queue anything for any branch to receive, leaving the login every gaming PC
+        // actually checks untouched. held.BranchId is exactly that answer, already sitting on
+        // the envelope this event arrived in.
         _db.Members.Add(new Member
         {
             Id = memberId,
@@ -624,9 +869,60 @@ public class SyncInboxController : ControllerBase
             Email = ReadString(root, "email"),
             Username = ReadString(root, "username"),
             Status = MemberStatus.Active,
+            HomeBranchId = held.BranchId,
             CreatedAt = ReadDate(root, "createdAt") ?? held.OccurredAt,
             UpdatedAt = held.ReceivedAt,
         });
+    }
+
+    /// <summary>
+    /// Patches an existing Head Office member row with a branch-side profile edit - most
+    /// commonly the email being added or corrected after a walk-in registration. Throws if the
+    /// member isn't here yet rather than upserting a partial row: member.created carries the
+    /// full profile and is a tier below this one, so it should already have arrived; if it
+    /// genuinely hasn't, this entry is retried once it has, same as ApplyMemberResetTokenAsync's
+    /// own reasoning for member.reset_requested.
+    /// </summary>
+    private async Task ApplyMemberUpdateAsync(SyncInboxEntry held, JsonElement root)
+    {
+        var memberId = held.AggregateId;
+        var member = await _db.Members.FirstOrDefaultAsync(m => m.Id == memberId)
+            ?? throw new InvalidOperationException(
+                $"Head Office has no member {memberId}. The member.created event should arrive first.");
+
+        member.FullName = ReadString(root, "fullName") ?? member.FullName;
+        member.MobileNumber = ReadString(root, "mobileNumber") ?? member.MobileNumber;
+        member.Email = ReadString(root, "email");
+        member.Username = ReadString(root, "username");
+        member.UpdatedAt = ReadDate(root, "updatedAt") ?? held.ReceivedAt;
+    }
+
+    /// <summary>
+    /// Patches Head Office's copy of a member's wallet balance and lifetime stats after
+    /// MemberService.AdminEditValuesAsync changed them at the branch - see that method's own
+    /// comment. Every field here is the branch's authoritative, post-edit value, not a delta,
+    /// so this always lands correctly regardless of what Head Office's stale copy previously
+    /// held. Throws (not upserts) if the member isn't here yet, same reasoning as
+    /// ApplyMemberUpdateAsync just above: member.created is a lower tier and should already
+    /// have landed.
+    /// </summary>
+    private async Task ApplyMemberBalanceAdjustAsync(SyncInboxEntry held, JsonElement root)
+    {
+        var memberId = held.AggregateId;
+        var member = await _db.Members.FirstOrDefaultAsync(m => m.Id == memberId)
+            ?? throw new InvalidOperationException(
+                $"Head Office has no member {memberId}. The member.created event should arrive first.");
+
+        member.GamingBalance = ReadDecimal(root, "gamingBalance") ?? member.GamingBalance;
+        member.FoodBalance = ReadDecimal(root, "foodBalance") ?? member.FoodBalance;
+        member.TotalGamingTopUps = ReadDecimal(root, "totalGamingTopUps") ?? member.TotalGamingTopUps;
+        member.TotalGamingBonusEarned = ReadDecimal(root, "totalGamingBonusEarned") ?? member.TotalGamingBonusEarned;
+        member.TotalGamingSpend = ReadDecimal(root, "totalGamingSpend") ?? member.TotalGamingSpend;
+        member.TotalFoodSpend = ReadDecimal(root, "totalFoodSpend") ?? member.TotalFoodSpend;
+        member.GamingPoints = ReadInt(root, "gamingPoints") ?? member.GamingPoints;
+        member.FoodPoints = ReadInt(root, "foodPoints") ?? member.FoodPoints;
+        member.TotalPoints = ReadInt(root, "totalPoints") ?? member.TotalPoints;
+        member.UpdatedAt = ReadDate(root, "updatedAt") ?? held.ReceivedAt;
     }
 
     /// <summary>
@@ -845,6 +1141,7 @@ public class SyncInboxController : ControllerBase
                 $"Head Office has no member {memberId}. The member.created event should arrive first.");
 
         var cash = ReadDecimal(root, "cashAmount") ?? 0m;
+        var online = ReadDecimal(root, "onlineAmount") ?? 0m;
         var bonus = ReadDecimal(root, "bonusAmount") ?? 0m;
         var credited = ReadDecimal(root, "totalCredit") ?? (cash + bonus);
         var gamingAfter = ReadDecimal(root, "gamingBalanceAfter") ?? 0m;
@@ -865,6 +1162,7 @@ public class SyncInboxController : ControllerBase
             BalanceAfter = gamingAfter,
             PaymentType = ReadString(root, "paymentType"),
             CashAmount = cash,
+            OnlineAmount = online,
             BonusAmount = bonus,
             CreatedAt = occurredAt,
         });
@@ -1178,4 +1476,45 @@ public class SyncEntryDto
     public string? EventType { get; set; }
     public object? EventData { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+}
+
+public class ReconcileManifestDto
+{
+    public Guid BranchId { get; set; }
+    public List<ReconcileManifestEntryDto> Entries { get; set; } = new();
+}
+
+public class ReconcileManifestEntryDto
+{
+    public string? AggregateType { get; set; }
+    public Guid AggregateId { get; set; }
+    public string? Checksum { get; set; }
+}
+
+public class ReconcileResultDto
+{
+    public List<ReconcileMismatchDto> Mismatched { get; set; } = new();
+}
+
+public class ReconcileMismatchDto
+{
+    public string AggregateType { get; set; } = "";
+    public Guid AggregateId { get; set; }
+    public string Reason { get; set; } = "";
+}
+
+public class ParitySnapshotDto
+{
+    public int TotalPcs { get; set; }
+    public int PcsActive { get; set; }
+    public int PcsAwaitingBilling { get; set; }
+    public int PcsIdle { get; set; }
+    public int PcsMaintenance { get; set; }
+    public int OperatorsOnDuty { get; set; }
+    public decimal EodNetRevenue { get; set; }
+    public decimal EodGamingRevenue { get; set; }
+    public decimal EodFoodRevenue { get; set; }
+    public decimal EodCashTotal { get; set; }
+    public decimal EodOnlineTotal { get; set; }
+    public decimal ExpectedDrawerCash { get; set; }
 }

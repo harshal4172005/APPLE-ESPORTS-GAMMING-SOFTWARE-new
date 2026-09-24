@@ -6,6 +6,17 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
+    <!-- Without these the agent reports 1.0.0.0 whatever build it came from. That was harmless
+         while nothing read it; it stopped being harmless once DualConnectionService started
+         sending this version on every heartbeat and BranchVersionReporterService started
+         counting how many of a branch's PCs are on it - a fleet that all claims 1.0.0.0 would
+         make "N of M gaming PCs up to date" a guess again. This had drifted to 3.0.0 across
+         several releases where the other three version files (Api.csproj, Desktop.csproj,
+         AppleEsportsBranch.iss) were correctly bumped and this one was not - a fourth file to
+         remember, kept in step by hand same as the rest. -->
+    <Version>3.1.22</Version>
+    <FileVersion>3.1.22.0</FileVersion>
+    <AssemblyVersion>3.1.22.0</AssemblyVersion>
     <AssemblyName>AppleEsportsAgent</AssemblyName>
     <RootNamespace>AppleEsportsErp.ClientAgent</RootNamespace>
     <ApplicationIcon>Assets\logo.ico</ApplicationIcon>

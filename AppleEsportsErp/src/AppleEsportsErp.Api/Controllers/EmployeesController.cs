@@ -62,6 +62,18 @@ public class EmployeesController : ControllerBase
         var result = await _employeeService.UpdateStatusAsync(id, dto.Status);
         return Ok(ApiResponse<EmployeeDto>.Ok(result));
     }
+
+    /// <summary>
+    /// DELETE /api/employees/{id} — removes the HR record. If its own joining form created an
+    /// operator account, that account is suspended in the same action, so removing a record
+    /// here can never leave a login working for someone the branch believes has left.
+    /// </summary>
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        var (operatorSuspended, operatorName) = await _employeeService.DeleteEmployeeAsync(id);
+        return Ok(ApiResponse<object>.Ok(new { deleted = true, operatorSuspended, operatorName }));
+    }
 }
 
 public class UpdateEmployeeStatusDto

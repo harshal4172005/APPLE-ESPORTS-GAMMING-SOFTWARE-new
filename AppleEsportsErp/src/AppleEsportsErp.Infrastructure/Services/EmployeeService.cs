@@ -24,7 +24,8 @@ public class EmployeeService : IEmployeeService
         var query = _db.Employees
             .Include(e => e.Branch)
             .Include(e => e.SubmittedByOperator)
-            .Where(e => e.BranchId == branchId);
+            .Include(e => e.Operator)
+            .Where(e => e.BranchId == branchId && !e.IsDeleted);
 
         if (!string.IsNullOrWhiteSpace(search))
             query = query.Where(e => e.FullName.ToLower().Contains(search.ToLower()) ||
@@ -47,7 +48,8 @@ public class EmployeeService : IEmployeeService
         var emp = await _db.Employees
             .Include(e => e.Branch)
             .Include(e => e.SubmittedByOperator)
-            .FirstOrDefaultAsync(e => e.Id == id)
+            .Include(e => e.Operator)
+            .FirstOrDefaultAsync(e => e.Id == id && !e.IsDeleted)
             ?? throw new NotFoundException("Employee not found");
         return MapToDto(emp);
     }
@@ -148,6 +150,11 @@ public class EmployeeService : IEmployeeService
             };
 
             _db.Operators.Add(op);
+
+            // Set here, not read back after SaveChanges — this is what lets DeleteEmployeeAsync
+            // later find the right account to suspend without guessing from a name or phone
+            // number that might not even be unique.
+            employee.OperatorId = op.Id;
         }
 
         await _db.SaveChangesAsync();
@@ -163,6 +170,37 @@ public class EmployeeService : IEmployeeService
         emp.UpdatedAt = DateTimeOffset.UtcNow;
         await _db.SaveChangesAsync();
         return await GetEmployeeByIdAsync(id);
+    }
+
+    public async Task<(bool OperatorSuspended, string? OperatorName)> DeleteEmployeeAsync(Guid id)
+    {
+        var emp = await _db.Employees.FindAsync(id)
+            ?? throw new NotFoundException("Employee not found");
+
+        emp.IsDeleted = true;
+        emp.UpdatedAt = DateTimeOffset.UtcNow;
+
+        var suspended = false;
+        string? operatorName = null;
+
+        if (emp.OperatorId is { } operatorId)
+        {
+            var op = await _db.Operators.FindAsync(operatorId);
+
+            // Never overwrite Disabled - that is the deliberate, permanent admin action from
+            // Settings, and this is only ever the automatic side effect of removing the HR
+            // record that created the account.
+            if (op is not null && op.Status is not (OperatorStatus.Suspended or OperatorStatus.Disabled))
+            {
+                op.Status = OperatorStatus.Suspended;
+                op.UpdatedAt = DateTimeOffset.UtcNow;
+                suspended = true;
+                operatorName = op.FullName;
+            }
+        }
+
+        await _db.SaveChangesAsync();
+        return (suspended, operatorName);
     }
 
     private static EmployeeDto MapToDto(Employee e) => new()
@@ -199,8 +237,36 @@ public class EmployeeService : IEmployeeService
         RefAddress      = e.RefAddress,
         PhotoDataUrl  = e.PhotoDataUrl,
         AadharDataUrl = e.AadharDataUrl,
-        Status            = e.Status,
+        Status            = DisplayStatus(e),
         SubmittedByName   = e.SubmittedByOperator?.FullName,
         CreatedAt         = e.CreatedAt,
+        OperatorId        = e.OperatorId,
     };
+
+    /// <summary>
+    /// Employee.Status is set once, at creation, and nothing has ever updated it since - so an
+    /// operator suspended or disabled from Settings (not by removing this HR record) left this
+    /// screen showing "Active" forever no matter what actually happened to the account. The
+    /// operator record is the one place that state genuinely changes, so it is read fresh here
+    /// instead of trusting the employee's own frozen copy.
+    ///
+    /// LoggedOut deliberately still reads as Active: it flips on every ordinary shift-end and
+    /// every heartbeat that finds nobody on duty, and showing "inactive" for someone simply not
+    /// clocked in right now would make this column read wrong the moment anyone goes home.
+    /// Only Suspended and Disabled are genuine "this person is not working here" facts.
+    /// </summary>
+    private static string DisplayStatus(Employee e)
+    {
+        if (e.Operator is { } op)
+        {
+            return op.Status switch
+            {
+                OperatorStatus.Suspended => "Suspended",
+                OperatorStatus.Disabled => "Disabled",
+                _ => "Active",
+            };
+        }
+
+        return e.Status;
+    }
 }

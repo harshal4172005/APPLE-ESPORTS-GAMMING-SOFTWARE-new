@@ -52,6 +52,9 @@ public class EmployeeDto
     public string Status { get; set; } = "Active";
     public string? SubmittedByName { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>Non-null when this record's own joining form created an Operator account — see Employee.OperatorId.</summary>
+    public Guid? OperatorId { get; set; }
 }
 
 public class CreateEmployeeDto

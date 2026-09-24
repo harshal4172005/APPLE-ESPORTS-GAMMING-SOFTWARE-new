@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using AppleEsportsErp.Application.Constants;
 using AppleEsportsErp.Application.DTOs.Common;
+using AppleEsportsErp.Application.DTOs.Settings;
 using AppleEsportsErp.Application.DTOs.Sync;
 using AppleEsportsErp.Application.Interfaces;
 using AppleEsportsErp.Domain.Entities;
@@ -28,6 +29,7 @@ public class BranchHeartbeatController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IAuditService _audit;
+    private readonly IHubNotificationService _hubNotifier;
     private readonly ILogger<BranchHeartbeatController> _logger;
 
     /// <summary>
@@ -64,10 +66,52 @@ public class BranchHeartbeatController : ControllerBase
     /// </summary>
     public static readonly TimeSpan CommandGivenUpAfter = TimeSpan.FromMinutes(5);
 
-    public BranchHeartbeatController(AppDbContext db, IAuditService audit, ILogger<BranchHeartbeatController> logger)
+    /// <summary>
+    /// How long a <see cref="AppleEsportsErp.Api.Services.BranchCommands.SetMemberPassword"/>
+    /// command specifically may go unanswered before Head Office gives up on it.
+    ///
+    /// Five minutes is right for a PC-facing command because something on Head Office's own
+    /// screen is frozen waiting on it and an operator is standing there watching it happen live.
+    /// Neither is true of a password reset: nothing on any screen depends on it, and the member
+    /// who requested it may not try to log in again for hours or days. Giving it the same
+    /// five-minute leash meant a branch that was simply a few releases behind - not broken,
+    /// just not yet updated - silently and permanently lost the member's new password with no
+    /// visible failure anywhere. The member saw a working "password reset successful" and then
+    /// "invalid password" at the counter, and the only trace of why was this exact command
+    /// sitting Failed in a table nobody had reason to open. Two real members hit this before
+    /// anyone noticed.
+    ///
+    /// 48 hours instead - long enough to cover a branch that is genuinely offline or several
+    /// updates behind, short enough that a truly abandoned branch does not accumulate these
+    /// forever.
+    /// </summary>
+    public static readonly TimeSpan MemberPasswordCommandGivenUpAfter = TimeSpan.FromHours(48);
+
+    private static TimeSpan GiveUpAfterFor(string commandType) =>
+        commandType == AppleEsportsErp.Api.Services.BranchCommands.SetMemberPassword
+            ? MemberPasswordCommandGivenUpAfter
+            : CommandGivenUpAfter;
+
+    private static readonly JsonSerializerOptions CaseInsensitiveJson = new() { PropertyNameCaseInsensitive = true };
+
+    /// <summary>
+    /// Caps how often a single PC's PoweredOff transition gets its own audit row.
+    ///
+    /// A PC whose own power detection is unstable can report a change on every three-second
+    /// beat forever - a real reported difference each time, not a bug in this method, but one
+    /// the audit trail should not be forced to carry twenty times a minute. The dashboard's own
+    /// PC.PoweredOff field is unaffected: it is written from every beat regardless, so it still
+    /// tracks whatever the branch currently says. Only the extra audit row is throttled.
+    /// </summary>
+    private static readonly TimeSpan PoweredOffAuditThrottle = TimeSpan.FromMinutes(1);
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DateTimeOffset> _recentPoweredOffAudit = new();
+
+    public BranchHeartbeatController(
+        AppDbContext db, IAuditService audit, IHubNotificationService hubNotifier, ILogger<BranchHeartbeatController> logger)
     {
         _db = db;
         _audit = audit;
+        _hubNotifier = hubNotifier;
         _logger = logger;
     }
 
@@ -157,15 +201,38 @@ public class BranchHeartbeatController : ControllerBase
         beat.OperatorsOnDutyCount = dto.OperatorsOnDuty.Count;
         beat.ActiveSessions = dto.ActiveSessions;
         beat.PcsTotal = dto.Pcs.Count;
-        beat.PcsBusy = dto.Pcs.Count(p => !string.Equals(p.State, "idle", StringComparison.OrdinalIgnoreCase));
+
+        // "Not idle" used to mean busy, which also counted every never-configured placeholder
+        // row (State: awaitingsetup) and every machine down for repair (undermaintenance) as if
+        // a customer were sitting there. A branch with 35 PC rows and only a handful actually
+        // set up read as almost entirely full on this dashboard while its own Sessions page
+        // correctly showed one active session - the two screens disagreed about the same shop.
+        // Busy now means what the word says: a customer is actually using or about to use the
+        // seat.
+        var busyStates = new[] { "active", "reserved", "awaitingbilling" };
+        beat.PcsBusy = dto.Pcs.Count(p => busyStates.Contains(p.State?.ToLowerInvariant()));
         beat.DrawerExpected = dto.DrawerExpected;
         beat.TakingsToday = dto.TakingsToday;
         beat.UndeliveredRecords = dto.UndeliveredRecords;
 
         await ApplyOperatorsOnDutyAsync(dto, ct);
-        await ApplyPcStatesAsync(dto, ct);
+        var changedPcIds = await ApplyPcStatesAsync(dto, ct);
+        await QueueMissingPcsAsync(dto, ct);
 
         await _db.SaveChangesAsync(ct);
+
+        // Broadcast after saving successfully, same rule everything else that touches a PC
+        // follows - see ReservationBackgroundService. Without this, Head Office's own dashboard
+        // never heard about a heartbeat-driven change at all: it had no live push wired to this
+        // endpoint, only its own 20-second poll (or a manual refresh, once the data itself is
+        // actually there to refresh into). A PC shut down at the counter, or simply started a
+        // session, could sit showing the wrong colour at Head Office for up to 20 seconds even
+        // after this fix made the data correct.
+        foreach (var pcId in changedPcIds)
+        {
+            try { await _hubNotifier.BroadcastPcStatusChangeAsync(dto.BranchId, pcId); }
+            catch { /* best effort - the next poll picks up the change regardless */ }
+        }
 
         // The reply carries this branch's settings back down, which is the half of sync that
         // never existed. Null when the branch already has them, so almost every beat stays a
@@ -203,14 +270,16 @@ public class BranchHeartbeatController : ControllerBase
         // Given up on, and said so. A branch that was going to answer has answered long before
         // this; one that has not is on a build too old to understand the command, and will
         // never answer however many times it is asked. Closing it stops the retry and releases
-        // the PC back to reporting its own state - see CommandGivenUpAfter.
-        var abandoned = open.Where(c => now - c.CreatedAt > CommandGivenUpAfter).ToList();
+        // the PC back to reporting its own state - see CommandGivenUpAfter and, for the one
+        // command type that gets much longer, GiveUpAfterFor.
+        var abandoned = open.Where(c => now - c.CreatedAt > GiveUpAfterFor(c.CommandType)).ToList();
         foreach (var c in abandoned)
         {
+            var giveUpAfter = GiveUpAfterFor(c.CommandType);
             c.Status = BranchCommandStatus.Failed;
             c.CompletedAt = now;
             c.ResultMessage =
-                $"The branch did not pick this up within {CommandGivenUpAfter.TotalMinutes:0} minutes. " +
+                $"The branch did not pick this up within {giveUpAfter.TotalHours:0} hour(s). " +
                 "It is most likely running a version that does not understand this instruction yet.";
 
             _logger.LogWarning(
@@ -220,8 +289,11 @@ public class BranchHeartbeatController : ControllerBase
 
             // The one outcome that has no branch to report it, because the branch is exactly
             // what never answered - so Head Office writes this closing entry itself, the only
-            // case anywhere in this file where that happens.
-            await LogCommandOutcomeAsync(c, succeeded: false, ct);
+            // case anywhere in this file where that happens. ResultMessage was just set above
+            // and is the whole reason this row is worth reading - without passing it through,
+            // the Audit Trail said only "failed" with no way to tell a stale build apart from
+            // any other kind of failure.
+            await LogCommandOutcomeAsync(c, succeeded: false, ct, c.ResultMessage);
         }
 
         var pending = open.Except(abandoned).ToList();
@@ -263,6 +335,25 @@ public class BranchHeartbeatController : ControllerBase
         // for a command that has since timed out and been requeued under a fresh id.
         if (command.Status is BranchCommandStatus.Succeeded or BranchCommandStatus.Failed)
             return Ok(ApiResponse<object>.Ok(new { alreadyClosed = true }));
+
+        // Not done, not genuinely failed either - the member this command is for simply has not
+        // reached this branch's own database yet. This is the actual fix for "the member got a
+        // success message but still cannot log in": the old code had no third option here, so a
+        // branch reporting exactly this situation as Succeeded=true closed the command outright
+        // - Head Office had already told the customer their reset worked, and nothing was left
+        // to ever tell the branch to store it, even once the member arrived moments later.
+        //
+        // Left exactly as it is - Pending or Sent, whichever it already was - which is what
+        // keeps it inside BranchHeartbeatController's own "open" query (Pending or Sent) for the
+        // next heartbeat to pick straight back up, same as a genuine delivery failure already
+        // does. GiveUpAfterFor's 48-hour window is still what closes this out for a member that
+        // truly never arrives - this only stops the FIRST beat from mistaking "not yet" for "no".
+        if (!dto.Succeeded && dto.Message == AppleEsportsErp.Api.Services.BranchCommands.MemberNotYetSyncedMessage)
+        {
+            command.ResultMessage = dto.Message;
+            await _db.SaveChangesAsync(ct);
+            return Ok(ApiResponse<object>.Ok(new { willRetry = true }));
+        }
 
         command.Status = dto.Succeeded ? BranchCommandStatus.Succeeded : BranchCommandStatus.Failed;
         command.ResultMessage = dto.Message;
@@ -345,10 +436,23 @@ public class BranchHeartbeatController : ControllerBase
             })
             .ToListAsync(ct);
 
+        // Null unless this branch shares a food group with another - see Branch.FoodGroupId.
+        var foodGroupId = await _db.Branches.AsNoTracking()
+            .Where(b => b.Id == branchId)
+            .Select(b => b.FoodGroupId)
+            .FirstOrDefaultAsync(ct);
+
         // Catalog fields only - CurrentStock and SoldQty are the branch's own trading state
         // and never travel down, for the same reason a PC's busy/idle state does not.
+        //
+        // Scoped to this branch alone, unless it shares a food group - then every branch
+        // sharing that group is included too, so an item created or edited by ANY of them ends
+        // up on every member's menu, not just its own creator's. No further dedup is needed:
+        // Head Office's own InventoryItems table already holds at most one row per Id (the
+        // primary key), the same as any other branch's echo.
         var menuItems = await _db.Set<InventoryItem>().AsNoTracking()
-            .Where(i => i.BranchId == branchId)
+            .Where(i => i.BranchId == branchId
+                || (foodGroupId != null && i.Branch!.FoodGroupId == foodGroupId))
             .OrderBy(i => i.Id)
             .Select(i => new BranchMenuItemConfigDto
             {
@@ -374,6 +478,7 @@ public class BranchHeartbeatController : ControllerBase
                 MobileNumber = m.MobileNumber,
                 Email = m.Email,
                 Username = m.Username,
+                PasswordHash = m.PasswordHash,
                 GamingBalance = m.GamingBalance,
                 FoodBalance = m.FoodBalance,
                 BalanceAsOf = m.BalanceAsOf,
@@ -381,7 +486,63 @@ public class BranchHeartbeatController : ControllerBase
             })
             .ToListAsync(ct);
 
-        var config = new BranchConfigDto { Operators = operators, MenuItems = menuItems, Members = members };
+        // This branch's own pricing profiles, each with whatever custom packages are on it.
+        // Not scoped by food group or anything shared - pricing is per-branch, always.
+        var pricingProfiles = await _db.Set<PricingProfile>().AsNoTracking()
+            .Where(p => p.BranchId == branchId)
+            .OrderBy(p => p.Id)
+            .Select(p => new BranchPricingProfileConfigDto
+            {
+                Id = p.Id,
+                Name = p.Name,
+                BaseHourlyRate = p.BaseHourlyRate,
+                BufferMinutes = p.BufferMinutes,
+                IsActive = p.IsActive,
+                RefreshRate = p.RefreshRate,
+                SystemSpecs = p.SystemSpecs,
+                Packages = p.Packages
+                    .OrderBy(pkg => pkg.Id)
+                    .Select(pkg => new BranchPricingPackageConfigDto
+                    {
+                        Id = pkg.Id,
+                        Name = pkg.Name,
+                        DurationMinutes = pkg.DurationMinutes,
+                        Price = pkg.Price,
+                        SortOrder = pkg.SortOrder,
+                        IsActive = pkg.IsActive,
+                    }).ToList(),
+            })
+            .ToListAsync(ct);
+
+        // Every Admin-level Users-table account, not just this branch's - the same "reachable
+        // from any counter" reasoning as the Global Admin operators above, and the actual fix
+        // for Quick Admin Switch showing nobody: an Admin made at Head Office had never once
+        // been sent to any branch at all, on any beat, ever - Users was simply never in this
+        // list, so there was nothing stale to invalidate and nothing a cache header could have
+        // fixed.
+        var admins = await _db.Users.AsNoTracking()
+            .Where(u => u.Role == Roles.Admin)
+            .OrderBy(u => u.Id)
+            .Select(u => new BranchAdminConfigDto
+            {
+                Id = u.Id,
+                FullName = u.FullName,
+                Email = u.Email,
+                PasswordHash = u.PasswordHash,
+                AccessPin = u.AccessPin,
+                DashboardPermissions = u.DashboardPermissions,
+                IsBlocked = u.Status == UserStatus.Suspended || u.Status == UserStatus.Disabled,
+            })
+            .ToListAsync(ct);
+
+        var config = new BranchConfigDto
+        {
+            Operators = operators,
+            MenuItems = menuItems,
+            Members = members,
+            PricingProfiles = pricingProfiles,
+            Admins = admins,
+        };
         config.Version = Fingerprint(config);
 
         return string.Equals(config.Version, branchHasVersion, StringComparison.Ordinal)
@@ -405,12 +566,24 @@ public class BranchHeartbeatController : ControllerBase
 
         var menuPart = string.Join('\n', config.MenuItems.Select(i => string.Join('',
             i.Id, i.ItemName, i.Category, i.Price, i.ImageUrl, i.IsDisabled)));
+        // PasswordHash included on purpose - a password-only change (Super Admin sets one, or a
+        // member resets from their phone) must move this fingerprint on its own, or this whole
+        // fix does nothing the one time it matters: nothing else about the member changed, so
+        // without it "did anything change?" answers no and the new hash never goes out.
 
         var membersPart = string.Join('\n', config.Members.Select(m => string.Join('',
-            m.Id, m.FullName, m.MemberNumber, m.MobileNumber, m.Email, m.Username,
+            m.Id, m.FullName, m.MemberNumber, m.MobileNumber, m.Email, m.Username, m.PasswordHash,
             m.GamingBalance, m.FoodBalance, m.BalanceAsOf, m.IsBlocked)));
 
-        var canonical = string.Join("\n---\n", operatorsPart, menuPart, membersPart);
+        var pricingPart = string.Join('\n', config.PricingProfiles.Select(p => string.Join("",
+            p.Id, p.Name, p.BaseHourlyRate, p.BufferMinutes, p.IsActive, p.RefreshRate, p.SystemSpecs,
+            string.Join('|', p.Packages.Select(pkg => string.Join(',',
+                pkg.Id, pkg.Name, pkg.DurationMinutes, pkg.Price, pkg.SortOrder, pkg.IsActive))))));
+
+        var adminsPart = string.Join('\n', config.Admins.Select(a => string.Join("",
+            a.Id, a.FullName, a.Email, a.PasswordHash, a.AccessPin, a.DashboardPermissions, a.IsBlocked)));
+
+        var canonical = string.Join("\n---\n", operatorsPart, menuPart, membersPart, pricingPart, adminsPart);
 
         return Convert.ToHexString(
             System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(canonical)))[..16];
@@ -458,9 +631,10 @@ public class BranchHeartbeatController : ControllerBase
     /// three of Adajan's PCs sat on "awaiting billing" from early August against sessions that
     /// no longer existed.
     /// </summary>
-    private async Task ApplyPcStatesAsync(BranchHeartbeatDto dto, CancellationToken ct)
+    private async Task<List<Guid>> ApplyPcStatesAsync(BranchHeartbeatDto dto, CancellationToken ct)
     {
-        if (dto.Pcs.Count == 0) return;
+        var changed = new List<Guid>();
+        if (dto.Pcs.Count == 0) return changed;
 
         var ids = dto.Pcs.Select(p => p.PcId).ToList();
         var pcs = await _db.Pcs
@@ -539,20 +713,180 @@ public class BranchHeartbeatController : ControllerBase
             if (pc.State == state
                 && pc.CurrentSessionId == reported.CurrentSessionId
                 && pc.CurrentSessionStartTime == reported.SessionStartTime
-                && pc.CurrentSessionEndTime == reported.SessionEndTime)
+                && pc.CurrentSessionEndTime == reported.SessionEndTime
+                && pc.CurrentSessionPackagePrice == reported.SessionPackagePrice
+                && pc.CurrentSessionPlannedDurationMin == reported.SessionPlannedDurationMin
+                && pc.PoweredOff == reported.PoweredOff)
                 continue;
 
             _logger.LogInformation(
-                "PC {PcNumber} ({PcId}) on branch {BranchId} moving {OldState}/{OldSession} -> " +
-                "{NewState}/{NewSession} from heartbeat.",
-                pc.PcNumber, pc.Id, dto.BranchId, pc.State, pc.CurrentSessionId, state, reported.CurrentSessionId);
+                "PC {PcNumber} ({PcId}) on branch {BranchId} moving {OldState}/{OldSession}/poweredOff={OldPoweredOff} -> " +
+                "{NewState}/{NewSession}/poweredOff={NewPoweredOff} from heartbeat.",
+                pc.PcNumber, pc.Id, dto.BranchId, pc.State, pc.CurrentSessionId, pc.PoweredOff,
+                state, reported.CurrentSessionId, reported.PoweredOff);
+
+            // Written on the Audit Trail specifically for PoweredOff, not for every routine
+            // Idle/Active/Reserved churn a busy shop produces dozens of times an hour - this is
+            // the one field that used to never arrive at all (see PcStateDto.PoweredOff), so it
+            // is the one worth a visible row confirming Head Office actually got it. If the
+            // branch's own "pc_shutdown" row exists but this one never shows up for the same PC
+            // around the same time, that gap IS the problem - the heartbeat left the branch
+            // reporting one thing and Head Office never heard it.
+            //
+            // The field assignment happens before the log call (not after) so a save triggered
+            // by AuditService.LogAsync - which shares this DbContext - always commits the two
+            // together. That alone was not the whole story: one AE-CTL machine's own power
+            // detection is itself flapping true/false on every single beat, three seconds apart,
+            // which is a real (if noisy) reported change each time, not a persistence bug. The
+            // dashboard still needs the live value, but the audit trail does not need the same
+            // flap recorded twenty times a minute forever - so this is throttled to at most once
+            // per PC per minute, independent of whether the underlying value is actually stable.
+            bool poweredOffChanged = pc.PoweredOff != reported.PoweredOff;
 
             pc.State = state;
             pc.CurrentSessionId = reported.CurrentSessionId;
             pc.CurrentSessionStartTime = reported.SessionStartTime;
             pc.CurrentSessionEndTime = reported.SessionEndTime;
+            pc.CurrentSessionPackagePrice = reported.SessionPackagePrice;
+            pc.CurrentSessionPlannedDurationMin = reported.SessionPlannedDurationMin;
+            pc.PoweredOff = reported.PoweredOff;
             pc.LastActiveAt = DateTimeOffset.UtcNow;
             pc.UpdatedAt = DateTimeOffset.UtcNow;
+            changed.Add(pc.Id);
+
+            var alreadyLoggedRecently = _recentPoweredOffAudit.TryGetValue(pc.Id, out var lastLoggedAt)
+                && DateTimeOffset.UtcNow - lastLoggedAt < PoweredOffAuditThrottle;
+
+            if (poweredOffChanged && !alreadyLoggedRecently)
+            {
+                _recentPoweredOffAudit[pc.Id] = DateTimeOffset.UtcNow;
+                await _audit.LogAsync(new AuditEntry
+                {
+                    UserRole = "System",
+                    UserName = "System",
+                    Action = "pc_powered_off_synced",
+                    BranchId = dto.BranchId,
+                    TargetType = "pc",
+                    TargetId = pc.Id,
+                    Details = new { pcNumber = pc.PcNumber, poweredOff = reported.PoweredOff },
+                });
+            }
+        }
+
+        return changed;
+    }
+
+    /// <summary>
+    /// How long to leave a failed (or still-open) add-PC attempt alone before trying again for
+    /// the same PC. Found live, the hard way: a branch running a build old enough not to
+    /// understand CreatePcDto.Id creates its own row with a fresh id every time, which can
+    /// never satisfy the "is Head Office's id in the reported list" check below - so without a
+    /// cooldown this re-queued a doomed retry every single heartbeat, forever, three seconds
+    /// apart, for as long as that branch stayed on the old build. Matches the pace of the other
+    /// self-healing sweeps in this codebase rather than the three-second beat, on purpose: this
+    /// is a safety net for something rare (a PC Head Office thinks exists that a branch has
+    /// genuinely never heard of), not a routine sync path that needs to be fast.
+    /// </summary>
+    private static readonly TimeSpan MissingPcRetryEvery = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// Heals a PC that exists at Head Office for this branch but that this branch's own
+    /// heartbeat never mentions - meaning the branch's local database genuinely does not have
+    /// it, not that this one beat happened to omit it (every PC is reported on every beat, see
+    /// BranchHeartbeatDto.Pcs). Found live: a PS5 added from Head Office landed only in Head
+    /// Office's own database and stayed invisible to Testing branch indefinitely, because
+    /// nothing was ever watching for exactly this gap - the add command that should have
+    /// created it there predates this reconciliation entirely and was simply never queued.
+    ///
+    /// Skips a PC that already has an add-PC command in flight or attempted recently (see
+    /// MissingPcRetryEvery), so this does not hammer the branch with a fresh copy every three
+    /// seconds while an attempt is either still working its way there or has already failed for
+    /// a reason that resending the identical command will not fix on its own.
+    /// </summary>
+    private async Task QueueMissingPcsAsync(BranchHeartbeatDto dto, CancellationToken ct)
+    {
+        if (dto.Pcs.Count == 0) return;   // an empty report is a branch with no PCs at all, not one missing everything
+
+        var reportedIds = dto.Pcs.Select(p => p.PcId).ToHashSet();
+
+        var ourPcs = await _db.Pcs.AsNoTracking()
+            .Where(p => p.BranchId == dto.BranchId && !p.IsDeleted)
+            .ToListAsync(ct);
+
+        var missing = ourPcs.Where(p => !reportedIds.Contains(p.Id)).ToList();
+        if (missing.Count == 0) return;
+
+        var recentCutoff = DateTimeOffset.UtcNow - MissingPcRetryEvery;
+        var openAddCommands = await _db.Set<BranchCommand>().AsNoTracking()
+            .Where(c => c.BranchId == dto.BranchId
+                && c.CommandType == AppleEsportsErp.Api.Services.BranchCommands.AddPc
+                && (c.Status == BranchCommandStatus.Pending
+                    || c.Status == BranchCommandStatus.Sent
+                    || c.CreatedAt > recentCutoff))
+            .Select(c => c.Payload)
+            .ToListAsync(ct);
+
+        // Deserialized as the real DTO, not hand-parsed, specifically so this cannot go wrong on
+        // casing again - JsonSerializer.Serialize(payload) wrote this with the C# property names
+        // verbatim ("Id", not "id"), and a manual TryGetProperty("id", ...) lookup against that
+        // is case-sensitive and simply never matches. It looked like a working de-dup guard and
+        // was not: every retry queued a fresh one, confirmed live at one every three seconds for
+        // several minutes straight before this was caught. Case-insensitive here so however any
+        // payload in this codebase happens to be cased, this cannot silently stop matching again.
+        var alreadyQueuedIds = new HashSet<Guid>();
+        foreach (var payload in openAddCommands)
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<CreatePcDto>(payload, CaseInsensitiveJson);
+                if (parsed?.Id is { } id) alreadyQueuedIds.Add(id);
+            }
+            catch (JsonException) { /* an unreadable payload is a different problem; skip it here */ }
+        }
+
+        foreach (var pc in missing)
+        {
+            if (alreadyQueuedIds.Contains(pc.Id)) continue;
+
+            var payload = new CreatePcDto
+            {
+                Id = pc.Id,
+                PcNumber = pc.PcNumber,
+                PcName = pc.PcName,
+                BranchId = pc.BranchId,
+                IpAddress = pc.IpAddress,
+                Specs = pc.Specs,
+                Zone = pc.Zone,
+                HardwareNotes = pc.HardwareNotes,
+                PricingProfileId = pc.PricingProfileId,
+            };
+
+            _db.Add(new BranchCommand
+            {
+                Id = Guid.NewGuid(),
+                BranchId = dto.BranchId,
+                CommandType = AppleEsportsErp.Api.Services.BranchCommands.AddPc,
+                Payload = JsonSerializer.Serialize(payload),
+                Status = BranchCommandStatus.Pending,
+                RequestedByUserId = Guid.Empty,
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+
+            _logger.LogWarning(
+                "PC {PcNumber} ({PcId}) exists at Head Office for branch {BranchId} but was " +
+                "missing from its own heartbeat - queuing a fresh add so it reaches the branch.",
+                pc.PcNumber, pc.Id, dto.BranchId);
+
+            await _audit.LogAsync(new AuditEntry
+            {
+                UserRole = "System",
+                UserName = "System",
+                Action = "pc_resync_queued",
+                BranchId = dto.BranchId,
+                TargetType = "pc",
+                TargetId = pc.Id,
+                Details = new { pcNumber = pc.PcNumber, reason = "missing from the branch's own heartbeat" },
+            });
         }
     }
 

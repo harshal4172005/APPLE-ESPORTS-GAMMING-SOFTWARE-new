@@ -78,6 +78,26 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
+    // An Admin Quick-Switch token is deliberately short-lived (2h) and is never refreshed -
+    // see AuthController's admin-switch endpoints. If one has expired mid-switch, this is NOT
+    // the operator's real session failing, and must not fall into the refresh/force-logout
+    // path below: refreshing renews the operator's own accessToken cookie but does nothing
+    // about the stale adminSwitchToken cookie, which the server prefers over accessToken - so
+    // the retried request would 401 again and this station would be logged out entirely, for
+    // an operator whose own session was never actually broken. Clearing the stale cookie and
+    // retrying resumes the operator session with no re-login, same as a clean switch-out.
+    if (error.response?.status === 401
+        && sessionStorage.getItem('adminSwitchActive')
+        && !originalRequest._switchRetry) {
+      originalRequest._switchRetry = true;
+      try {
+        await axios.post(`${API_BASE_URL}/auth/admin-switch/clear-cookie`, {}, { withCredentials: true });
+      } catch (_) { /* best effort - the cookie may already be gone */ }
+      sessionStorage.removeItem('adminSwitchActive');
+      window.dispatchEvent(new CustomEvent('admin-switch-expired'));
+      return api(originalRequest);
+    }
+
     // Token expired — attempt refresh (cookies are sent automatically)
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true;

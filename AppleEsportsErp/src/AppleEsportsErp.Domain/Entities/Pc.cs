@@ -38,6 +38,17 @@ public class Pc
     public DateTimeOffset? CurrentSessionStartTime { get; set; }
     public DateTimeOffset? CurrentSessionEndTime { get; set; }
 
+    /// <summary>
+    /// The same snapshot idea as the two fields above, for the same reason: Head Office has no
+    /// local Session row, so without these its live PC-card amount could only ever be
+    /// hours x BaseHourlyRate - a session genuinely running under "4 hrs - Rs 180" showed a
+    /// flat hourly number there with nothing to do with the package it was actually sold
+    /// under, even while the branch's own screen showed it correctly. Display only, same as
+    /// CurrentSessionStartTime - never a source of truth for billing.
+    /// </summary>
+    public decimal? CurrentSessionPackagePrice { get; set; }
+    public int? CurrentSessionPlannedDurationMin { get; set; }
+
     public Guid? CurrentReservationId { get; set; }
     public DateTimeOffset? LastActiveAt { get; set; }
     public Guid? LastOperatorId { get; set; }
@@ -74,7 +85,48 @@ public class Pc
     public bool IsAgentOnline { get; set; } = false;
     public string ConnectionMode { get; set; } = "None";  // "LAN", "Cloud", "None"
     public DateTimeOffset? LastAgentHeartbeat { get; set; }
-    
+
+    /// <summary>
+    /// The version the gaming PC agent last reported on a heartbeat. Null until the agent's
+    /// first heartbeat after this field existed - not "out of date", just "hasn't said yet".
+    /// This is what "N of M gaming PCs up to date" is actually counted from
+    /// (BranchVersionReporterService compares it against the branch API's own running
+    /// version); before this field existed that count was hardcoded to zero, because nothing
+    /// anywhere recorded what a gaming PC was actually running.
+    /// </summary>
+    public string? AgentVersion { get; set; }
+
+    /// <summary>
+    /// The version of AppleEsports.exe itself last reported by this gaming PC - the program a
+    /// customer actually sees and plays through, and the one apply-update.ps1 updates. Separate
+    /// from <see cref="AgentVersion"/> on purpose: that field is the screen-lock agent
+    /// (AppleEsportsAgent.exe), a second, independent program on the same machine with its own
+    /// installer component and its own self-update path (AgentSelfUpdater.cs) - a gaming PC can
+    /// update one without the other, so "N of M gaming PCs up to date" read the wrong program
+    /// entirely and could sit stuck reporting PCs as behind for good after a real, successful
+    /// update, if that update never touched the agent (or the agent's own release upload was
+    /// missed for that version). This is what the count should be judged against - it is what
+    /// "the gaming PC got updated" actually means to a person looking at the screen.
+    /// </summary>
+    public string? AppVersion { get; set; }
+
+    /// <summary>
+    /// True once <see cref="AppleEsportsErp.Api.Hubs.PcStatusHub.SendShutdownCommand"/> or
+    /// SendShutdownAllCommand has told this PC to power off, and not yet cleared by
+    /// <see cref="AppleEsportsErp.Api.Hubs.PcOverlayHub.ConnectPc"/> seeing it come back.
+    ///
+    /// Deliberately its own column rather than a new <see cref="PcState"/> value, and
+    /// deliberately never written into <see cref="State"/> either. State is overwritten
+    /// wholesale on every branch heartbeat with whatever the branch itself currently reports
+    /// (see BranchHeartbeatController.ApplyPcStatesAsync) - and mid-shutdown the branch is
+    /// still reporting the state from a moment ago (Active, Idle, whatever it was), so
+    /// anything written here into State would be clobbered by the next beat, a few seconds
+    /// later, before anyone's eyes even left the screen. This flag has nothing to race
+    /// against: nothing else writes it, and nothing reads it into a billing decision -
+    /// it exists purely to colour a tile correctly.
+    /// </summary>
+    public bool PoweredOff { get; set; } = false;
+
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
 

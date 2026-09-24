@@ -34,6 +34,18 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const storedUser = localStorage.getItem('user');
 
+    // adminSwitchUser is React state only, so a reload always loses it - there is no admin
+    // identity to restore client-side anyway. If a switch was active, the adminSwitchToken
+    // cookie survives the reload and the server prefers it over accessToken, so /auth/me
+    // below would come back as the ADMIN and silently overwrite `user`, losing the operator
+    // (the exact failure this whole mechanism exists to prevent). Dropping back to the
+    // operator on every reload is the simple, safe choice - nobody has to re-authenticate as
+    // the admin just because the page refreshed.
+    if (sessionStorage.getItem('adminSwitchActive')) {
+      sessionStorage.removeItem('adminSwitchActive');
+      api.post('/auth/admin-switch/clear-cookie').catch(() => {});
+    }
+
     if (storedUser && storedUser !== 'undefined') {
       try {
         setUser(JSON.parse(storedUser));
@@ -47,6 +59,19 @@ export function AuthProvider({ children }) {
     } else {
       setLoading(false);
     }
+  }, [fetchCurrentUser]);
+
+  // A switch token expired mid-switch (see api.js's response interceptor) - the cookie is
+  // already cleared server-side by the time this fires. Drop the client's admin identity and
+  // resume the operator, exactly like a normal exitAdminSwitch, minus the already-done
+  // network call.
+  useEffect(() => {
+    const onSwitchExpired = () => {
+      setAdminSwitchUser(null);
+      fetchCurrentUser();
+    };
+    window.addEventListener('admin-switch-expired', onSwitchExpired);
+    return () => window.removeEventListener('admin-switch-expired', onSwitchExpired);
   }, [fetchCurrentUser]);
 
   // ── Super Admin Login (SOP §6.2) ──
@@ -130,6 +155,7 @@ export function AuthProvider({ children }) {
       const response = await api.post('/auth/admin-switch/in', { adminId, accessPin });
       const { user: adminData } = response.data.data;
 
+      sessionStorage.setItem('adminSwitchActive', '1');
       setAdminSwitchUser(adminData);
       return adminData;
     } catch (err) {
@@ -154,8 +180,11 @@ export function AuthProvider({ children }) {
     try {
       await api.post('/auth/admin-switch/out').catch(() => {});
     } finally {
+      sessionStorage.removeItem('adminSwitchActive');
       setAdminSwitchUser(null);
-      // Re-fetch operator user data
+      // Re-fetch operator user data. The server has already deleted adminSwitchToken by the
+      // time this response lands, so /auth/me resolves against the operator's own
+      // never-touched accessToken cookie - this always comes back as the operator, not a race.
       await fetchCurrentUser();
     }
   }, [fetchCurrentUser]);
@@ -202,11 +231,15 @@ export function AuthProvider({ children }) {
   /// cannot clear itself, so skipping it would leave the old session usable.
   const clearSession = useCallback(async () => {
     try {
-      await api.post('/auth/logout', {}).catch(() => {});
+      // Deliberately /auth/session/clear, not /auth/logout - this only drops the cookie the
+      // page cannot clear itself. /auth/logout closes an Operator's active shift, which is
+      // exactly what must NOT happen just because someone looked at the wrong login portal.
+      await api.post('/auth/session/clear', {}).catch(() => {});
     } finally {
       localStorage.removeItem('user');
       localStorage.removeItem('activeBranchId');
       sessionStorage.removeItem('pendingShiftTakeover');
+      sessionStorage.removeItem('adminSwitchActive');
       setUser(null);
       setAdminSwitchUser(null);
     }
@@ -263,6 +296,15 @@ export function AuthProvider({ children }) {
     return false;
   }, [user, adminSwitchUser]);
 
+  // ── Can this person correct a completed bill's payment method? ──
+  // Mirrors BillingController.EditPaymentMethod exactly: open to every logged-in role,
+  // Operator included, per the owner's explicit instruction that whoever is at the counter
+  // when the mistake is noticed should be able to fix it on the spot.
+  const canCorrectPaymentMethod = useCallback(() => {
+    const checkUser = adminSwitchUser || user;
+    return !!checkUser;
+  }, [user, adminSwitchUser]);
+
   const value = {
     user: adminSwitchUser || user,
     baseUser: user, // Keep track of the original operator
@@ -281,6 +323,7 @@ export function AuthProvider({ children }) {
     fetchAvailableAdminsForSwitch,
     hasDashboardAccess,
     canApplyDiscount,
+    canCorrectPaymentMethod,
     fetchCurrentUser,
     setError,
   };

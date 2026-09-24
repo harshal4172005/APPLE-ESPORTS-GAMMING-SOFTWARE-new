@@ -1,5 +1,6 @@
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using BCryptNet = BCrypt.Net.BCrypt;
 using AppleEsportsErp.Application.Constants;
 using AppleEsportsErp.Application.DTOs.Common;
@@ -8,6 +9,7 @@ using AppleEsportsErp.Application.Exceptions;
 using AppleEsportsErp.Application.Interfaces;
 using AppleEsportsErp.Domain.Entities;
 using AppleEsportsErp.Domain.Enums;
+using AppleEsportsErp.Infrastructure.Configuration;
 using AppleEsportsErp.Infrastructure.Identity;
 
 namespace AppleEsportsErp.Infrastructure.Services;
@@ -24,8 +26,10 @@ public class MemberService : IMemberService
     private static readonly TimeSpan LockoutDuration = TimeSpan.FromMinutes(15);
 
     private readonly IOutboxService _outbox;
+    private readonly IConfiguration _configuration;
+    private readonly IHubNotificationService _hubNotifications;
 
-    public MemberService(IUnitOfWork unitOfWork, IAuditService auditService, JwtTokenService jwt, IEmailService emailService, IAppUrlProvider appUrls, IOutboxService outbox)
+    public MemberService(IUnitOfWork unitOfWork, IAuditService auditService, JwtTokenService jwt, IEmailService emailService, IAppUrlProvider appUrls, IOutboxService outbox, IConfiguration configuration, IHubNotificationService hubNotifications)
     {
         _outbox = outbox;
         _unitOfWork = unitOfWork;
@@ -33,6 +37,8 @@ public class MemberService : IMemberService
         _jwt = jwt;
         _emailService = emailService;
         _appUrls = appUrls;
+        _configuration = configuration;
+        _hubNotifications = hubNotifications;
     }
 
     private static bool IsLocked(DateTimeOffset? lockedUntil) => lockedUntil.HasValue && lockedUntil.Value > DateTimeOffset.UtcNow;
@@ -308,6 +314,25 @@ public class MemberService : IMemberService
 
         _unitOfWork.Repository<Member>().Update(member);
 
+        // Head Office's own copy of this member never moved when this changed - UpdateMemberAsync
+        // never emitted anything, and no "member.updated" event type existed anywhere in the sync
+        // system at all. A walk-in registration with no/placeholder email, corrected here minutes
+        // or days later (an extremely common real workflow), left Head Office holding the ORIGINAL
+        // stale email forever. That mismatch is exactly why a member's first password-setup email -
+        // sent to the branch's current, correct address - later failed "invalid or expired reset
+        // token": CompletePasswordResetAsync matches on Email AND Token together, the token was
+        // right, and Head Office's stale Email never matched what was actually emailed to them.
+        await _outbox.RecordEventAsync(branchId, "Member", member.Id, "member.updated", new
+        {
+            memberId = member.Id,
+            fullName = member.FullName,
+            mobileNumber = member.MobileNumber,
+            email = member.Email,
+            username = member.Username,
+            updatedAt = member.UpdatedAt,
+            updatedBy = operatorId,
+        });
+
         await _auditService.LogAsync(new AuditEntry
         {
             OperatorId = operatorId,
@@ -388,9 +413,31 @@ public class MemberService : IMemberService
 
     /// <summary>Super Admin only: direct override of any value on a member's profile.
     /// Gaming/Food balance changes also create a "Correction" wallet transaction for an audit trail;
-    /// every other field just changes directly, with a single audit log entry summarizing the edit.</summary>
-    public async Task<MemberDto> AdminEditValuesAsync(Guid branchId, Guid adminId, Guid id, AdminEditMemberValuesDto dto)
+    /// every other field just changes directly, with a single audit log entry summarizing the edit.
+    ///
+    /// <paramref name="remoteAdminName"/> is set only when this is being applied here on behalf
+    /// of a Head Office admin (via a branch command), never for a genuinely local edit. WalletTransaction.AdminId
+    /// is foreign-keyed to THIS branch's own local `users` table, and a Head Office admin's id
+    /// has never been synced down to any branch - Users accounts are Head Office's own, unlike
+    /// Operators/Members/menu items. Writing a Head Office id into AdminId therefore failed
+    /// with a foreign key violation on every single remote balance edit, unconditionally. When
+    /// <paramref name="remoteAdminName"/> is supplied, the actor goes into the non-FK-constrained
+    /// RemoteAdminId/RemoteAdminName columns instead, and AdminId is left null.</summary>
+    public async Task<MemberDto> AdminEditValuesAsync(
+        Guid branchId, Guid adminId, Guid id, AdminEditMemberValuesDto dto, string? remoteAdminName = null)
     {
+        // Head Office's own copy of a member is not what the gaming PC at the counter checks -
+        // the branch's own row is. Writing here would show the new number on Head Office's
+        // screen and change nothing an operator can actually see, exactly the trap
+        // RemoteBranchControl's own class comment describes. MembersController routes this to
+        // the branch instead whenever it is called from Head Office; this only guards against
+        // some other, future caller reaching this method directly and re-creating that trap.
+        if (_configuration.IsHeadOffice())
+            throw new AppException(
+                "A member's balance has to be edited at the branch itself, not written here at " +
+                "Head Office - the branch's own copy is what the counter actually reads, and a " +
+                "change written only here would be invisible to it.");
+
         var member = await _unitOfWork.Repository<Member>().GetByIdAsync(id)
             ?? throw new NotFoundException("Member not found.");
 
@@ -411,7 +458,9 @@ public class MemberService : IMemberService
             {
                 MemberId = id,
                 BranchId = branchId,
-                AdminId = adminId,
+                AdminId = remoteAdminName is null ? adminId : (Guid?)null,
+                RemoteAdminId = remoteAdminName is null ? (Guid?)null : adminId,
+                RemoteAdminName = remoteAdminName,
                 Action = WalletAction.Correction,
                 TargetWallet = wallet,
                 Amount = newValue.Value - before,
@@ -454,7 +503,7 @@ public class MemberService : IMemberService
         {
             OperatorId = adminId,
             UserRole = "SuperAdmin",
-            UserName = "System",
+            UserName = remoteAdminName ?? "System",
             Action = "admin_member_value_edit",
             BranchId = branchId,
             TargetType = "member",
@@ -462,7 +511,34 @@ public class MemberService : IMemberService
             Details = new { MemberNumber = member.MemberNumber, Changes = changes, Reason = dto.Reason }
         });
 
+        // This method only ever runs on a branch's own database (Head Office refuses it above)
+        // - it never once told Head Office's own mirrored copy of this member what the new
+        // balance is. A Super Admin editing a balance saw it change on the operator's screen
+        // (the branch, correctly, applied it) but their own Head Office dashboard kept showing
+        // the OLD number until something unrelated happened to resync the member. Same gap for
+        // a genuinely local branch-admin edit, not just a remote one - neither path ever synced.
+        await _outbox.RecordEventAsync(branchId, "Member", member.Id, "member.balance_adjusted", new
+        {
+            memberId = member.Id,
+            gamingBalance = member.GamingBalance,
+            foodBalance = member.FoodBalance,
+            totalGamingTopUps = member.TotalGamingTopUps,
+            totalGamingBonusEarned = member.TotalGamingBonusEarned,
+            totalGamingSpend = member.TotalGamingSpend,
+            totalFoodSpend = member.TotalFoodSpend,
+            gamingPoints = member.GamingPoints,
+            foodPoints = member.FoodPoints,
+            totalPoints = member.TotalPoints,
+            updatedAt = member.UpdatedAt,
+        });
+
         await _unitOfWork.CommitTransactionAsync();
+
+        // The operator PC (session start, wallet desk) only ever refetched on its own next
+        // action before this - a balance changed here, whether by a local branch admin or
+        // relayed from Head Office, was invisible until then.
+        try { await _hubNotifications.BroadcastMemberBalanceUpdateAsync(branchId, member.Id); }
+        catch { /* best effort - the balance change itself already succeeded */ }
 
         return MapToDto(member);
     }
@@ -603,5 +679,64 @@ public class MemberService : IMemberService
             LastVisit = m.LastVisit,
             HomeBranchName = m.HomeBranch?.Name
         };
+    }
+
+    public async Task<List<MemberHistoryEntryDto>> GetMemberHistoryAsync(Guid memberId, DateOnly? fromDate, DateOnly? toDate)
+    {
+        DateTimeOffset? rangeStart = fromDate.HasValue
+            ? AppleEsportsErp.Application.Services.IndiaTime.BusinessDayRange(fromDate.Value).Start
+            : null;
+        DateTimeOffset? rangeEnd = toDate.HasValue
+            ? AppleEsportsErp.Application.Services.IndiaTime.BusinessDayRange(toDate.Value).End
+            : null;
+
+        var sessionsQuery = _unitOfWork.Repository<Session>().Query()
+            .Where(s => s.MemberId == memberId);
+        if (rangeStart.HasValue) sessionsQuery = sessionsQuery.Where(s => s.StartTime >= rangeStart.Value);
+        if (rangeEnd.HasValue) sessionsQuery = sessionsQuery.Where(s => s.StartTime < rangeEnd.Value);
+
+        var sessions = await sessionsQuery
+            .Include(s => s.Pc)
+            .Include(s => s.Branch)
+            .ToListAsync();
+
+        var walletQuery = _unitOfWork.Repository<WalletTransaction>().Query()
+            .Where(w => w.MemberId == memberId);
+        if (rangeStart.HasValue) walletQuery = walletQuery.Where(w => w.CreatedAt >= rangeStart.Value);
+        if (rangeEnd.HasValue) walletQuery = walletQuery.Where(w => w.CreatedAt < rangeEnd.Value);
+
+        var walletTxs = await walletQuery
+            .Include(w => w.Branch)
+            .ToListAsync();
+
+        var entries = new List<MemberHistoryEntryDto>();
+
+        entries.AddRange(sessions.Select(s => new MemberHistoryEntryDto
+        {
+            Id = s.Id,
+            Type = "Session",
+            Timestamp = s.StartTime,
+            BranchId = s.BranchId,
+            BranchName = s.Branch?.Name ?? "",
+            PcName = s.Pc?.PcName ?? s.Pc?.PcNumber,
+            DurationMinutes = s.ActualDurationMin ?? s.PlannedDurationMin,
+            Amount = s.TotalAmount,
+            Description = $"Gaming session - {s.GamingType}"
+        }));
+
+        entries.AddRange(walletTxs.Select(w => new MemberHistoryEntryDto
+        {
+            Id = w.Id,
+            Type = w.Action == WalletAction.Recharge ? "WalletTopUp" : "WalletDeduction",
+            Timestamp = w.CreatedAt,
+            BranchId = w.BranchId,
+            BranchName = w.Branch?.Name ?? "",
+            PcName = null,
+            DurationMinutes = null,
+            Amount = w.Amount,
+            Description = $"{w.Action} - {w.TargetWallet}" + (string.IsNullOrEmpty(w.Reason) ? "" : $" ({w.Reason})")
+        }));
+
+        return entries.OrderByDescending(e => e.Timestamp).ToList();
     }
 }

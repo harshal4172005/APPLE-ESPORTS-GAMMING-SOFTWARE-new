@@ -80,8 +80,9 @@ public class AuthService : IAuthService
 
     private readonly IAdminNotifier _adminNotifier;
     private readonly IShiftTakeoverService _takeover;
+    private readonly IHubNotificationService _hubNotifications;
 
-    public AuthService(AppDbContext db, JwtTokenService jwt, IAuditService audit, ILogger<AuthService> logger, ITokenRevocationService tokenRevocation, IEmailService emailService, IConfiguration configuration, IAppUrlProvider appUrls, IAdminNotifier adminNotifier, IShiftTakeoverService takeover, IOutboxService outbox)
+    public AuthService(AppDbContext db, JwtTokenService jwt, IAuditService audit, ILogger<AuthService> logger, ITokenRevocationService tokenRevocation, IEmailService emailService, IConfiguration configuration, IAppUrlProvider appUrls, IAdminNotifier adminNotifier, IShiftTakeoverService takeover, IOutboxService outbox, IHubNotificationService hubNotifications)
     {
         _adminNotifier = adminNotifier;
         _takeover = takeover;
@@ -94,6 +95,7 @@ public class AuthService : IAuthService
         _configuration = configuration;
         _outbox = outbox;
         _appUrls = appUrls;
+        _hubNotifications = hubNotifications;
     }
 
     /// <summary>
@@ -103,8 +105,11 @@ public class AuthService : IAuthService
     /// </summary>
     public async Task<LoginResponseDto> LoginAdminAsync(AdminLoginDto dto)
     {
-        // 1. Find admin user
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == dto.Email);
+        // 1. Find admin user. Case-insensitive: Postgres `text` equality is case-sensitive, so
+        // an admin stored as "Manager@Apple.com" could never log in typing "manager@apple.com"
+        // - it fell straight through to "Invalid email/username or password" with no hint why.
+        var email = dto.Email.Trim().ToLower();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
         if (user != null)
         {
             // 2. Check account status
@@ -565,11 +570,15 @@ public class AuthService : IAuthService
     /// </summary>
     public async Task<LoginResponseDto> LoginMemberAsync(MemberLoginDto dto)
     {
-        // Find member by Username, MobileNumber, or Email
-        var member = await _db.Members.FirstOrDefaultAsync(m => 
-            (m.Username != null && m.Username == dto.Identifier) || 
-            (m.MobileNumber != null && m.MobileNumber == dto.Identifier) || 
-            (m.Email != null && m.Email == dto.Identifier));
+        // Find member by Username, MobileNumber, or Email. Email compared case-insensitively,
+        // same reason as LoginAdminAsync - Postgres text equality is case-sensitive and a
+        // member typing their own email in a different case should not be told it's wrong.
+        var identifier = dto.Identifier.Trim();
+        var identifierLower = identifier.ToLower();
+        var member = await _db.Members.FirstOrDefaultAsync(m =>
+            (m.Username != null && m.Username == identifier) ||
+            (m.MobileNumber != null && m.MobileNumber == identifier) ||
+            (m.Email != null && m.Email.ToLower() == identifierLower));
 
         if (member == null)
             throw new AuthenticationException("Invalid credentials", "INVALID_CREDENTIALS");
@@ -671,20 +680,23 @@ public class AuthService : IAuthService
     /// <summary>
     /// The day's figures, emailed to the owner when the last shift closes.
     ///
-    /// Counted over the 06:00-06:00 trading day rather than the shift, because that is how
-    /// the money is counted everywhere else - a session that starts at 01:00 belongs to the
-    /// night before, whoever happened to be on duty.
+    /// Counted over the midnight-to-midnight trading day rather than the shift, because that is
+    /// how the money is counted everywhere else - a session that starts at 01:00 belongs to the
+    /// calendar day already under way when it started, whoever happened to be on duty.
     ///
     /// Never throws. A summary that cannot be emailed must not stop an operator going home.
     /// </summary>
     /// <summary>
-    /// Closes any trading day that is over and that nobody closed, and sends its report.
+    /// Closes any trading day that is genuinely over and that nobody closed, and sends its report.
+    /// A branch still trading past midnight is left entirely alone here, on the owner's explicit
+    /// instruction - see the comment inside this method, where that decision actually happens,
+    /// for why.
     ///
     /// The end-of-day report used to depend entirely on an operator ticking "last shift of the
-    /// day". Ticking it wrongly costs one confusing email. Forgetting it costs the whole day's
-    /// report AND leaves the register open past 06:00 for good — which is where the thirty stale
-    /// registers already cleared off the live system came from. Forgetting is much the likelier,
-    /// because it takes doing nothing.
+    /// day". Ticking it wrongly costs one confusing email. Forgetting it used to leave the
+    /// register open indefinitely too - which is where the thirty stale registers already
+    /// cleared off the live system came from. Forgetting is much the likelier outcome, because
+    /// it takes doing nothing.
     ///
     /// So the day no longer depends on being remembered. The tick still works, and closes the day
     /// early when an operator uses it; this is what happens when nobody does.
@@ -692,12 +704,76 @@ public class AuthService : IAuthService
     /// Safe to call repeatedly: it only acts on registers still open from a day that has ended,
     /// and closing them is what stops it acting again.
     /// </summary>
+    /// <summary>
+    /// How long a branch must have gone without a session starting/stopping, a bill, or a
+    /// cash movement before it counts as "quiet" for <see cref="IsBranchGenuinelyClosedForTheNightAsync"/>.
+    ///
+    /// There is no fixed opening/closing schedule to fall back on - branches trade for however
+    /// long customers keep showing up, not to a timetable - so this window is the only safety
+    /// margin against a genuine lull mid-session. Kept longer than the 45 minutes first used for
+    /// exactly that reason: with no time-of-day floor underneath it, this alone has to be long
+    /// enough that nobody mid-café would ever plausibly go quiet for its whole length.
+    /// </summary>
+    private static readonly TimeSpan QuietWindow = TimeSpan.FromMinutes(90);
+
+    /// <summary>
+    /// Whether a branch is actually done trading for the night, not merely quiet for a moment
+    /// during a normal day - the real gate on force-closing anything still open from a
+    /// calendar-stale trading day.
+    ///
+    /// Now that the trading day ends at midnight (moved from the old 06:00-06:00 boundary),
+    /// midnight falls in the middle of real trading hours for any branch open past it - so
+    /// "the business day has ended" is no longer a safe signal on its own. Both of the
+    /// following must hold instead - purely activity-based, per the owner's own call: branches
+    /// have no fixed closing time, so there is no schedule to check against:
+    ///
+    ///  1. No PC at the branch is <see cref="PcState.Active"/> or <see cref="PcState.AwaitingBilling"/>
+    ///     - nobody is actually playing or waiting to be billed right now.
+    ///  2. Nothing has actually happened recently - no session starting or stopping, no bill,
+    ///     no cash movement - within <see cref="QuietWindow"/>. (1) alone is not enough: a
+    ///     branch can be between customers for a few quiet minutes at any hour.
+    /// </summary>
+    private async Task<bool> IsBranchGenuinelyClosedForTheNightAsync(
+        Guid branchId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        // 1. Nobody currently playing or waiting to be billed.
+        var hasLivePc = await _db.Pcs.AnyAsync(
+            p => p.BranchId == branchId
+              && (p.State == PcState.Active || p.State == PcState.AwaitingBilling),
+            cancellationToken);
+        if (hasLivePc) return false;
+
+        // 2. Nothing real has happened at the branch inside the quiet window.
+        var quietSince = now - QuietWindow;
+
+        var recentSessionActivity = await _db.Sessions.AnyAsync(
+            s => s.BranchId == branchId && (s.StartTime >= quietSince || s.UpdatedAt >= quietSince),
+            cancellationToken);
+        if (recentSessionActivity) return false;
+
+        var recentBill = await _db.Bills.AnyAsync(
+            b => b.BranchId == branchId && (b.CreatedAt >= quietSince || b.UpdatedAt >= quietSince),
+            cancellationToken);
+        if (recentBill) return false;
+
+        var recentCashTransaction = await _db.CashTransactions.AnyAsync(
+            c => c.BranchId == branchId && c.CreatedAt >= quietSince,
+            cancellationToken);
+        if (recentCashTransaction) return false;
+
+        return true;
+    }
+
     public async Task<int> CloseFinishedTradingDaysAsync(CancellationToken cancellationToken = default)
     {
         var today = IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
+        var now = DateTimeOffset.UtcNow;
 
-        // Strictly earlier than today's trading day, so a day still being traded is never touched.
-        // At 05:59 the previous day is still open for business and must be left alone.
+        // Calendar-stale candidates only - strictly earlier than today's trading day. Being
+        // calendar-stale is necessary but, since the boundary moved to midnight, no longer
+        // sufficient: a branch trading past midnight has calendar-stale registers every single
+        // night for as long as it keeps trading. IsBranchGenuinelyClosedForTheNightAsync below
+        // is the real gate on whether any of these are actually force-closed this pass.
         var stale = await _db.CashRegisters
             .Where(r => r.BusinessDay < today && r.Status != CashRegisterStatus.Closed)
             .ToListAsync(cancellationToken);
@@ -710,6 +786,26 @@ public class AuthService : IAuthService
         {
             try
             {
+                // Not yet genuinely closed for the night - still trading, so leave it alone
+                // entirely and try again on the next pass. This used to call
+                // RolloverOpenRegisterAsync here to keep EodService's day-bucketing correct
+                // while trading continued past midnight - reverted on the owner's explicit
+                // instruction after it produced duplicate register and shift rows on a branch
+                // that was genuinely still trading (Citylight 144Hz, the night this was found):
+                // this 15-minute sweep and something else touching the same register at close
+                // to the same moment were never made to exclude each other, so both could see
+                // "nothing open for today yet" and both create one. Nothing here now closes or
+                // moves anything for an active shift - only the operator's own "last shift of
+                // the day" button does, same as before this rollover existed at all. The
+                // known cost: a branch trading past midnight keeps yesterday's BusinessDay on
+                // its register until that button is pressed, which is exactly the bucketing
+                // gap RolloverOpenRegisterAsync was written to close - accepted deliberately in
+                // exchange for never touching a shift that is still actually in use.
+                if (!await IsBranchGenuinelyClosedForTheNightAsync(branchDay.Key.BranchId, now, cancellationToken))
+                {
+                    continue;
+                }
+
                 foreach (var register in branchDay)
                 {
                     register.Status = CashRegisterStatus.Closed;
@@ -770,8 +866,8 @@ public class AuthService : IAuthService
                     branchDay.Key.BusinessDay, branchDay.Key.BranchId,
                     branchDay.Count(), branchDay.Sum(r => r.ExpectedDrawerCash));
 
-                // Midday IST on the day being closed - unambiguously inside its 06:00-to-06:00
-                // window, whichever shift the report ends up attributed to. Passing this rather
+                // Midday IST on the day being closed - unambiguously inside its midnight-to-
+                // midnight window, whichever shift the report ends up attributed to. Passing this rather
                 // than letting the day be inferred from a logout time is the whole fix: the first
                 // version compared the two and sent nothing when they disagreed, which is exactly
                 // the case that needs a report.
@@ -834,9 +930,9 @@ public class AuthService : IAuthService
             {
                 ("Branch", branchName),
                 ("Day", $"{businessDay:dd MMM yyyy}"),
-                ("Counted from", "6 in the morning to 6 the next morning"),
+                ("Counted from", "midnight to midnight"),
                 ("Shop closed at", closedAutomatically
-                    ? "6 in the morning - closed by the system, not by an operator"
+                    ? "midnight - closed by the system, not by an operator"
                     : IndiaTime.Format(shift.LogoutTime ?? DateTimeOffset.UtcNow)),
                 ("", ""),
                 ("Total money taken", $"Rs {total:0.00}"),
@@ -868,16 +964,16 @@ public class AuthService : IAuthService
                     AdminEmailTemplate.Green,
                     $"The shop has closed for the day. {branchName} took Rs {total:0.00} from {sessions} customer{(sessions == 1 ? "" : "s")} on {businessDay:dd MMM yyyy}."
                         + (closedAutomatically
-                            ? " Nobody marked the last shift of the day, so the system closed the day itself at 6 in the morning."
+                            ? " Nobody marked the last shift of the day, so the system closed the day itself once trading had genuinely stopped for the night."
                             : string.Empty),
                     rows,
                     headline: $"Rs {total:0.00}",
                     footnote: closedAutomatically
-                        ? "The day runs from 6 in the morning to 6 the next morning, so late-night play counts towards "
-                          + "the day it started on. No operator ticked \"last shift of the day\", so this was put "
-                          + "together automatically once the day was over. The figures are complete; the only thing "
-                          + "missing is a counted drawer, if nobody counted it before leaving."
-                        : "The day runs from 6 in the morning to 6 the next morning, so late-night play counts towards the day it started on. You are getting this because the operator ticked \"last shift of the day\" when they finished."));
+                        ? "The day runs from midnight to midnight, so late-night play before midnight still counts "
+                          + "towards the day it started on. No operator ticked \"last shift of the day\", so this was "
+                          + "put together automatically once the branch had gone quiet for the night. The figures are "
+                          + "complete; the only thing missing is a counted drawer, if nobody counted it before leaving."
+                        : "The day runs from midnight to midnight, so late-night play before midnight still counts towards the day it started on. You are getting this because the operator ticked \"last shift of the day\" when they finished."));
         }
         catch (Exception ex)
         {
@@ -1031,6 +1127,22 @@ public class AuthService : IAuthService
 
         // Force revoke all existing tokens for this operator
         await _tokenRevocation.RevokeUserTokensAsync(operatorId, TimeSpan.FromDays(7));
+
+        // The one-line gap between "Super Admin sees the shift closed" (their dashboard just
+        // re-queries the DB) and "the operator sees it" - without this, the operator's own
+        // screen kept showing the shift as open until their token happened to expire or they
+        // reloaded the page. SocketContext.jsx has been listening for this event the whole
+        // time; nothing on the server ever sent it.
+        try
+        {
+            await _hubNotifications.SendForceLogoutAsync(operatorId, "Forced logout by Super Admin");
+        }
+        catch (Exception ex)
+        {
+            // The DB work above already committed - a dead hub must never turn a successful
+            // force-logout into a failed one. The operator falls back to their token expiring.
+            _logger.LogWarning(ex, "Could not push a live ForceLogout to operator {OperatorId}.", operatorId);
+        }
 
         return new ForceLogoutResponseDto { Success = true, Operator = op.FullName };
     }
@@ -1336,13 +1448,18 @@ public class AuthService : IAuthService
         // Same email can belong to both a Member and a staff (User/Operator) account.
         // Scope the lookup to whichever screen the request came from so the reset never
         // lands on the wrong account type.
-        var user = accountType == "member" ? null : await _db.Users.FirstOrDefaultAsync(u => u.Email == email);
-        var op = accountType == "member" ? null : await _db.Operators.FirstOrDefaultAsync(o => o.Email == email);
+        // Compared case-insensitively on both sides - `email` above is already lowered, but a
+        // stored address saved in mixed case (e.g. "John@Gmail.com") would otherwise never
+        // match, and this method fails silent by design (see below), so the person requesting
+        // a reset would see "check your email" and genuinely never receive one, with no error
+        // anywhere to explain why.
+        var user = accountType == "member" ? null : await _db.Users.FirstOrDefaultAsync(u => u.Email.ToLower() == email);
+        var op = accountType == "member" ? null : await _db.Operators.FirstOrDefaultAsync(o => o.Email.ToLower() == email);
         // Members can end up with duplicate rows sharing an email (e.g. abandoned re-registrations).
         // Prefer the active one so a reset never lands on a stale/suspended duplicate instead of
         // the account the person is actually trying to log into.
         var member = accountType == "staff" ? null : await _db.Members
-            .Where(m => m.Email == email)
+            .Where(m => m.Email.ToLower() == email)
             .OrderByDescending(m => m.Status == MemberStatus.Active)
             .ThenByDescending(m => m.UpdatedAt)
             .FirstOrDefaultAsync();
@@ -1534,6 +1651,11 @@ public class AuthService : IAuthService
 
     public async Task AdminSwitchOutAsync(Guid adminId, Guid shiftId)
     {
+        // Same split AdminSwitchInAsync itself has to bridge: a switched-in admin can be a
+        // genuine Users-table Admin, or an operator promoted with IsGlobalAdmin (e.g.
+        // "Ankur"/"Nazmin", managed from the Operators tab, not the Admins list). Checking
+        // Users alone meant every switch-out by a promoted operator produced no audit row at
+        // all - the switch-in was logged, the switch-out silently wasn't.
         var admin = await _db.Users.FindAsync(adminId);
         if (admin != null)
         {
@@ -1542,6 +1664,20 @@ public class AuthService : IAuthService
                 UserId = admin.Id,
                 UserRole = Roles.Admin,
                 UserName = admin.FullName,
+                Action = AuditActions.AdminSwitchOut,
+                Details = new { shiftId }
+            });
+            return;
+        }
+
+        var adminOp = await _db.Operators.FindAsync(adminId);
+        if (adminOp != null && adminOp.IsGlobalAdmin)
+        {
+            await _audit.LogAsync(new AuditEntry
+            {
+                UserId = adminOp.Id,
+                UserRole = Roles.Admin,
+                UserName = adminOp.FullName,
                 Action = AuditActions.AdminSwitchOut,
                 Details = new { shiftId }
             });
@@ -1601,12 +1737,66 @@ public class AuthService : IAuthService
 
     public async Task CompletePasswordResetAsync(ResetPasswordDto dto)
     {
-        var email = dto.Email.Trim().ToLowerInvariant();
-        var user = await _db.Users.FirstOrDefaultAsync(u => u.Email == email && u.ResetToken == dto.Token && u.ResetTokenExpiry > DateTimeOffset.UtcNow);
-        var op = await _db.Operators.FirstOrDefaultAsync(o => o.Email == email && o.ResetToken == dto.Token && o.ResetTokenExpiry > DateTimeOffset.UtcNow);
-        var member = await _db.Members.FirstOrDefaultAsync(m => m.Email == email && m.ResetToken == dto.Token && m.ResetTokenExpiry > DateTimeOffset.UtcNow);
+        // No time cutoff on purpose - the link is one-time-use, not one-hour-use. A token is
+        // valid until it is actually spent (the three ResetToken = null lines below, the moment
+        // this method finishes) or superseded by a newer request for the same account
+        // (InitiatePasswordResetAsync overwrites it), never by a clock. ResetTokenExpiry is
+        // still stamped when a token is issued - WalletService reads it to avoid re-sending a
+        // welcome email while one is already outstanding - but nothing here treats it as a
+        // deadline any more.
+        //
+        // What removing that clock check took with it: ResetPasswordDto.Token has no [Required]
+        // attribute, so a request that omits it (or sends it explicitly as null) arrives here as
+        // dto.Token == null. ResetToken defaults to null on every account until a reset is
+        // actually requested, so "ResetToken == dto.Token" alone would then match the first
+        // account it found that had never requested one - in effect, unauthenticated access to
+        // any untouched account. The expiry comparison used to block this by accident (EF
+        // translates a null-vs-timestamp comparison to SQL's three-valued NULL, which a WHERE
+        // clause never treats as a match) - this replaces that accident with the real guard.
+        if (string.IsNullOrWhiteSpace(dto.Token))
+            throw new AuthorizationException("Invalid or expired reset token.");
 
-        if (user == null && op == null && member == null) throw new AuthorizationException("Invalid or expired reset token.");
+        // Matched on ResetToken ALONE, not "Email AND ResetToken" - the token is already the
+        // unguessable, single-use credential here (a random 32-char hex string, minted only
+        // when a reset was actually requested), so it is what should decide this, not an email
+        // address that can go stale independently of it. It very much does: an operator can
+        // correct a member's email at the branch (a routine, common edit) with nothing syncing
+        // that change up to Head Office - see MemberService.UpdateMemberAsync's member.updated
+        // fix - so Head Office's copy of Email can lag what was actually emailed to the member
+        // for the reset link that carries this exact token. Requiring both meant a perfectly
+        // valid, unspent, correctly-delivered token was rejected as "invalid or expired" purely
+        // because of an unrelated sync lag on a field that was never the credential.
+        //
+        // dto.Email is still read and normalized below, kept only as a non-blocking sanity
+        // signal (logged on mismatch) - never a second gate the token has to also clear.
+        var email = dto.Email.Trim().ToLowerInvariant();
+        var user = await _db.Users.FirstOrDefaultAsync(u => u.ResetToken == dto.Token);
+        var op = await _db.Operators.FirstOrDefaultAsync(o => o.ResetToken == dto.Token);
+        var member = await _db.Members.FirstOrDefaultAsync(m => m.ResetToken == dto.Token);
+
+        var matchedEmail = (user?.Email ?? op?.Email ?? member?.Email)?.Trim().ToLowerInvariant();
+        if (matchedEmail != null && matchedEmail != email)
+        {
+            _logger.LogInformation(
+                "Password reset token matched an account whose stored email ({StoredEmail}) " +
+                "differs from the one submitted ({SubmittedEmail}) - proceeding on the token, " +
+                "which is the actual credential here.", matchedEmail, email);
+        }
+
+        if (user == null && op == null && member == null)
+        {
+            // Not necessarily a dead token - just a member Head Office does not have a row for
+            // yet. See ApplyMemberResetTokenAsync's own docstring for why that method refuses to
+            // invent one: a branch that has never told Head Office a member exists at all is
+            // something to wait for, not something to guess at. But the token itself already
+            // arrived here the moment it was minted (ShareMemberResetTokenAsync sends it
+            // separately from - and before - the member ever needs to exist), so it does not
+            // have to wait on a Member row to be checked against.
+            if (_configuration.IsHeadOffice() && await TryCompleteResetForUnsyncedMemberAsync(email, dto.Token, dto.NewPassword))
+                return;
+
+            throw new AuthorizationException("Invalid or expired reset token.");
+        }
 
         var newHash = BCryptNet.HashPassword(dto.NewPassword);
         if (user != null)
@@ -1704,6 +1894,77 @@ public class AuthService : IAuthService
                 Details = new { status = "success", resetAt = DateTimeOffset.UtcNow },
             });
         }
+    }
+
+    /// <summary>
+    /// Completes a member's reset when Head Office has the token but not the member - the same
+    /// gap ApplyMemberResetTokenAsync defers on and waits for a member.created that, for a member
+    /// created before this branch's sync ever ran, may never arrive.
+    ///
+    /// A member's password only ever needs to reach one place: the branch's own row, which is
+    /// what a gaming PC actually checks at login (see the comment on the ordinary member branch
+    /// above). Head Office does not need a Member row of its own to queue that command - it only
+    /// needs to know which branch and which member id, and both of those already arrived with the
+    /// reset-token event itself, stored as-received in SyncInboxEntries. Matching this dormant
+    /// event on email and token is exactly the same check the ordinary path makes against a real
+    /// Member row; the only thing missing here is the row, not the proof of who asked.
+    /// </summary>
+    private async Task<bool> TryCompleteResetForUnsyncedMemberAsync(string email, string token, string newPassword)
+    {
+        var candidates = await _db.SyncInboxEntries
+            .Where(e => e.EventType == "member.reset_requested" && !e.Applied)
+            .ToListAsync();
+
+        foreach (var entry in candidates)
+        {
+            using var doc = JsonDocument.Parse(entry.EventData);
+            var root = doc.RootElement;
+            var entryEmail = root.TryGetProperty("email", out var e) ? e.GetString() : null;
+            var entryToken = root.TryGetProperty("resetToken", out var t) ? t.GetString() : null;
+
+            // Token alone, same reasoning as the main lookup above: this entry's own "email"
+            // field was captured at the moment the reset was requested and can just as easily
+            // have gone stale if the branch corrected the member's email afterward, before Head
+            // Office ever got a member.created row to check it against.
+            if (entryToken != token)
+                continue;
+
+            _db.Add(new BranchCommand
+            {
+                Id = Guid.NewGuid(),
+                BranchId = entry.BranchId,
+                CommandType = "set_member_password",
+                Payload = JsonSerializer.Serialize(new
+                {
+                    memberId = entry.AggregateId,
+                    passwordHash = BCryptNet.HashPassword(newPassword),
+                }),
+                Status = BranchCommandStatus.Pending,
+                RequestedByUserId = Guid.Empty,   // the member themselves, not a Head Office user
+                CreatedAt = DateTimeOffset.UtcNow,
+            });
+
+            // Spent, the same as ResetToken = null on a real row - this exact token cannot be
+            // replayed, and it stops ApplyMemberResetTokenAsync's retry from still trying to
+            // apply it if the member.created it was waiting on ever does show up afterward.
+            entry.Applied = true;
+            entry.ApplyError = null;
+            await _db.SaveChangesAsync();
+
+            await _audit.LogAsync(new AuditEntry
+            {
+                UserRole = "Member",
+                UserName = entryEmail ?? email,
+                Action = AuditActions.PasswordReset,
+                TargetType = "member",
+                TargetId = entry.AggregateId,
+                Details = new { status = "success", resetAt = DateTimeOffset.UtcNow, viaUnsyncedMember = true },
+            });
+
+            return true;
+        }
+
+        return false;
     }
 
     public async Task ChangeCredentialsAsync(Guid targetUserId, ChangeCredentialsDto dto)

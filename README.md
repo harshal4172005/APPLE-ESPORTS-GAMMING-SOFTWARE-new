@@ -355,8 +355,7 @@ http://localhost:5015/swagger
 | **Food Orders** | `POST` | `/api/food-orders` | Place food order |
 | **Cash** | `POST` | `/api/cash-register/open` | Open cash register (shift start) |
 | **Cash** | `POST` | `/api/cash-desk/close` | Close shift with cash count |
-| **EOD** | `GET` | `/api/eod/preview` | Preview day's financials |
-| **EOD** | `POST` | `/api/eod/finalize` | Lock immutable EOD snapshot |
+| **EOD** | `GET` | `/api/eod/preview` | Day's financials, computed live |
 | **PCs** | `GET` | `/api/pc-status` | Get all PC states (live) |
 | **Reports** | `GET` | `/api/eod/range-report` | Date range revenue report |
 

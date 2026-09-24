@@ -32,6 +32,15 @@ public class FoodOrdersController : ControllerBase
         return Ok(ApiResponse<PaginatedResult<FoodOrderDto>>.Ok(result));
     }
 
+    /// <summary>Every order (any status) in a date range - the History section on Food Orders,
+    /// separate from the live "active only" board GetActiveOrders feeds.</summary>
+    [HttpGet("history")]
+    public async Task<IActionResult> GetOrderHistory([FromQuery] DateOnly fromDate, [FromQuery] DateOnly toDate)
+    {
+        var result = await _foodOrderService.GetOrderHistoryAsync(GetBranchId(), fromDate, toDate);
+        return Ok(ApiResponse<System.Collections.Generic.List<FoodOrderDto>>.Ok(result));
+    }
+
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetOrder(Guid id)
     {

@@ -1,10 +1,23 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Globe, AlertTriangle, ArrowRightLeft } from 'lucide-react';
+import { Globe, AlertTriangle, ArrowRightLeft, Calendar, Download } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import api from '../../config/api';
 import PageHeader from '../../components/layout/PageHeader';
 import { format } from 'date-fns';
+import { createReport, addTable, save } from '../../utils/pdfReport';
+
+const todayIso = () => format(new Date(), 'yyyy-MM-dd');
+
+// Remembered per-browser so reopening the desk keeps whatever range an operator was last
+// looking at, rather than always snapping back to today - same convention as Member Amount Desk.
+const readStoredDate = (key) => {
+  try {
+    return localStorage.getItem(key) || todayIso();
+  } catch {
+    return todayIso();
+  }
+};
 
 export default function OnlineDeskPage() {
   const { isSuperAdmin, user } = useAuth();
@@ -13,7 +26,17 @@ export default function OnlineDeskPage() {
   const [data, setData] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
-  
+  const [fromDate, setFromDate] = useState(() => readStoredDate('onlineDesk.fromDate'));
+  const [toDate, setToDate] = useState(() => readStoredDate('onlineDesk.toDate'));
+
+  useEffect(() => {
+    try { localStorage.setItem('onlineDesk.fromDate', fromDate); } catch { /* ignore */ }
+  }, [fromDate]);
+
+  useEffect(() => {
+    try { localStorage.setItem('onlineDesk.toDate', toDate); } catch { /* ignore */ }
+  }, [toDate]);
+
   const targetBranchId = isSuperAdmin ? activeBranch?.id : user?.branchId;
 
   const fetchOnlineDesk = useCallback(async () => {
@@ -25,19 +48,52 @@ export default function OnlineDeskPage() {
 
     try {
       setError(null);
-      const response = await api.get('/system-desks/online/active', { params: { branchId: targetBranchId } });
+      const response = await api.get('/system-desks/online/active', {
+        params: { branchId: targetBranchId, fromDate, toDate },
+      });
       setData(response.data.data);
     } catch (err) {
       setError(err.response?.data?.message || 'Failed to fetch online desk summary');
     } finally {
       setIsLoading(false);
     }
-  }, [targetBranchId, isSuperAdmin]);
+  }, [targetBranchId, isSuperAdmin, fromDate, toDate]);
 
   useEffect(() => {
     setIsLoading(true);
     fetchOnlineDesk();
   }, [fetchOnlineDesk]);
+
+  const resetToToday = () => {
+    setFromDate(todayIso());
+    setToDate(todayIso());
+  };
+
+  const handleDownloadPdf = () => {
+    if (!data || data.transactions.length === 0) return;
+    const rangeLabel = fromDate === toDate ? fromDate : `${fromDate} to ${toDate}`;
+    const subtitle = `${activeBranch?.name || 'Branch'}  •  ${rangeLabel}`;
+    const { doc } = createReport({ title: 'Online Desk', subtitle });
+    let y = 90;
+
+    y = addTable(doc, y, {
+      title: 'Online Desk', subtitle,
+      heading: `Total Online Collected: Rs ${data.totalOnlineSales.toFixed(2)}`,
+      head: ['Date & Time', 'Description', 'Amount'],
+      body: data.transactions.map(tx => {
+        const match = tx.description.match(/^(.*) \((.*)\)$/);
+        const mainText = match ? match[1] : tx.description;
+        const customerName = match ? match[2] : null;
+        return [
+          format(new Date(tx.timestamp), 'MMM d, hh:mm a'),
+          customerName ? `${customerName} - ${mainText}` : mainText,
+          `+Rs ${tx.amount.toFixed(2)}`,
+        ];
+      }),
+    });
+
+    save(doc, `online-desk-${fromDate}${fromDate !== toDate ? `_to_${toDate}` : ''}.pdf`);
+  };
 
   if (isSuperAdmin && !activeBranch) {
     return (
@@ -68,6 +124,44 @@ export default function OnlineDeskPage() {
         />
       </div>
 
+      <div className="flex flex-wrap items-center gap-3 mb-6 bg-bg-2 border border-border rounded-xl p-4">
+        <Calendar className="w-4 h-4 text-text-3 shrink-0" />
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-text-3 uppercase tracking-wider">From</label>
+          <input
+            type="date"
+            value={fromDate}
+            max={toDate}
+            onChange={(e) => setFromDate(e.target.value)}
+            className="bg-bg-3 border border-border rounded-lg px-3 py-1.5 text-sm text-text"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-text-3 uppercase tracking-wider">To</label>
+          <input
+            type="date"
+            value={toDate}
+            min={fromDate}
+            max={todayIso()}
+            onChange={(e) => setToDate(e.target.value)}
+            className="bg-bg-3 border border-border rounded-lg px-3 py-1.5 text-sm text-text"
+          />
+        </div>
+        <button
+          onClick={resetToToday}
+          className="text-xs font-medium text-accent hover:text-accent/80 transition-colors ml-auto"
+        >
+          Today
+        </button>
+        <button
+          onClick={handleDownloadPdf}
+          disabled={!data || data.transactions.length === 0}
+          className="btn-secondary py-1.5 px-3 flex items-center gap-1.5 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Download className="w-3.5 h-3.5" /> Download PDF
+        </button>
+      </div>
+
       {error && (
         <div className="bg-neon-red/10 border border-neon-red/30 text-neon-red p-3 rounded-xl mb-4 flex items-center gap-2 text-sm">
           <AlertTriangle className="w-4 h-4" /> {error}
@@ -82,15 +176,15 @@ export default function OnlineDeskPage() {
             <div className="text-4xl font-mono font-bold text-accent mb-2">
               ₹{data.totalOnlineSales.toFixed(2)}
             </div>
-            <p className="text-xs text-text-3">System calculated from active shift transactions</p>
+            <p className="text-xs text-text-3">For the selected date range</p>
           </div>
 
           {/* Transactions List */}
           <div className="col-span-1 md:col-span-2 border border-border bg-bg-2 rounded-xl p-6 h-fit max-h-[60vh] flex flex-col">
-            <h3 className="text-sm font-heading font-bold uppercase tracking-wider text-text mb-4">Recent Online Transactions</h3>
+            <h3 className="text-sm font-heading font-bold uppercase tracking-wider text-text mb-4">Online Transactions</h3>
             {data.transactions.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-text-3 text-sm py-8">
-                No online transactions in this shift yet.
+                No online transactions in this range yet.
               </div>
             ) : (
               <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin">

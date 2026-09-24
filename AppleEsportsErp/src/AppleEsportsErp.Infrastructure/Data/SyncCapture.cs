@@ -125,6 +125,18 @@ public static class SyncCapture
         // overridden, so it is the current row that matters and a late-arriving update is
         // resolved the same "newest wins" way as everything else here.
         [typeof(Reservation)] = "reservation",
+
+        // An operator created (or edited) at a branch's own counter, rather than pushed down
+        // from Head Office. The comment this replaces assumed operators were entirely "the
+        // heartbeat's job" - true only in one direction. BranchHeartbeatController's config
+        // reply pushes Head Office's operators DOWN to a branch; nothing ever carried a
+        // branch-created operator back UP. Confirmed live at Citylight 144Hz: an operator
+        // created locally had no row at Head Office, so every session, bill and payment they
+        // ever touched sat permanently stuck in the sync inbox with "Head Office has no
+        // operator X" - 12 sessions and 21 payments deep before anyone noticed, because the
+        // branch's own screen showed all of it working. Sessions, cash desk, EOD, everything
+        // that names an operator was silently invisible at Head Office for exactly this reason.
+        [typeof(Operator)] = "operator",
     };
 
     /// <summary>
@@ -143,34 +155,46 @@ public static class SyncCapture
         foreach (var entity in tracker.Entries().ToList())
         {
             if (entity.State is not (EntityState.Added or EntityState.Modified)) continue;
-            if (!Watched.TryGetValue(entity.Entity.GetType(), out var aggregate)) continue;
-
-            var id = ReadGuid(entity, "Id");
-            var branchId = ReadGuid(entity, "BranchId");
-
-            // Without both, Head Office has nothing to file this against. Skipped rather than
-            // thrown: a missing id is a bug worth finding, but not one worth refusing to close
-            // somebody's till over.
-            if (id is null || branchId is null) continue;
-
-            entries.Add(new SyncOutboxEntry
-            {
-                Id = Guid.NewGuid(),
-                BranchId = branchId.Value,
-                AggregateType = aggregate,
-                AggregateId = id.Value,
-
-                // "changed" rather than created/updated. Head Office applies these as an
-                // upsert keyed on the row's own id, so it does not matter which it was - and
-                // a branch that was offline may deliver an update before Head Office has ever
-                // seen the insert.
-                EventType = $"{aggregate}.changed",
-                EventData = Snapshot(entity),
-                CreatedAt = DateTime.UtcNow,
-            });
+            var entry = BuildEntryFor(entity);
+            if (entry != null) entries.Add(entry);
         }
 
         return entries;
+    }
+
+    /// <summary>
+    /// Builds the same outbox entry <see cref="Collect"/> would for this row, for a caller that
+    /// already has an <see cref="EntityEntry"/> in hand and wants a fresh delivery attempt
+    /// regardless of the change tracker's own Added/Modified state - a still-open shift or
+    /// drawer that a reconciliation sweep found sitting Unchanged with nothing queued for it.
+    /// </summary>
+    public static SyncOutboxEntry? BuildEntryFor(EntityEntry entity)
+    {
+        if (!Watched.TryGetValue(entity.Entity.GetType(), out var aggregate)) return null;
+
+        var id = ReadGuid(entity, "Id");
+        var branchId = ReadGuid(entity, "BranchId");
+
+        // Without both, Head Office has nothing to file this against. Skipped rather than
+        // thrown: a missing id is a bug worth finding, but not one worth refusing to close
+        // somebody's till over.
+        if (id is null || branchId is null) return null;
+
+        return new SyncOutboxEntry
+        {
+            Id = Guid.NewGuid(),
+            BranchId = branchId.Value,
+            AggregateType = aggregate,
+            AggregateId = id.Value,
+
+            // "changed" rather than created/updated. Head Office applies these as an
+            // upsert keyed on the row's own id, so it does not matter which it was - and
+            // a branch that was offline may deliver an update before Head Office has ever
+            // seen the insert.
+            EventType = $"{aggregate}.changed",
+            EventData = Snapshot(entity),
+            CreatedAt = DateTime.UtcNow,
+        };
     }
 
     /// <summary>
@@ -227,4 +251,26 @@ public static class SyncCapture
         var property = entity.Properties.FirstOrDefault(p => p.Metadata.Name == propertyName);
         return property?.CurrentValue is Guid g && g != Guid.Empty ? g : null;
     }
+
+    /// <summary>
+    /// A short, stable fingerprint of a row's current snapshot - the same JSON <see cref="Collect"/>
+    /// would send, hashed rather than sent whole. Lets two databases ask "do we still agree
+    /// about this row" by exchanging a few bytes instead of the row itself; only a row that
+    /// actually disagrees needs its full snapshot sent.
+    /// </summary>
+    public static string ComputeChecksum(EntityEntry entity)
+    {
+        var json = Snapshot(entity);
+        var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(json));
+        return Convert.ToHexString(hash);
+    }
+
+    /// <summary>
+    /// The watched CLR type behind an aggregate's event-name string, for a caller that received
+    /// only the string - over the wire, or read back off an outbox row - and needs to load the
+    /// actual entity. Kept as the reverse of <see cref="Watched"/> rather than a second list of
+    /// the same names, so the two can never go out of sync with each other.
+    /// </summary>
+    public static Type? TypeForAggregate(string aggregateType) =>
+        Watched.FirstOrDefault(kv => kv.Value == aggregateType).Key;
 }

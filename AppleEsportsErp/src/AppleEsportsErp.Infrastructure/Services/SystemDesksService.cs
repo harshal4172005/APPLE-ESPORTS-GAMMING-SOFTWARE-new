@@ -19,7 +19,8 @@ public class SystemDesksService : ISystemDesksService
         _unitOfWork = unitOfWork;
     }
 
-    public async Task<OnlineDeskSummaryDto> GetActiveOnlineDeskAsync(Guid branchId, Guid shiftId)
+    public async Task<OnlineDeskSummaryDto> GetActiveOnlineDeskAsync(
+        Guid branchId, Guid shiftId, DateOnly? fromDate = null, DateOnly? toDate = null)
     {
         var shift = await _unitOfWork.Repository<Shift>().Query()
             .FirstOrDefaultAsync(s => s.Id == shiftId && s.BranchId == branchId);
@@ -36,7 +37,13 @@ public class SystemDesksService : ISystemDesksService
         // one day's takings into three sets of figures that reconcile against nothing.
         //
         // How often somebody logs in is their business. The day's money is the day's money.
-        var (dayStart, dayEnd) = IndiaTime.BusinessDayRangeFor(DateTimeOffset.UtcNow);
+        //
+        // Overridable to a chosen day or range, the same as Wallet Desk - no dates given still
+        // means today, unchanged.
+        var resolvedFrom = fromDate ?? IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
+        var resolvedTo = toDate ?? fromDate ?? IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
+        var (dayStart, _) = IndiaTime.BusinessDayRange(resolvedFrom);
+        var (_, dayEnd) = IndiaTime.BusinessDayRange(resolvedTo);
 
         var payments = await _unitOfWork.Repository<Payment>().Query()
             .Where(p => p.BranchId == branchId
@@ -92,7 +99,8 @@ public class SystemDesksService : ISystemDesksService
         return dto;
     }
 
-    public async Task<WalletDeskSummaryDto> GetActiveWalletDeskAsync(Guid branchId, Guid shiftId)
+    public async Task<CashDeskSummaryDto> GetActiveCashDeskAsync(
+        Guid branchId, Guid shiftId, DateOnly? fromDate = null, DateOnly? toDate = null)
     {
         var shift = await _unitOfWork.Repository<Shift>().Query()
             .FirstOrDefaultAsync(s => s.Id == shiftId && s.BranchId == branchId);
@@ -100,13 +108,74 @@ public class SystemDesksService : ISystemDesksService
         if (shift == null)
             throw new Exception("Shift not found.");
 
+        // Same trading-day scope as the other desks - see GetActiveOnlineDeskAsync's note. Not
+        // scoped to whichever register happens to be open right now, deliberately: a register
+        // closes when its shift ends, but the cash it moved should stay just as easy to find the
+        // day after as it was the minute it happened.
+        var resolvedFrom = fromDate ?? IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
+        var resolvedTo = toDate ?? fromDate ?? IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
+        var (dayStart, _) = IndiaTime.BusinessDayRange(resolvedFrom);
+        var (_, dayEnd) = IndiaTime.BusinessDayRange(resolvedTo);
 
-        // Same trading-day scope as the Online Desk — see the note there.
-        var (dayStart, dayEnd) = IndiaTime.BusinessDayRangeFor(DateTimeOffset.UtcNow);
+        var cashTxs = await _unitOfWork.Repository<CashTransaction>().Query()
+            .Where(t => t.BranchId == branchId && t.CreatedAt >= dayStart && t.CreatedAt < dayEnd)
+            .OrderByDescending(t => t.CreatedAt)
+            .ToListAsync();
+
+        var dto = new CashDeskSummaryDto
+        {
+            ShiftId = shiftId,
+            FromDate = resolvedFrom,
+            ToDate = resolvedTo,
+        };
+
+        foreach (var tx in cashTxs)
+        {
+            dto.TotalCashSales += tx.CashAmount;
+            dto.Transactions.Add(new AppleEsportsErp.Application.DTOs.Cash.CashTransactionDto
+            {
+                Id = tx.Id,
+                BillId = tx.BillId,
+                PcNumber = tx.PcNumber,
+                CashAmount = tx.CashAmount,
+                CashReceived = tx.CashReceived,
+                ChangeReturned = tx.ChangeReturned,
+                ActualCashCollected = tx.ActualCashCollected,
+                GamingAmount = tx.GamingAmount,
+                FoodAmount = tx.FoodAmount,
+                TransactionType = tx.TransactionType,
+                CustomerName = tx.CustomerName,
+                CreatedAt = tx.CreatedAt,
+            });
+        }
+
+        return dto;
+    }
+
+    public async Task<WalletDeskSummaryDto> GetActiveWalletDeskAsync(
+        Guid branchId, Guid shiftId, DateOnly? fromDate = null, DateOnly? toDate = null)
+    {
+        var shift = await _unitOfWork.Repository<Shift>().Query()
+            .FirstOrDefaultAsync(s => s.Id == shiftId && s.BranchId == branchId);
+
+        if (shift == null)
+            throw new Exception("Shift not found.");
+
+        // Same trading-day scope as the Online Desk — see the note there — but overridable: an
+        // operator looking back at a previous day, or a range, needs the same figures for that
+        // window instead of always today's. No dates given still means today, unchanged.
+        var resolvedFrom = fromDate ?? IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
+        var resolvedTo = toDate ?? fromDate ?? IndiaTime.BusinessDayOf(DateTimeOffset.UtcNow);
+        var (dayStart, _) = IndiaTime.BusinessDayRange(resolvedFrom);
+        var (_, dayEnd) = IndiaTime.BusinessDayRange(resolvedTo);
 
         var walletTxs = await _unitOfWork.Repository<WalletTransaction>().Query()
             .Where(w => w.BranchId == branchId && w.CreatedAt >= dayStart && w.CreatedAt < dayEnd)
             .Include(w => w.Member)
+            .Include(w => w.Bill)
+                .ThenInclude(b => b!.Pc)
+            .Include(w => w.Bill)
+                .ThenInclude(b => b!.Session)
             .ToListAsync();
 
         var walletPayments = await _unitOfWork.Repository<Payment>().Query()
@@ -116,11 +185,17 @@ public class SystemDesksService : ISystemDesksService
                      && p.CreatedAt < dayEnd)
             .Include(p => p.Bill)
                 .ThenInclude(b => b.Member)
+            .Include(p => p.Bill)
+                .ThenInclude(b => b.Pc)
+            .Include(p => p.Bill)
+                .ThenInclude(b => b.Session)
             .ToListAsync();
 
         var dto = new WalletDeskSummaryDto
         {
-            ShiftId = shiftId
+            ShiftId = shiftId,
+            FromDate = resolvedFrom,
+            ToDate = resolvedTo,
         };
 
         foreach (var tx in walletTxs)
@@ -140,7 +215,9 @@ public class SystemDesksService : ISystemDesksService
                 Timestamp = tx.CreatedAt,
                 Description = $"Wallet {tx.Action} - {tx.TargetWallet} ({tx.Member?.Username ?? "Member"}) " + (string.IsNullOrEmpty(tx.Reason) ? "" : $"({tx.Reason})"),
                 Amount = tx.Amount,
-                Action = tx.Action.ToString()
+                Action = tx.Action.ToString(),
+                PcName = tx.Bill?.Pc?.PcName ?? tx.Bill?.Pc?.PcNumber,
+                DurationMinutes = tx.Bill?.Session?.ActualDurationMin ?? tx.Bill?.Session?.PlannedDurationMin
             });
         }
 
@@ -154,7 +231,9 @@ public class SystemDesksService : ISystemDesksService
                 Description = $"Bill Payment via Wallet #{payment.Bill?.BillNumber} " +
                               $"({payment.Bill?.CustomerName ?? payment.Bill?.Member?.Username ?? "Walk-in"})",
                 Amount = payment.WalletAmount,
-                Action = "Deduction"
+                Action = "Deduction",
+                PcName = payment.Bill?.Pc?.PcName ?? payment.Bill?.Pc?.PcNumber,
+                DurationMinutes = payment.Bill?.Session?.ActualDurationMin ?? payment.Bill?.Session?.PlannedDurationMin
             });
         }
 

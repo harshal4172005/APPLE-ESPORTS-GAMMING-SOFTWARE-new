@@ -81,4 +81,19 @@ public class PcStateDto
     /// </summary>
     public DateTimeOffset? SessionStartTime { get; set; }
     public DateTimeOffset? SessionEndTime { get; set; }
+
+    /// <summary>The session's own committed package price/duration, if it has one - see
+    /// Pc.CurrentSessionPackagePrice for why Head Office needs this snapshot at all.</summary>
+    public decimal? SessionPackagePrice { get; set; }
+    public int? SessionPlannedDurationMin { get; set; }
+
+    /// <summary>
+    /// True if PcStatusHub's shutdown command was sent to this PC and it has not reconnected
+    /// since (see Pc.PoweredOff). Missing from this DTO for as long as the heartbeat has
+    /// existed - State and the session fields travel, this never did - so Head Office's own
+    /// copy of a shut-down PC could never turn red no matter how many times its own dashboard
+    /// was refreshed: the fact simply never arrived to refresh into. The branch's own screen
+    /// only ever looked broken because it re-fetches from its own database, which did have it.
+    /// </summary>
+    public bool PoweredOff { get; set; }
 }

@@ -38,7 +38,17 @@ public static class ControllerExtensions
         {
             sysOp = new Operator
             {
-                Id = Guid.NewGuid(),
+                // Deterministic, not Guid.NewGuid() - this same placeholder gets created
+                // independently on the branch's own database AND on Head Office's, whichever
+                // one needs it first. A random id meant the two sides invented DIFFERENT ids
+                // for what is meant to be the same account, sharing only the username (itself
+                // already deterministic below) - so every later sync of anything belonging to
+                // this operator (a shift, in particular) hit Head Office's own copy under a
+                // different id and failed a foreign key check, forever, on a 15-minute retry.
+                // Deriving the id the same way the username already is means both sides land
+                // on the exact same Guid the first time either of them creates it, with
+                // nothing to reconcile afterward.
+                Id = DeterministicSystemAdminId(branchId),
                 BranchId = branchId,
                 FullName = "System Administrator",
                 Username = sysUsername,
@@ -55,6 +65,19 @@ public static class ControllerExtensions
         return sysOp.Id;
     }
 
+    /// <summary>
+    /// Same Guid every time for the same branch, on any database - MD5 of a fixed, namespaced
+    /// string is stable across machines and .NET versions, unlike Guid.NewGuid(). Not used for
+    /// anything security-sensitive (the account's password is the literal string "LOCKED", not
+    /// a real credential), so a hash being predictable from a branch id is not a weakness here.
+    /// </summary>
+    private static Guid DeterministicSystemAdminId(Guid branchId)
+    {
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var seed = System.Text.Encoding.UTF8.GetBytes($"system_admin:{branchId:N}");
+        return new Guid(md5.ComputeHash(seed));
+    }
+
     public static async Task<Guid> GetShiftIdAsync(this ControllerBase controller)
     {
         var user = controller.User;
@@ -65,18 +88,20 @@ public static class ControllerExtensions
         var branchId = Guid.Parse(branchIdStr);
         var db = controller.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
 
-        // For regular operators, try JWT claim first, then fallback to database
+        // For regular operators: the operator's own most recent active shift, full stop - the
+        // exact same query AuthService.LoginOperatorAsync itself uses to decide resume-vs-new
+        // at login. This used to trust the JWT's own "shiftId" claim first, checking only that
+        // SOME shift with that id was still Active - never that it belonged to this operator,
+        // and never that it was still their CURRENT shift. A browser tab left open holding a
+        // token from an earlier shift that was never properly closed (a crash, a power cut)
+        // could carry that stale id straight into a brand new login's actions: a cash register
+        // opened minutes after a fresh login attached itself to a shift from days earlier
+        // instead of the one that login had just created, and everything recorded against it
+        // silently followed that orphaned shift - including failing to sync to Head Office at
+        // all, since nothing had touched that old row in the meantime to give it a fresh chance
+        // to be sent. Querying fresh every time costs one indexed lookup and cannot go stale.
         if (!user.IsInRole(Roles.SuperAdmin) && !user.IsInRole(Roles.Admin) && !user.IsInRole("Member"))
         {
-            var shiftClaim = user.FindFirstValue("shiftId");
-            if (!string.IsNullOrEmpty(shiftClaim) && Guid.TryParse(shiftClaim, out var shiftGuid))
-            {
-                var shiftFromClaim = await db.Shifts.FirstOrDefaultAsync(s => s.Id == shiftGuid && s.Status == ShiftStatus.Active);
-                if (shiftFromClaim != null)
-                    return shiftGuid;
-            }
-
-            // Fallback: Get the operator's active shift from database
             var operatorId = Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier)!);
             var operatorShift = await db.Shifts
                 .Where(s => s.BranchId == branchId && s.OperatorId == operatorId && s.Status == ShiftStatus.Active)

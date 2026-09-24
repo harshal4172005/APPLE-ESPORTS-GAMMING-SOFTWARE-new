@@ -154,6 +154,74 @@ public class ReleasesController : ControllerBase
     }
 
     /// <summary>
+    /// What a gaming PC's own agent asks, on its own schedule — the sibling of <see cref="Latest"/>
+    /// for the standalone agent exe rather than the branch installer.
+    ///
+    /// A gaming PC never installs the ~165MB branch installer: it has no database, no API and no
+    /// Windows service to update, only its own single exe. Publishing that exe as a separate
+    /// artifact against the same <see cref="VersionInfo"/> row is what lets a gaming PC update
+    /// itself in seconds over the shop LAN, and what lets a version with no agent changes publish
+    /// with nothing here to fetch.
+    ///
+    /// Anonymous for the same reason <see cref="Latest"/> is: the agent checks as a machine, not a
+    /// signed-in person, and there is no login screen running at the customer seat to hold a
+    /// session through it.
+    /// </summary>
+    [HttpGet("agent-latest")]
+    [AllowAnonymous]
+    public async Task<IActionResult> AgentLatest(CancellationToken ct)
+    {
+        if (UpstreamHeadOffice is { } upstream)
+        {
+            try
+            {
+                var client = _httpClientFactory.CreateClient();
+                client.Timeout = TimeSpan.FromSeconds(20);
+                var body = await client.GetStringAsync($"{upstream}/api/releases/agent-latest", ct);
+                return Content(body, "application/json");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogInformation(
+                    "Could not ask Head Office about agent updates ({Reason}). Reporting none available.",
+                    ex.GetBaseException().Message);
+                return Ok(ApiResponse<object>.Ok(new { available = false }));
+            }
+        }
+
+        var version = await _db.Set<VersionInfo>()
+            .Where(v => v.ApprovedForRollout)
+            .OrderByDescending(v => v.CreatedAt)
+            .FirstOrDefaultAsync(ct);
+
+        if (version is null
+            || string.IsNullOrWhiteSpace(version.AgentFileName)
+            || string.IsNullOrWhiteSpace(version.AgentSha256))
+        {
+            return Ok(ApiResponse<object>.Ok(new { available = false }));
+        }
+
+        if (!System.IO.File.Exists(Path.Combine(ReleaseFolder, version.AgentFileName)))
+        {
+            _logger.LogError(
+                "Version {Version} is approved and has an agent exe recorded, but {FileName} is not on disk. " +
+                "Gaming PCs are being told there is no update, which is better than sending them to a 404.",
+                version.CurrentVersion, version.AgentFileName);
+            return Ok(ApiResponse<object>.Ok(new { available = false }));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            available = true,
+            version = version.CurrentVersion,
+            releaseNotes = version.ReleaseNotes ?? string.Empty,
+            sha256 = version.AgentSha256,
+            sizeBytes = version.AgentSizeBytes,
+            downloadPath = $"/api/releases/download/{version.AgentFileName}",
+        }));
+    }
+
+    /// <summary>
     /// Hands over the installer itself.
     ///
     /// The branch checks the SHA-256 against what <see cref="Latest"/> published before running
@@ -224,6 +292,11 @@ public class ReleasesController : ControllerBase
     [HttpPost("upload")]
     [Authorize(Roles = Roles.SuperAdmin)]
     [RequestSizeLimit(1_073_741_824)]
+    // RequestSizeLimit alone was not enough: it caps Kestrel's overall request body, but
+    // ASP.NET Core's multipart/form-data parser enforces its own separate 128MB default on
+    // top of that - a branch installer is ~164MB, so every upload failed with "Multipart body
+    // length limit exceeded" even after nginx and RequestSizeLimit were both raised.
+    [RequestFormLimits(MultipartBodyLengthLimit = 1_073_741_824)]
     public async Task<IActionResult> Upload([FromForm] IFormFile file, [FromForm] string version, CancellationToken ct)
     {
         if (file is null || file.Length == 0)
@@ -268,6 +341,73 @@ public class ReleasesController : ControllerBase
 
         _logger.LogInformation(
             "Published installer {FileName} ({SizeMb:N0} MB) for version {Version}. SHA-256 {Hash}.",
+            safeName, file.Length / 1024d / 1024d, version, hash);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            version = record.CurrentVersion,
+            fileName = safeName,
+            sha256 = hash,
+            sizeBytes = file.Length,
+            approved = record.ApprovedForRollout,
+        }));
+    }
+
+    /// <summary>
+    /// Publishes the standalone gaming-PC agent exe against a version — the sibling of
+    /// <see cref="Upload"/> for <see cref="AgentLatest"/> to serve.
+    ///
+    /// A separate endpoint rather than a second file on the same call: the two artifacts are
+    /// built by separate steps of <c>build-branch-installer.ps1</c> and published independently,
+    /// and a version with no agent-side change (a pure server fix, say) can be shipped with only
+    /// the installer uploaded and agents correctly told there is nothing for them to fetch.
+    /// </summary>
+    [HttpPost("upload-agent")]
+    [Authorize(Roles = Roles.SuperAdmin)]
+    [RequestSizeLimit(209_715_200)]
+    [RequestFormLimits(MultipartBodyLengthLimit = 209_715_200)]
+    public async Task<IActionResult> UploadAgent([FromForm] IFormFile file, [FromForm] string version, CancellationToken ct)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail("No agent exe was uploaded.", "NO_FILE"));
+
+        if (string.IsNullOrWhiteSpace(version))
+            return BadRequest(ApiResponse<object>.Fail("Which version is this agent exe for?", "NO_VERSION"));
+
+        var record = await _db.Set<VersionInfo>()
+            .FirstOrDefaultAsync(v => v.CurrentVersion == version, ct);
+
+        if (record is null)
+            return NotFound(ApiResponse<object>.Fail(
+                $"There is no version {version} to attach this to. Create it first.", "VERSION_NOT_FOUND"));
+
+        var safeName = Path.GetFileName(file.FileName);
+        if (!safeName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(ApiResponse<object>.Fail("An agent release must be an .exe.", "NOT_AN_EXE"));
+
+        var target = Path.Combine(ReleaseFolder, safeName);
+
+        var staging = target + ".part";
+        await using (var stream = System.IO.File.Create(staging))
+        {
+            await file.CopyToAsync(stream, ct);
+        }
+
+        string hash;
+        await using (var stream = System.IO.File.OpenRead(staging))
+        {
+            hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, ct)).ToLowerInvariant();
+        }
+
+        System.IO.File.Move(staging, target, overwrite: true);
+
+        record.AgentFileName = safeName;
+        record.AgentSha256 = hash;
+        record.AgentSizeBytes = file.Length;
+        await _db.SaveChangesAsync(ct);
+
+        _logger.LogInformation(
+            "Published agent exe {FileName} ({SizeMb:N0} MB) for version {Version}. SHA-256 {Hash}.",
             safeName, file.Length / 1024d / 1024d, version, hash);
 
         return Ok(ApiResponse<object>.Ok(new

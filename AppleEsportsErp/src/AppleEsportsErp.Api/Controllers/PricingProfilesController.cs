@@ -79,4 +79,58 @@ public class PricingProfilesController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ex.Message));
         }
     }
+
+    [HttpPost("packages")]
+    public async Task<IActionResult> CreatePackage([FromBody] CreatePricingPackageDto dto)
+    {
+        try
+        {
+            var package = await _pricingProfileService.CreatePackageAsync(dto);
+            return Ok(ApiResponse<PricingPackageDto>.Ok(package));
+        }
+        catch (NotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ex.Message));
+        }
+    }
+
+    [HttpPut("packages/{id}")]
+    public async Task<IActionResult> UpdatePackage(Guid id, [FromBody] UpdatePricingPackageDto dto)
+    {
+        try
+        {
+            var package = await _pricingProfileService.UpdatePackageAsync(id, dto);
+            return Ok(ApiResponse<PricingPackageDto>.Ok(package));
+        }
+        catch (NotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ex.Message));
+        }
+    }
+
+    [HttpDelete("packages/{id}")]
+    public async Task<IActionResult> DeletePackage(Guid id)
+    {
+        try
+        {
+            await _pricingProfileService.DeletePackageAsync(id);
+            return Ok(ApiResponse<object>.Ok(null));
+        }
+        catch (NotFoundException ex)
+        {
+            return NotFound(ApiResponse<object>.Fail(ex.Message));
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ex.Message));
+        }
+    }
 }

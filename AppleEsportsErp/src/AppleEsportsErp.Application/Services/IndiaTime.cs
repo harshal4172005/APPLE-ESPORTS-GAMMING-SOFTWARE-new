@@ -22,13 +22,13 @@ public static class IndiaTime
     /// <summary>
     /// Hour (IST) at which one trading day ends and the next begins.
     ///
-    /// Branches run 10:00 to 02:00, so a single night's trading crosses midnight. Cutting
-    /// the day at midnight would split every night across two EOD reports and make the
-    /// figures useless. 06:00 sits in the dead window between closing and opening, so no
-    /// trading is ever cut in half — and any hour between 02:00 and 10:00 would group
-    /// identically.
+    /// This was 6 (the dead window between a 2am close and a 10am open, so a night's
+    /// trading was never split across two EOD reports). Changed to plain midnight on
+    /// 2026-08-23 by explicit business decision - a night that runs past midnight now
+    /// splits across two calendar-day reports, which is accepted as the tradeoff for a
+    /// boundary that matches the date everyone already reads off a clock or a receipt.
     /// </summary>
-    public const int BusinessDayStartHour = 6;
+    public const int BusinessDayStartHour = 0;
 
     /// <summary>Current moment, expressed in IST.</summary>
     public static DateTimeOffset Now => DateTimeOffset.UtcNow.ToOffset(Offset);

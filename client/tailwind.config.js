@@ -51,6 +51,13 @@ export default {
         //
         // maintenance is its own token now. It used to borrow pc.offline, so a machine taken out of
         // service for a fortnight looked identical to one that had simply lost power.
+        //
+        // awaitingsetup is its own token too, for the same reason: a PC record that has never
+        // been claimed by a physical machine used to render Idle (bright blue, "FREE") - visually
+        // identical to a real, working, available seat - because the endpoint behind the Settings
+        // "Add PC" form wrote Idle straight into a brand-new row. Grey rather than another bright
+        // hue on purpose: this state is not something to walk over and use, unlike every other
+        // color in this block.
         pc: {
           idle: '#00baff',        // bright blue   - free
           active: '#00e676',      // bright green  - playing
@@ -58,6 +65,7 @@ export default {
           awaiting: '#ffffff',    // white         - waiting to be billed
           offline: '#ff2d55',     // bright red    - shut down
           maintenance: '#ffd400', // bright yellow - out of service
+          awaitingsetup: '#94a3b8', // grey        - never set up, not bookable
         },
         // Text hierarchy
         text: {

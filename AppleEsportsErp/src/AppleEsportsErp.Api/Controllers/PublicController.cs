@@ -79,6 +79,22 @@ public class PublicController : ControllerBase
     }
 
     /// <summary>
+    /// Whether any PC at this branch is currently in an active session - used by the branch's
+    /// own silent auto-update task (apply-update.ps1) to decide whether to install right now or
+    /// wait for the next 15-minute pass.
+    ///
+    /// Anonymous on purpose: that script runs as SYSTEM, with no operator logged in and nothing
+    /// to authenticate with. It mirrors exactly what BranchBusySignal.jsx already asks the
+    /// dashboard's own /api/pcs for - same question, asked by a caller with no session cookie.
+    /// </summary>
+    [HttpGet("branches/{branchId:guid}/busy")]
+    public async Task<IActionResult> IsBranchBusy(Guid branchId)
+    {
+        var busy = await _db.Pcs.AnyAsync(p => p.BranchId == branchId && p.State == PcState.Active);
+        return Ok(ApiResponse<object>.Ok(new { busy }));
+    }
+
+    /// <summary>
     /// Get the active session for a PC — used by the overlay on startup to load real session data.
     /// Accepts either a PC UUID or a PC name string (e.g. "PC-07").
     /// </summary>
@@ -158,7 +174,12 @@ public class PublicController : ControllerBase
             bufferMinutes = pc.PricingProfile.BufferMinutes;
         }
 
-        decimal liveGamingCharges = AppleEsportsErp.Application.Services.SessionPricingCalculator.CalculateGamingAmount(ratePerHour, bufferMinutes, (decimal)elapsedMinutes);
+        // Package-aware - see SessionPricingCalculator.CalculateLiveGamingAmount. This session's
+        // own committed package (if any) wins, the same as everywhere else that shows a live
+        // amount; activePackages below is only ever a list of what's available, never what this
+        // particular session is actually running under.
+        decimal liveGamingCharges = AppleEsportsErp.Application.Services.SessionPricingCalculator.CalculateLiveGamingAmount(
+            session.PackagePrice, session.PlannedDurationMin, ratePerHour, bufferMinutes, (decimal)elapsedMinutes);
 
         decimal? walletBalance = null;
         decimal? gamingBalance = null;
@@ -218,9 +239,15 @@ public class PublicController : ControllerBase
         if (pc == null)
             return Ok(new { success = false, error = "PC not found" });
 
+        // State changes the moment an operator flags/clears maintenance - a customer-facing
+        // screen still showing yesterday's answer here is a real, visible mistake, not a
+        // cosmetic one. Same reasoning as the plans endpoint's own no-cache headers.
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        Response.Headers.Pragma = "no-cache";
+
         decimal rate = pc.PricingProfile?.BaseHourlyRate ?? 0m;
 
-        return Ok(ApiResponse<object>.Ok(new { id = pc.Id, name = pc.PcName ?? pc.PcNumber, branchId = pc.BranchId, branchName = pc.Branch?.Name, monitorHz = pc.MonitorHz, ratePerHour = rate }));
+        return Ok(ApiResponse<object>.Ok(new { id = pc.Id, name = pc.PcName ?? pc.PcNumber, branchId = pc.BranchId, branchName = pc.Branch?.Name, monitorHz = pc.MonitorHz, ratePerHour = rate, state = pc.State.ToString() }));
     }
 
     [HttpPost("pcs/{pcId:guid}/hz")]
@@ -237,41 +264,103 @@ public class PublicController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { success = true }));
     }
 
+    /// <summary>
+    /// The one place a gaming PC's own AppleEsports.exe reports what version it is actually
+    /// running - separate from AgentVersion, which is the screen-lock agent's own, independent
+    /// version. Called by MainForm.cs every 30 seconds (piggybacked on its own update-check
+    /// loop) so "N of M gaming PCs up to date" on the Updates page reflects the program a
+    /// customer actually plays through, not a different one on the same machine.
+    /// </summary>
+    [HttpPost("pcs/{pcId:guid}/app-version")]
+    public async Task<IActionResult> ReportPcAppVersion(Guid pcId, [FromBody] ReportPcAppVersionDto dto)
+    {
+        if (string.IsNullOrWhiteSpace(dto.Version))
+            return Ok(new { success = false, error = "No version given" });
+
+        var pc = await _db.Pcs.FirstOrDefaultAsync(p => p.Id == pcId);
+        if (pc == null)
+            return Ok(new { success = false, error = "PC not found" });
+
+        if (pc.AppVersion != dto.Version)
+        {
+            pc.AppVersion = dto.Version;
+            pc.UpdatedAt = DateTimeOffset.UtcNow;
+            await _db.SaveChangesAsync();
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { success = true }));
+    }
+
     [HttpGet("pcs/{pcId}/plans")]
     public async Task<IActionResult> GetPcPlans(string pcId)
     {
+        // Pricing changes at any moment - a stale plan list showing an old price on the operator
+        // console or the customer-facing PC screen is a money mistake, not a cosmetic one.
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        Response.Headers.Pragma = "no-cache";
+
         Domain.Entities.Pc? pc = null;
         if (Guid.TryParse(pcId, out var pcGuid))
         {
-            pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).FirstOrDefaultAsync(p => p.Id == pcGuid);
+            pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).ThenInclude(pp => pp!.Packages).FirstOrDefaultAsync(p => p.Id == pcGuid);
         }
         else
         {
-            pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).FirstOrDefaultAsync(p => p.PcNumber == pcId || p.PcName == pcId);
+            pc = await _db.Pcs.Include(p => p.Branch).Include(p => p.PricingProfile).ThenInclude(pp => pp!.Packages).FirstOrDefaultAsync(p => p.PcNumber == pcId || p.PcName == pcId);
         }
 
         if (pc == null)
             return Ok(new { success = false, error = "PC not found" });
 
         decimal ratePerHour = pc.PricingProfile?.BaseHourlyRate ?? 0m;
-
-        var plans = new List<object>();
         string planName = string.IsNullOrEmpty(pc.MonitorHz) ? "Standard" : $"{pc.MonitorHz}Hz Tier";
 
-        plans.Add(new { id = Guid.NewGuid(), name = $"1 Hour ({planName})", duration = 60, price = ratePerHour, isPostpaid = false });
-        plans.Add(new { id = Guid.NewGuid(), name = $"2 Hours ({planName})", duration = 120, price = ratePerHour * 2, isPostpaid = false });
-        plans.Add(new { id = Guid.NewGuid(), name = $"3 Hours ({planName})", duration = 180, price = ratePerHour * 3, isPostpaid = false });
-        plans.Add(new { id = Guid.NewGuid(), name = $"Postpaid ({planName})", duration = 0, price = 0m, isPostpaid = true });
+        var plans = BuildPlansForProfile(pc.PricingProfile, planName);
 
         return Ok(ApiResponse<object>.Ok(plans));
+    }
+
+    /// <summary>Custom packages replace the auto-generated 1/2/3-hour multiples entirely when a
+    /// profile has any active ones configured; otherwise falls back to the multiples exactly as
+    /// before, so every branch without custom packages is unaffected.</summary>
+    private static List<object> BuildPlansForProfile(Domain.Entities.PricingProfile? profile, string planName, string tier = "", string? tierLabel = null)
+    {
+        decimal ratePerHour = profile?.BaseHourlyRate ?? 0m;
+        var activePackages = profile?.Packages?
+            .Where(pkg => pkg.IsActive)
+            .OrderBy(pkg => pkg.SortOrder)
+            .ThenBy(pkg => pkg.DurationMinutes)
+            .ToList() ?? new List<Domain.Entities.PricingPackage>();
+
+        var plans = new List<object>();
+
+        if (activePackages.Any())
+        {
+            foreach (var pkg in activePackages)
+                plans.Add(new { id = pkg.Id, name = $"{pkg.Name} ({planName})", duration = pkg.DurationMinutes, price = pkg.Price, tier, tierLabel = tierLabel ?? planName, isPostpaid = false });
+        }
+        else
+        {
+            plans.Add(new { id = Guid.NewGuid(), name = $"1 Hour ({planName})", duration = 60, price = ratePerHour, tier, tierLabel = tierLabel ?? planName, isPostpaid = false });
+            plans.Add(new { id = Guid.NewGuid(), name = $"2 Hours ({planName})", duration = 120, price = ratePerHour * 2, tier, tierLabel = tierLabel ?? planName, isPostpaid = false });
+            plans.Add(new { id = Guid.NewGuid(), name = $"3 Hours ({planName})", duration = 180, price = ratePerHour * 3, tier, tierLabel = tierLabel ?? planName, isPostpaid = false });
+        }
+
+        plans.Add(new { id = Guid.NewGuid(), name = $"Postpaid ({planName})", duration = 0, price = 0m, tier, tierLabel = tierLabel ?? planName, isPostpaid = true });
+
+        return plans;
     }
 
     [HttpGet("branches/{branchId}/plans")]
     public async Task<IActionResult> GetBranchPlans(Guid branchId)
     {
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        Response.Headers.Pragma = "no-cache";
+
         var branch = await _db.Branches
             .Include(b => b.Pcs)
                 .ThenInclude(p => p.PricingProfile)
+                    .ThenInclude(pp => pp!.Packages)
             .FirstOrDefaultAsync(b => b.Id == branchId);
 
         if (branch == null)
@@ -293,14 +382,10 @@ public class PublicController : ControllerBase
         foreach (var tier in uniqueTiers)
         {
             var pcWithTier = branch.Pcs.FirstOrDefault(p => (string.IsNullOrWhiteSpace(p.MonitorHz) ? "Standard" : p.MonitorHz) == tier);
-            decimal ratePerHour = pcWithTier?.PricingProfile?.BaseHourlyRate ?? 0m;
             string planNameTier = tier == "Standard" ? "Standard Tier" : $"{tier}Hz Tier";
             string monitorHzVal = tier == "Standard" ? "" : tier;
 
-            plans.Add(new { id = Guid.NewGuid(), name = $"1 Hour ({planNameTier})", duration = 60, price = ratePerHour, tier = monitorHzVal, tierLabel = planNameTier, isPostpaid = false });
-            plans.Add(new { id = Guid.NewGuid(), name = $"2 Hours ({planNameTier})", duration = 120, price = ratePerHour * 2, tier = monitorHzVal, tierLabel = planNameTier, isPostpaid = false });
-            plans.Add(new { id = Guid.NewGuid(), name = $"3 Hours ({planNameTier})", duration = 180, price = ratePerHour * 3, tier = monitorHzVal, tierLabel = planNameTier, isPostpaid = false });
-            plans.Add(new { id = Guid.NewGuid(), name = $"Postpaid ({planNameTier})", duration = 0, price = 0m, tier = monitorHzVal, tierLabel = planNameTier, isPostpaid = true });
+            plans.AddRange(BuildPlansForProfile(pcWithTier?.PricingProfile, planNameTier, monitorHzVal, planNameTier));
         }
 
         return Ok(ApiResponse<object>.Ok(plans));
@@ -892,4 +977,9 @@ public class LowBalanceAlertRequest
 public class SetMonitorHzDto
 {
     public string? MonitorHz { get; set; }
+}
+
+public class ReportPcAppVersionDto
+{
+    public string? Version { get; set; }
 }

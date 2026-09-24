@@ -92,6 +92,7 @@ public class ReservationConfiguration : IEntityTypeConfiguration<Reservation>
                            v => Enum.Parse<ReservationState>(v, true));
         builder.Property(e => e.OverrideReason).HasColumnType("text");
         builder.Property(e => e.Notes).HasColumnType("text");
+        builder.Property(e => e.Arrived).HasDefaultValue(false);
         builder.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
         builder.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");
 

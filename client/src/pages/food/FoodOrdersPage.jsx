@@ -1,15 +1,28 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
-import { UtensilsCrossed, Plus, LayoutGrid, List, Bell, Volume2, VolumeX, Settings } from 'lucide-react';
+import { UtensilsCrossed, Plus, LayoutGrid, List, Bell, Volume2, VolumeX, Settings, Calendar, Download, History, X } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useBranch } from '../../contexts/BranchContext';
 import { useSocket } from '../../contexts/SocketContext';
 import api from '../../config/api';
 import PageHeader from '../../components/layout/PageHeader';
+import { format } from 'date-fns';
+import { createReport, addTable, save } from '../../utils/pdfReport';
 
 import FoodOrderKanban from '../../components/food/FoodOrderKanban';
 import FoodOrderQueue from '../../components/food/FoodOrderQueue';
 import CreateFoodOrderModal from '../../components/food/CreateFoodOrderModal';
+
+const todayIso = () => format(new Date(), 'yyyy-MM-dd');
+
+// Same per-browser remembered range as the other desks.
+const readStoredDate = (key) => {
+  try {
+    return localStorage.getItem(key) || todayIso();
+  } catch {
+    return todayIso();
+  }
+};
 
 // Synth beep notification sound
 const playNotificationSound = () => {
@@ -40,6 +53,7 @@ export default function FoodOrdersPage() {
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
   // Settings: viewMode (kanban vs queue), soundEnabled
   const [viewMode, setViewMode] = useState(() => localStorage.getItem('food_order_view_mode') || 'queue');
@@ -48,6 +62,71 @@ export default function FoodOrdersPage() {
   const prevPendingCount = useRef(0);
 
   const targetBranchId = isSuperAdmin ? activeBranch?.id : user?.branchId;
+
+  // Read-only history, separate from the live board above - GetActiveOrders (what the board
+  // reads) deliberately excludes finished orders, so a past-day lookup needs its own endpoint.
+  const [historyFrom, setHistoryFrom] = useState(() => readStoredDate('foodOrders.historyFrom'));
+  const [historyTo, setHistoryTo] = useState(() => readStoredDate('foodOrders.historyTo'));
+  const [history, setHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  useEffect(() => {
+    try { localStorage.setItem('foodOrders.historyFrom', historyFrom); } catch { /* ignore */ }
+  }, [historyFrom]);
+
+  useEffect(() => {
+    try { localStorage.setItem('foodOrders.historyTo', historyTo); } catch { /* ignore */ }
+  }, [historyTo]);
+
+  const fetchHistory = useCallback(async () => {
+    if (isSuperAdmin && !targetBranchId) {
+      setHistory([]);
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const { data } = await api.get('/food-orders/history', {
+        params: { branchId: targetBranchId, fromDate: historyFrom, toDate: historyTo },
+      });
+      setHistory(data?.data || []);
+    } catch (err) {
+      console.error('Failed to load food order history:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [targetBranchId, isSuperAdmin, historyFrom, historyTo]);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  const resetHistoryToToday = () => {
+    setHistoryFrom(todayIso());
+    setHistoryTo(todayIso());
+  };
+
+  const handleDownloadHistoryPdf = () => {
+    if (history.length === 0) return;
+    const rangeLabel = historyFrom === historyTo ? historyFrom : `${historyFrom} to ${historyTo}`;
+    const subtitle = `${activeBranch?.name || 'Branch'}  •  ${rangeLabel}`;
+    const { doc } = createReport({ title: 'Food Orders History', subtitle });
+    const total = history.reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+
+    addTable(doc, 90, {
+      title: 'Food Orders History', subtitle,
+      heading: `Total: Rs ${total.toFixed(2)}`,
+      head: ['Order #', 'Time', 'PC', 'Customer', 'Items', 'Status', 'Amount'],
+      body: history.map(o => [
+        o.orderNumber || '-',
+        o.orderTime ? format(new Date(o.orderTime), 'MMM d, hh:mm a') : '-',
+        o.pcNumber || '-',
+        o.customerName || 'Walk-in',
+        (o.items || []).map(i => `${i.quantity}x ${i.itemName}`).join(', '),
+        o.status,
+        `Rs ${(o.totalAmount || 0).toFixed(2)}`,
+      ]),
+    });
+
+    save(doc, `food-orders-history-${historyFrom}${historyFrom !== historyTo ? `_to_${historyTo}` : ''}.pdf`);
+  };
 
   const { state } = useLocation();
   const autoSelectPcId = state?.autoSelectPcId;
@@ -234,6 +313,13 @@ export default function FoodOrdersPage() {
           </div>
 
           <button
+            onClick={() => setIsHistoryOpen(true)}
+            className="btn-secondary flex items-center gap-2 text-xs py-2 px-4 uppercase font-bold"
+          >
+            <History className="w-4 h-4" /> History
+          </button>
+
+          <button
             onClick={() => setIsCreateModalOpen(true)}
             className="btn-primary flex items-center gap-2 shadow-lg shadow-accent/20 text-xs py-2 px-4 uppercase font-bold"
           >
@@ -256,11 +342,104 @@ export default function FoodOrdersPage() {
       </div>
 
       {isCreateModalOpen && (
-        <CreateFoodOrderModal 
+        <CreateFoodOrderModal
           onClose={() => setIsCreateModalOpen(false)}
           onOrderPlaced={fetchOrders}
           initialPcId={autoSelectPcId}
         />
+      )}
+
+      {isHistoryOpen && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-4xl max-h-[85vh] bg-bg-2 border border-border rounded-xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="px-5 py-4 border-b border-border bg-bg-3 flex items-center justify-between shrink-0">
+              <h2 className="font-heading font-bold text-text uppercase tracking-wider text-base flex items-center gap-2">
+                <History className="w-4 h-4 text-accent" /> Food Orders History
+              </h2>
+              <button onClick={() => setIsHistoryOpen(false)} className="p-1 text-text-3 hover:text-text rounded transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-5 flex flex-wrap items-center gap-3 border-b border-border shrink-0">
+              <Calendar className="w-4 h-4 text-text-3 shrink-0" />
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-text-3 uppercase tracking-wider">From</label>
+                <input
+                  type="date"
+                  value={historyFrom}
+                  max={historyTo}
+                  onChange={(e) => setHistoryFrom(e.target.value)}
+                  className="bg-bg-3 border border-border rounded-lg px-3 py-1.5 text-sm text-text"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-text-3 uppercase tracking-wider">To</label>
+                <input
+                  type="date"
+                  value={historyTo}
+                  min={historyFrom}
+                  max={todayIso()}
+                  onChange={(e) => setHistoryTo(e.target.value)}
+                  className="bg-bg-3 border border-border rounded-lg px-3 py-1.5 text-sm text-text"
+                />
+              </div>
+              <button onClick={resetHistoryToToday} className="text-xs font-medium text-accent hover:text-accent/80 transition-colors ml-auto">
+                Today
+              </button>
+              <button
+                onClick={handleDownloadHistoryPdf}
+                disabled={history.length === 0}
+                className="btn-secondary py-1.5 px-3 flex items-center gap-1.5 text-xs font-bold disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Download className="w-3.5 h-3.5" /> Download PDF
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5">
+              {historyLoading ? (
+                <div className="flex justify-center py-12">
+                  <div className="w-6 h-6 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : history.length === 0 ? (
+                <div className="text-center text-text-3 text-xs italic py-8 border border-dashed border-border rounded-lg">
+                  No food orders found in this range.
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse text-xs whitespace-nowrap">
+                    <thead>
+                      <tr className="border-b border-border text-text-3 uppercase tracking-wider font-bold text-[10px]">
+                        <th className="py-2 px-3">Order #</th>
+                        <th className="py-2 px-3">Time</th>
+                        <th className="py-2 px-3">PC</th>
+                        <th className="py-2 px-3">Customer</th>
+                        <th className="py-2 px-3">Items</th>
+                        <th className="py-2 px-3 text-center">Status</th>
+                        <th className="py-2 px-3 text-right">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border/40 font-mono">
+                      {history.map(o => (
+                        <tr key={o.id}>
+                          <td className="py-2 px-3 text-text-2">{o.orderNumber}</td>
+                          <td className="py-2 px-3 text-text-2">{o.orderTime ? format(new Date(o.orderTime), 'MMM d, hh:mm a') : '-'}</td>
+                          <td className="py-2 px-3 text-text font-bold">{o.pcNumber || '-'}</td>
+                          <td className="py-2 px-3 text-text-2 font-sans">{o.customerName || 'Walk-in'}</td>
+                          <td className="py-2 px-3 text-text-3 font-sans whitespace-normal max-w-xs">
+                            {(o.items || []).map(i => `${i.quantity}x ${i.itemName}`).join(', ')}
+                          </td>
+                          <td className="py-2 px-3 text-center text-text-3 uppercase">{o.status}</td>
+                          <td className="py-2 px-3 text-right text-text font-bold">₹{(o.totalAmount || 0).toFixed(2)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

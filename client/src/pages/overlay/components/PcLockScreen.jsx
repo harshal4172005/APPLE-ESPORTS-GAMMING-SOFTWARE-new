@@ -266,7 +266,7 @@ export default function PcLockScreen() {
         >
           <UserCheck className="w-16 h-16 text-accent mb-6 group-hover:scale-110 transition-transform" />
           <h2 className="font-heading text-3xl font-bold text-text mb-3 tracking-wider uppercase">MEMBER</h2>
-          <p className="text-text-2 font-body text-sm leading-relaxed">Log in to your account, manage wallet balance, and start sessions directly.</p>
+          <p className="text-text-2 font-body text-sm leading-relaxed">Log in to your account, manage Member Amount balance, and start sessions directly.</p>
         </motion.div>
       </div>
     </motion.div>
@@ -418,7 +418,7 @@ export default function PcLockScreen() {
           <UserCheck className="w-8 h-8 text-accent" />
         </div>
         <h1 className="font-heading text-3xl font-bold text-text tracking-wide uppercase">Member Login</h1>
-        <p className="text-text-2 font-body mt-2 text-sm">Start a session directly from your wallet.</p>
+        <p className="text-text-2 font-body mt-2 text-sm">Start a session directly from your Member Amount.</p>
       </div>
 
       {isForgotPassword ? (

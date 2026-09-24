@@ -22,6 +22,12 @@ public class Reservation
     public DateTimeOffset? ExpiredAt { get; set; }
     public DateTimeOffset? CancelledAt { get; set; }
 
+    /// <summary>Set by hand at the counter when the customer shows up - a plain reminder flag,
+    /// not a gate on anything. Starting their session goes through the ordinary Start Session
+    /// flow either way; this exists purely so the reservations list can tell staff who's still
+    /// expected apart from who's already here.</summary>
+    public bool Arrived { get; set; }
+
     // Override tracking — SOP: requires permission + reason
     public Guid? OverrideBy { get; set; }
     public string? OverrideReason { get; set; }

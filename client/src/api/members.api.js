@@ -30,6 +30,11 @@ export const adminEditMemberValues = (id, dto) =>
 export const getWalletHistory = (memberId, page = 1, pageSize = 30) =>
   api.get(`/wallets/${memberId}`, { params: { page, pageSize } }).then(r => r.data?.data);
 
+// Combined gaming-session + wallet top-up/deduction history for one member, across every
+// branch they've played at. fromDate/toDate (yyyy-MM-dd) are optional - omit for all-time.
+export const getMemberHistory = (memberId, fromDate, toDate) =>
+  api.get(`/members/${memberId}/history`, { params: { fromDate, toDate } }).then(r => r.data?.data);
+
 export const topUpWallet = (memberId, dto) =>
   api.post(`/wallets/${memberId}/topup`, dto, {
     headers: { 'X-Idempotency-Key': generateIdempotencyKey() },

@@ -23,6 +23,22 @@ public class BranchConfiguration : IEntityTypeConfiguration<Branch>
                            v => Enum.Parse<BranchStatus>(v, true));
         builder.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
         builder.Property(e => e.UpdatedAt).HasDefaultValueSql("NOW()");
+
+        builder.HasOne(e => e.FoodGroup).WithMany(g => g.Branches)
+            .HasForeignKey(e => e.FoodGroupId).OnDelete(DeleteBehavior.SetNull);
+    }
+}
+
+/// <summary>Links branches that share one food/snacks menu and stock count.</summary>
+public class FoodGroupConfiguration : IEntityTypeConfiguration<FoodGroup>
+{
+    public void Configure(EntityTypeBuilder<FoodGroup> builder)
+    {
+        builder.ToTable("food_groups");
+        builder.HasKey(e => e.Id);
+        builder.Property(e => e.Id).HasDefaultValueSql("uuid_generate_v4()");
+        builder.Property(e => e.Name).HasMaxLength(100).IsRequired();
+        builder.Property(e => e.CreatedAt).HasDefaultValueSql("NOW()");
     }
 }
 
@@ -151,5 +167,11 @@ public class EmployeeConfiguration : IEntityTypeConfiguration<Employee>
             .HasForeignKey(e => e.BranchId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne(e => e.SubmittedByOperator).WithMany()
             .HasForeignKey(e => e.SubmittedBy).OnDelete(DeleteBehavior.SetNull);
+
+        // Made explicit (was previously left to convention) so an unrelated migration diffing
+        // the model doesn't pick up a changed default and silently alter this relationship's
+        // existing, already-deployed behavior.
+        builder.HasOne(e => e.Operator).WithMany()
+            .HasForeignKey(e => e.OperatorId).OnDelete(DeleteBehavior.SetNull);
     }
 }

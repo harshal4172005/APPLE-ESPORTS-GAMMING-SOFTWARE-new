@@ -63,7 +63,13 @@ public class PcManagementService : IPcManagementService
             PricingProfileId = dto.PricingProfileId,
             HardwareNotes = dto.HardwareNotes,
             MonitorHz = dto.MonitorHz,
-            State = PcState.Offline,
+
+            // Not Offline. Offline means "was working, then lost power" - this PC has never
+            // been claimed by a machine at all, which is a different fact and needs the state
+            // that actually says so. See PcState.AwaitingSetup and the sibling PcsController.Create
+            // in PcStatusController.cs, which had exactly this bug (there, Idle instead of
+            // Offline) for the endpoint the Settings "Add PC" form actually calls.
+            State = PcState.AwaitingSetup,
             IsActive = true,
             IsDeleted = false,
             CreatedAt = DateTimeOffset.UtcNow,

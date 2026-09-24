@@ -208,7 +208,7 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
       if ('speechSynthesis' in window) {
         setTimeout(() => {
           const utterance = new SpeechSynthesisUtterance(
-            `Attention. ${Math.floor(remaining)} rupees remaining in your gaming wallet. That is about ${minutes} minute${minutes === 1 ? '' : 's'} of play. Please top up to continue.`
+            `Attention. ${Math.floor(remaining)} rupees remaining in your gaming Member Amount. That is about ${minutes} minute${minutes === 1 ? '' : 's'} of play. Please top up to continue.`
           );
           utterance.rate = 0.9;
           utterance.pitch = 1.1;
@@ -437,6 +437,25 @@ export function OverlaySocketProvider({ children, pcId, isMinimized: initialMini
 
     newConnection.on('ForceClose', ({ reason }) => {
       setSessionData(prev => ({ ...prev, sessionStatus: 'completed', forceCloseReason: reason }));
+    });
+
+    // Sent by PcStatusHub.SendShutdownCommand/SendShutdownAllCommand, over the connection this
+    // page already holds - the group a real gaming PC is actually in, unlike agent:{pcId} which
+    // ClientAgent would join if it ever launched (see PHASE3_PLAN.md). Handed to the native host
+    // through the same postMessage bridge close-app uses (MainForm.WebMessageReceived), because
+    // the browser page cannot shut down a PC itself. Does nothing outside the desktop app's
+    // WebView2 (e.g. a plain browser tab), which has no such bridge to receive it.
+    newConnection.on('ShutdownPc', () => {
+      try { window.chrome?.webview?.postMessage('shutdown-pc'); } catch { /* not in the desktop app */ }
+    });
+
+    // Sent by the operator's "Shut Down" button (PcManagementController.ShutdownPc), over the
+    // same connection this page already holds. Handed to the native host through the same
+    // postMessage bridge close-app uses (see MainForm.WebMessageReceived) - the browser page
+    // cannot shut down a PC itself, only the desktop app hosting it can. Does nothing outside
+    // the desktop app's WebView2 (e.g. a plain browser tab), which has no such bridge to receive it.
+    newConnection.on('ShutdownPc', () => {
+      try { window.chrome?.webview?.postMessage('shutdown-pc'); } catch { /* not in the desktop app */ }
     });
 
     newConnection.on('ReceiveWalletApprovalRequest', (data) => {

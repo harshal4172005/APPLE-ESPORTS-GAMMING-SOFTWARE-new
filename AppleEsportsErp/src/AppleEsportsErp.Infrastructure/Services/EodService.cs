@@ -1,7 +1,5 @@
-﻿using System.Text.Json;
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using AppleEsportsErp.Application.DTOs.Eod;
-using AppleEsportsErp.Application.Exceptions;
 using AppleEsportsErp.Application.Interfaces;
 using AppleEsportsErp.Application.Services;
 using AppleEsportsErp.Domain.Entities;
@@ -12,81 +10,19 @@ namespace AppleEsportsErp.Infrastructure.Services;
 public class EodService : IEodService
 {
     private readonly IUnitOfWork _unitOfWork;
-    private readonly IAuditService _auditService;
 
-    public EodService(IUnitOfWork unitOfWork, IAuditService auditService)
+    public EodService(IUnitOfWork unitOfWork)
     {
         _unitOfWork = unitOfWork;
-        _auditService = auditService;
     }
 
-    public async Task<ValidationStatusDto> GetValidationStatusAsync(Guid branchId, DateTimeOffset targetDate)
+    public async Task<EodReportDto> GenerateEodReportAsync(Guid branchId, DateOnly businessDay)
     {
-        // startOfDay stays as the day's KEY - it is what a saved EOD snapshot is filed under,
-        // and changing it would orphan every snapshot already finalised.
-        var startOfDay = new DateTimeOffset(targetDate.UtcDateTime.Date, TimeSpan.Zero);
-        var endOfDay = startOfDay.AddDays(1);
-
-        // The window everything is actually counted over: 06:00 to 06:00 IST, the trading day.
-        // A session that starts at 01:00 belongs to the night before, and the cash desk and
-        // wallet desk have always read it that way. This screen read midnight-to-midnight UTC,
-        // which is 05:30 IST - so late-night takings landed on the wrong day here and the right
-        // day everywhere else, and the two screens disagreed about the same money.
-        var (dayStart, dayEnd) = IndiaTime.BusinessDayRange(DateOnly.FromDateTime(startOfDay.UtcDateTime.Date));
-
-        var blockers = new List<string>();
-
-        // 1. Check for unclosed Shifts
-        var unclosedShifts = await _unitOfWork.Repository<Shift>().Query()
-            .Where(s => s.BranchId == branchId && s.Status != ShiftStatus.Completed)
-            .CountAsync();
-            
-        if (unclosedShifts > 0)
-            blockers.Add($"{unclosedShifts} shift(s) are not yet Completed/Closed.");
-
-        // 2. Check for unclosed Cash Registers
-        var unclosedRegisters = await _unitOfWork.Repository<CashRegister>().Query()
-            .Where(r => r.BranchId == branchId && r.Status != CashRegisterStatus.Closed)
-            .CountAsync();
-
-        if (unclosedRegisters > 0)
-            blockers.Add($"{unclosedRegisters} cash register(s) have not finalized end-of-shift verification.");
-
-        // 3. Check for Pending/Unpaid Bills
-        var pendingBills = await _unitOfWork.Repository<Bill>().Query()
-            .Where(b => b.BranchId == branchId && b.CreatedAt >= dayStart && b.CreatedAt < dayEnd && b.Status != BillStatus.Completed)
-            .CountAsync();
-
-        if (pendingBills > 0)
-            blockers.Add($"{pendingBills} bill(s) are still pending/unpaid.");
-
-        // 4. Check if Snapshot already exists
-        var snapshotExists = await _unitOfWork.Repository<EodSnapshot>().Query()
-            .AnyAsync(e => e.BranchId == branchId && e.ReportDate == startOfDay);
-            
-        if (snapshotExists)
-            blockers.Add("End of Day has already been finalized for this date.");
-
-        return new ValidationStatusDto
-        {
-            IsReady = !blockers.Any(),
-            Blockers = blockers
-        };
-    }
-
-    public async Task<EodReportDto> GenerateEodReportAsync(Guid branchId, DateTimeOffset targetDate)
-    {
-        // startOfDay stays as the day's KEY - it is what a saved EOD snapshot is filed under,
-        // and changing it would orphan every snapshot already finalised.
-        var startOfDay = new DateTimeOffset(targetDate.UtcDateTime.Date, TimeSpan.Zero);
-        var endOfDay = startOfDay.AddDays(1);
-
-        // The window everything is actually counted over: 06:00 to 06:00 IST, the trading day.
-        // A session that starts at 01:00 belongs to the night before, and the cash desk and
-        // wallet desk have always read it that way. This screen read midnight-to-midnight UTC,
-        // which is 05:30 IST - so late-night takings landed on the wrong day here and the right
-        // day everywhere else, and the two screens disagreed about the same money.
-        var (dayStart, dayEnd) = IndiaTime.BusinessDayRange(DateOnly.FromDateTime(startOfDay.UtcDateTime.Date));
+        // The window everything is actually counted over: midnight to midnight IST, the
+        // calendar day. This screen used to read midnight-to-midnight UTC, which is 05:30
+        // IST - so late-night takings landed on the wrong day here and the right day
+        // everywhere else, and the two screens disagreed about the same money.
+        var (dayStart, dayEnd) = IndiaTime.BusinessDayRange(businessDay);
 
         // Fetch Bills
         var bills = await _unitOfWork.Repository<Bill>().Query()
@@ -100,21 +36,36 @@ public class EodService : IEodService
             .ToListAsync();
 
         // Fetch Registers
-        // Selected by the trading day the register itself belongs to, which is the day it was
-        // opened under. The register table already records that, and it is the same 06:00-06:00
-        // day the money is counted by everywhere else.
+        // Two, and only two, things belong to today: a register actually opened today (the
+        // ordinary case), and a register opened before today that is STILL OPEN right now - a
+        // branch genuinely trading straight through midnight with nothing closed yet. Anything
+        // opened before today that has SINCE closed belongs entirely to the day(s) it was
+        // actually open for, never to today, no matter how early this morning it happened to
+        // close - it was already handed over and counted before today's business began, and
+        // that count is what closes out THAT register's own day's report already, not a preview
+        // of this one.
         //
-        // What was here before ended with "|| r.Status == CashRegisterStatus.Open", with no
-        // date on it. That pulled in every register still open on any day in history. On the
-        // live system that was 21 registers going back three weeks, and the day's opening
-        // balance read Rs 5,500 against a drawer that had Rs 100 in it. A register left open
-        // by a crash is a problem for the day it belongs to, never for today.
-        var businessDay = DateOnly.FromDateTime(startOfDay.UtcDateTime.Date);
-
+        // The bug this replaces: a shift that closed at, say, 00:20 last night still touched
+        // today's ClosedAt >= dayStart window, so it kept appearing in today's report too -
+        // showing yesterday's already-settled opening balance and already-explained shortfall as
+        // if today had somehow already started, on a morning nobody had opened anything yet. The
+        // owner's own words for what this must do instead: "it should be 0 everywhere because
+        // today is new day, opening balance is not yet open."
+        //
+        // BusinessDay alone used to be enough, because the register itself used to be force-
+        // rolled into a fresh one at midnight (see AuthService.CloseFinishedTradingDaysAsync's
+        // own history). That rollover was removed on the owner's explicit instruction after it
+        // produced duplicate register rows on a branch that was genuinely still trading - so a
+        // register spanning midnight is now a normal, expected thing, which is exactly the one
+        // case (still open, never closed) this still has to find under both days it touches.
         var registers = await _unitOfWork.Repository<CashRegister>().Query()
             .Include(r => r.Operator)
             .Include(r => r.CashTransactions)
-            .Where(r => r.BranchId == branchId && r.BusinessDay == businessDay)
+            .Where(r => r.BranchId == branchId
+                && (
+                    (r.OpenedAt >= dayStart && r.OpenedAt < dayEnd)
+                    || (r.OpenedAt < dayStart && r.Status == CashRegisterStatus.Open)
+                ))
             .OrderBy(r => r.OpenedAt)
             .ToListAsync();
 
@@ -125,7 +76,7 @@ public class EodService : IEodService
         var report = new EodReportDto
         {
             BranchId = branchId,
-            ReportDate = startOfDay,
+            ReportDate = dayStart,
             GeneratedAt = DateTimeOffset.UtcNow
         };
 
@@ -218,7 +169,45 @@ public class EodService : IEodService
 
         // The money the drawer started the day with - the first shift's opening float, not the
         // sum of every shift's opening.
-        report.Cash.TotalOpeningBalance = firstRegister?.OpeningBalance ?? 0m;
+        //
+        // Not simply firstRegister.OpeningBalance any more. That register can now be one still
+        // spanning midnight from yesterday (see the query above), and its OpeningBalance is
+        // whatever the drawer held when IT opened - yesterday, or earlier - not what it held
+        // the moment today actually began. Reconstructed instead as: what it opened with, plus
+        // every cash movement against it that happened before today started. A branch has one
+        // physical drawer at a time, so "before today started" is unambiguous even without a
+        // direct link from a payment to the register it was collected into.
+        if (firstRegister is null)
+        {
+            report.Cash.TotalOpeningBalance = 0m;
+        }
+        else if (firstRegister.OpenedAt >= dayStart)
+        {
+            report.Cash.TotalOpeningBalance = firstRegister.OpeningBalance;
+        }
+        else
+        {
+            var cashSalesBeforeToday = await _unitOfWork.Repository<Payment>().Query()
+                .Where(p => p.BranchId == branchId
+                    && p.CreatedAt >= firstRegister.OpenedAt && p.CreatedAt < dayStart)
+                .SumAsync(p => p.CashAmount);
+
+            var topUpCashBeforeToday = await _unitOfWork.Repository<WalletTransaction>().Query()
+                .Where(w => w.BranchId == branchId && w.Action == WalletAction.Recharge
+                    && w.CreatedAt >= firstRegister.OpenedAt && w.CreatedAt < dayStart)
+                .SumAsync(w => w.CashAmount);
+
+            var movementBeforeToday = firstRegister.CashTransactions
+                .Where(t => t.CreatedAt < dayStart)
+                .Sum(t => t.TransactionType switch
+                {
+                    "petty_expense" or "withdrawal" => -Math.Abs(t.CashAmount),
+                    _ => t.CashAmount,
+                });
+
+            report.Cash.TotalOpeningBalance =
+                firstRegister.OpeningBalance + cashSalesBeforeToday + topUpCashBeforeToday + movementBeforeToday;
+        }
 
         // Only the part of each top-up that was actually paid in notes. TotalWalletTopUps is
         // every top-up whatever the method, which is right for revenue and wrong for a drawer:
@@ -228,9 +217,19 @@ public class EodService : IEodService
             .Where(w => w.Action == WalletAction.Recharge)
             .Sum(w => w.CashAmount);
 
-        report.Cash.TotalCashSales = registers.Sum(r => r.TotalCashSales) + cashFromTopUps;
+        // From payments themselves, filtered to today, rather than a register's own running
+        // TotalCashSales column - that column is not split by day, so on a register spanning
+        // midnight it would carry yesterday's sales into today's report too. Payments already
+        // has to be filtered by its own CreatedAt for the Payment Methods section above; reusing
+        // that same, already-correct figure here is what keeps this section unable to disagree
+        // with it.
+        report.Cash.TotalCashSales = report.PaymentMethods.TotalCash + cashFromTopUps;
 
-        var allCashTxs = registers.SelectMany(r => r.CashTransactions).ToList();
+        // Filtered to today for the same reason - a spanning register's CashTransactions include
+        // rows from yesterday too, which must not be counted again in today's report.
+        var allCashTxs = registers.SelectMany(r => r.CashTransactions)
+            .Where(t => t.CreatedAt >= dayStart && t.CreatedAt < dayEnd)
+            .ToList();
         report.Cash.TotalCashInwards = allCashTxs.Where(t => t.TransactionType == "inward").Sum(t => t.CashAmount);
         report.Cash.TotalPettyExpenses = allCashTxs.Where(t => t.TransactionType == "petty_expense").Sum(t => Math.Abs(t.CashAmount));
 
@@ -308,97 +307,5 @@ public class EodService : IEodService
         }).ToList();
 
         return report;
-    }
-
-    public async Task<EodSnapshotDto> FinalizeEodAsync(Guid branchId, Guid operatorId, DateTimeOffset targetDate)
-    {
-        await _unitOfWork.BeginTransactionAsync();
-        try
-        {
-            var startOfDay = new DateTimeOffset(targetDate.UtcDateTime.Date, TimeSpan.Zero);
-            
-            // 1. Verify Validation Status
-            var status = await GetValidationStatusAsync(branchId, startOfDay);
-            if (!status.IsReady)
-            {
-                throw new AppException("Cannot finalize EOD due to unresolved blockers: " + string.Join("; ", status.Blockers));
-            }
-
-            // 2. Generate dynamic report payload
-            var report = await GenerateEodReportAsync(branchId, startOfDay);
-
-            // 3. Serialize securely using JSON
-            var jsonData = JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = false });
-
-            // 4. Create immutable snapshot
-            var snapshot = new EodSnapshot
-            {
-                BranchId = branchId,
-                ReportDate = startOfDay,
-                GeneratedByOperatorId = operatorId,
-                SnapshotVersion = 1,
-                SchemaVersion = "B.8-v1",
-                SnapshotData = jsonData,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            };
-
-            await _unitOfWork.Repository<EodSnapshot>().AddAsync(snapshot);
-
-            // 5. Audit Log
-            await _auditService.LogAsync(new AuditEntry
-            {
-                OperatorId = operatorId,
-                UserRole = "SuperAdmin", // Must be super admin
-                UserName = "System",
-                Action = "eod_finalize",
-                BranchId = branchId,
-                TargetType = "eod_snapshot",
-                TargetId = snapshot.Id,
-                Details = new { SchemaVersion = snapshot.SchemaVersion, Revenue = report.Revenue.NetRevenue }
-            });
-
-            await _unitOfWork.CommitTransactionAsync();
-
-            return new EodSnapshotDto
-            {
-                Id = snapshot.Id,
-                BranchId = snapshot.BranchId,
-                ReportDate = snapshot.ReportDate,
-                GeneratedByOperatorId = snapshot.GeneratedByOperatorId,
-                SnapshotVersion = snapshot.SnapshotVersion,
-                SchemaVersion = snapshot.SchemaVersion,
-                CreatedAt = snapshot.CreatedAt,
-                Data = report
-            };
-        }
-        catch
-        {
-            await _unitOfWork.RollbackTransactionAsync();
-            throw;
-        }
-    }
-
-    public async Task<EodSnapshotDto?> GetHistoricalEodAsync(Guid branchId, DateTimeOffset targetDate)
-    {
-        var startOfDay = new DateTimeOffset(targetDate.UtcDateTime.Date, TimeSpan.Zero);
-        var snapshot = await _unitOfWork.Repository<EodSnapshot>().Query()
-            .FirstOrDefaultAsync(e => e.BranchId == branchId && e.ReportDate == startOfDay);
-
-        if (snapshot == null) return null;
-
-        var deserializedData = JsonSerializer.Deserialize<EodReportDto>(snapshot.SnapshotData);
-
-        return new EodSnapshotDto
-        {
-            Id = snapshot.Id,
-            BranchId = snapshot.BranchId,
-            ReportDate = snapshot.ReportDate,
-            GeneratedByOperatorId = snapshot.GeneratedByOperatorId,
-            SnapshotVersion = snapshot.SnapshotVersion,
-            SchemaVersion = snapshot.SchemaVersion,
-            CreatedAt = snapshot.CreatedAt,
-            Data = deserializedData!
-        };
     }
 }

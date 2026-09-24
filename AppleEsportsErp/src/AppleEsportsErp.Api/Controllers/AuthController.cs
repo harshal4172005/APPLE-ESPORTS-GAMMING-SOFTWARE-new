@@ -74,6 +74,27 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse.Ok());
     }
 
+    /// <summary>
+    /// Clears this browser's cookies with no other side effect — POST /api/auth/session/clear.
+    ///
+    /// For exactly the case <c>/auth/logout</c> is wrong for: a login portal (Admin or Super
+    /// Admin) discarding a stale session it found on mount, because that role does not belong
+    /// on this portal. It used to call <c>/auth/logout</c> for this, which for an Operator
+    /// means <see cref="IAuthService.LogoutAsync"/> - closing their active shift with no drawer
+    /// count, no EOD, and no warning, just from visiting the wrong login page. Nobody asked to
+    /// end a shift; they asked to look at a different login screen. This clears the cookie the
+    /// page cannot touch itself and nothing else - nobody's shift, online status, or anything
+    /// server-side changes.
+    /// </summary>
+    [HttpPost("session/clear")]
+    [Authorize]
+    public IActionResult ClearSession()
+    {
+        ClearAuthCookies();
+        ClearAdminSwitchCookie();
+        return Ok(ApiResponse.Ok());
+    }
+
     /// <summary>Refresh token — POST /api/auth/refresh</summary>
     [HttpPost("refresh")]
     [AllowAnonymous]
@@ -219,11 +240,28 @@ public class AuthController : ControllerBase
     [Authorize(Roles = Roles.Operator)]
     public async Task<IActionResult> GetAvailableAdminsForSwitch()
     {
+        // A PIN set up minutes ago must show up the next time this opens, not whenever the
+        // embedded browser's disk cache happens to decide the old empty answer expired.
+        Response.Headers.CacheControl = "no-store, no-cache, must-revalidate";
+        Response.Headers.Pragma = "no-cache";
+
         var result = await _authService.GetAvailableAdminsForSwitchAsync();
         return Ok(ApiResponse<IEnumerable<AvailableAdminDto>>.Ok(result));
     }
 
-    /// <summary>SOP §22: Admin Quick-Switch In</summary>
+    /// <summary>
+    /// SOP §22: Admin Quick-Switch In.
+    ///
+    /// Writes the elevated identity into its own <c>adminSwitchToken</c> cookie, entirely
+    /// separate from <c>accessToken</c>/<c>refreshToken</c>. Those two must never be touched
+    /// here: they were previously overwritten with the switch's own access token and an
+    /// unrefreshable "refresh token" (the same JWT signed for the access-token key, which
+    /// the refresh endpoint validates against a *different* key and always rejects) - so the
+    /// operator's real 7-day session was destroyed on switch-in and unrecoverable the moment
+    /// anything triggered a refresh, which is what "the station just stops syncing" actually
+    /// was. Leaving the operator's cookies alone means their real session is exactly as
+    /// healthy after a switch as before one, whether this ends cleanly or not.
+    /// </summary>
     [HttpPost("admin-switch/in")]
     [Authorize(Roles = Roles.Operator)]
     public async Task<IActionResult> AdminSwitchIn([FromBody] AdminSwitchInDto dto)
@@ -235,18 +273,22 @@ public class AuthController : ControllerBase
 
         dto.ShiftId = Guid.Parse(shiftIdClaim);
         var result = await _authService.AdminSwitchInAsync(dto);
-        SetAuthCookies(result.AccessToken, result.RefreshToken);
+        SetAdminSwitchCookie(result.AccessToken);
         return Ok(ApiResponse<LoginResponseDto>.Ok(result));
     }
 
-    /// <summary>SOP §22: Admin Quick-Switch Out</summary>
+    /// <summary>
+    /// SOP §22: Admin Quick-Switch Out. Deletes the <c>adminSwitchToken</c> cookie - nothing
+    /// else to do, since switch-in never touched the operator's own cookies. The operator's
+    /// session resumes on the very next request with no re-login and no gap.
+    /// </summary>
     [HttpPost("admin-switch/out")]
     [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> AdminSwitchOut()
     {
         var adminId = Guid.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
         var shiftIdClaim = User.FindFirstValue("shiftId");
-        
+
         // Ensure this is actually a switched-in token
         var isSwitchedAdmin = User.FindFirstValue("isSwitchedAdmin");
         if (isSwitchedAdmin != "true")
@@ -257,6 +299,25 @@ public class AuthController : ControllerBase
             await _authService.AdminSwitchOutAsync(adminId, Guid.Parse(shiftIdClaim));
         }
 
+        ClearAdminSwitchCookie();
+        return Ok(ApiResponse.Ok());
+    }
+
+    /// <summary>
+    /// Unconditionally deletes a stale <c>adminSwitchToken</c> cookie, with no authentication
+    /// required. Exists for exactly one case: the switch token itself expired (it is
+    /// deliberately short-lived, 2 hours) while still switched in, so the station can no
+    /// longer authenticate a normal <c>admin-switch/out</c> call to clear it. The operator's
+    /// own <c>accessToken</c>/<c>refreshToken</c> cookies were never touched by the switch, so
+    /// once this clears the stale cookie the very next request resumes as the operator with
+    /// no re-login - this endpoint deletes a cookie and nothing else, so there is nothing here
+    /// that requires proving who is asking.
+    /// </summary>
+    [HttpPost("admin-switch/clear-cookie")]
+    [AllowAnonymous]
+    public IActionResult ClearAdminSwitchCookieEndpoint()
+    {
+        ClearAdminSwitchCookie();
         return Ok(ApiResponse.Ok());
     }
 
@@ -290,6 +351,33 @@ public class AuthController : ControllerBase
 
         Response.Cookies.Append("accessToken", string.Empty, expired);
         Response.Cookies.Append("refreshToken", string.Empty, expired);
+    }
+
+    /// <summary>
+    /// Deliberately short-lived (2h, vs. the operator's own 24h/7d pair) - a switch is a
+    /// supervised, in-person action, not a login, so it should not quietly outlast the person
+    /// who started it. Never carries a refresh token: nothing here is meant to renew itself.
+    /// </summary>
+    private void SetAdminSwitchCookie(string accessToken)
+    {
+        Response.Cookies.Append("adminSwitchToken", accessToken, new Microsoft.AspNetCore.Http.CookieOptions
+        {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Strict,
+            Expires = DateTimeOffset.UtcNow.AddHours(2)
+        });
+    }
+
+    private void ClearAdminSwitchCookie()
+    {
+        Response.Cookies.Append("adminSwitchToken", string.Empty, new Microsoft.AspNetCore.Http.CookieOptions
+        {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            SameSite = Microsoft.AspNetCore.Http.SameSiteMode.Strict,
+            Expires = DateTimeOffset.UnixEpoch,
+        });
     }
 
     private void SetAuthCookies(string accessToken, string? refreshToken = null)

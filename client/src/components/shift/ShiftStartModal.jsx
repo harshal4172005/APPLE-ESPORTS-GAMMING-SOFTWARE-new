@@ -27,6 +27,12 @@ export default function ShiftStartModal({ onComplete }) {
   const [cashError, setCashError] = useState(null);
   const [cashAlreadyOpen, setCashAlreadyOpen] = useState(false);
 
+  // Set only when the operator's own count disagreed with what the last shift left and no
+  // reason has been given yet — the server refused to open the drawer and handed the difference
+  // back instead. Cleared once a reason is submitted and the drawer actually opens.
+  const [mismatch, setMismatch] = useState(null);
+  const [reason, setReason] = useState('');
+
   // Which of the two opening questions this operator gets. A branch has one drawer and it runs
   // through the trading day: only the first shift puts money in, and every shift after it
   // inherits what the last one left. Asking a later shift for a float and then throwing the
@@ -94,20 +100,36 @@ export default function ShiftStartModal({ onComplete }) {
   const isFirstOfDay = opening?.isFirstOfDay === true;
 
   // ── Step 1: Open Cash Register ──
+  // Always the operator's own count — never a figure the server or a previous shift supplied.
+  // The first attempt is sent with no reason; if it disagrees with what was expected, the server
+  // refuses to open the drawer and hands the difference back instead (see `mismatch` below), and
+  // the second attempt carries the operator's explanation.
   const handleOpenCash = async () => {
-    // Inheriting, so there is no figure to validate: the amount is whatever the last shift left,
-    // and the server decides it. Sent back rather than sent as zero so that if the inheritance
-    // ever stopped happening server-side, the drawer would still open at the right figure
-    // instead of silently at nothing.
-    const amount = isFirstOfDay ? Number(openingBalance) : Number(opening?.inheritedBalance ?? 0);
+    const amount = Number(openingBalance);
     if (isNaN(amount) || amount < 0) {
       setCashError('Please enter a valid opening balance (0 or greater).');
+      return;
+    }
+    if (mismatch && !reason.trim()) {
+      setCashError('Please explain the difference before continuing.');
       return;
     }
     setCashLoading(true);
     setCashError(null);
     try {
-      await api.post('/cash/open', { openingBalance: amount });
+      const { data } = await api.post('/cash/open', {
+        openingBalance: amount,
+        reason: mismatch ? reason.trim() : undefined,
+      });
+      const result = data.data;
+      if (result?.opened === false) {
+        setMismatch({
+          expected: result.expectedBalance,
+          counted: result.countedBalance,
+          difference: result.difference,
+        });
+        return;
+      }
       setStep(STEPS.INVENTORY);
     } catch (err) {
       const msg = err.response?.data?.error || err.response?.data?.message || '';
@@ -121,6 +143,13 @@ export default function ShiftStartModal({ onComplete }) {
     } finally {
       setCashLoading(false);
     }
+  };
+
+  // Back out of the "explain the difference" screen to recount instead of explaining.
+  const handleRecount = () => {
+    setMismatch(null);
+    setReason('');
+    setCashError(null);
   };
 
   // ── Step 2: Confirm Inventory Stocks ──
@@ -225,17 +254,27 @@ export default function ShiftStartModal({ onComplete }) {
                 className="p-6"
               >
                 <div className="flex items-center gap-3 mb-5">
-                  <div className="w-12 h-12 bg-neon-green/10 border border-neon-green/30 rounded-xl flex items-center justify-center">
-                    <Banknote className="w-6 h-6 text-neon-green" />
+                  <div className={`w-12 h-12 rounded-xl flex items-center justify-center border ${
+                    mismatch ? 'bg-neon-orange/10 border-neon-orange/30' : 'bg-neon-green/10 border-neon-green/30'
+                  }`}>
+                    {mismatch ? (
+                      <AlertTriangle className="w-6 h-6 text-neon-orange" />
+                    ) : (
+                      <Banknote className="w-6 h-6 text-neon-green" />
+                    )}
                   </div>
                   <div>
                     <h3 className="font-bold text-text text-base">
-                      {isFirstOfDay ? 'Open the drawer for today' : 'The drawer carries over'}
+                      {mismatch
+                        ? "That doesn't match what was expected"
+                        : isFirstOfDay ? 'Open the drawer for today' : 'Count the drawer'}
                     </h3>
                     <p className="text-text-3 text-xs">
-                      {isFirstOfDay
-                        ? 'Nobody has opened it yet today — put the float in and enter what you put in'
-                        : 'It has already been counted today, so there is nothing to enter'}
+                      {mismatch
+                        ? 'Explain the difference before the drawer opens'
+                        : isFirstOfDay
+                        ? 'Nobody has opened it yet today — count what you put in and enter it'
+                        : 'Count what is physically there and enter it — this gets checked against what the last shift left'}
                     </p>
                   </div>
                 </div>
@@ -252,10 +291,60 @@ export default function ShiftStartModal({ onComplete }) {
                     <Loader2 className="w-6 h-6 animate-spin" />
                     <span className="text-sm">Checking the drawer...</span>
                   </div>
-                ) : isFirstOfDay ? (
+                ) : mismatch ? (
+                  <div className="space-y-3 mb-6">
+                    <div className="p-4 bg-bg-3 rounded-xl border border-neon-orange/30 space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-text-3">Expected in the drawer</span>
+                        <span className="font-mono font-bold text-text">₹{Number(mismatch.expected || 0).toLocaleString('en-IN')}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-text-3">You counted</span>
+                        <span className="font-mono font-bold text-text">₹{Number(mismatch.counted || 0).toLocaleString('en-IN')}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm pt-2 border-t border-border">
+                        <span className="text-text-3">{mismatch.difference < 0 ? 'Missing' : 'Extra'}</span>
+                        <span className={`font-mono font-bold ${mismatch.difference < 0 ? 'text-neon-red' : 'text-neon-orange'}`}>
+                          ₹{Math.abs(Number(mismatch.difference || 0)).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs uppercase tracking-wider font-bold text-text-2">
+                        Why doesn't it match?
+                      </label>
+                      <textarea
+                        value={reason}
+                        onChange={e => setReason(e.target.value)}
+                        placeholder="e.g. change was given out of the drawer earlier, or the amount handed over was wrong"
+                        rows={3}
+                        className="w-full bg-bg-3 border border-border text-text text-sm rounded-xl py-3 px-4 focus:border-accent focus:ring-1 focus:ring-accent transition-all outline-none resize-none"
+                        autoFocus
+                      />
+                    </div>
+                    <p className="text-[11px] text-text-3 italic">
+                      This gets sent to the owner along with your name and branch. The drawer opens
+                      with the amount you actually counted, not the expected figure.
+                    </p>
+                    <button
+                      onClick={handleRecount}
+                      className="text-xs text-text-3 hover:text-text underline"
+                    >
+                      Recount instead
+                    </button>
+                  </div>
+                ) : (
                   <div className="space-y-2 mb-6">
+                    {!isFirstOfDay && (
+                      <div className="p-3 mb-1 bg-bg-3 rounded-lg border border-border flex items-center justify-between">
+                        <span className="text-[11px] text-text-3">Last shift left</span>
+                        <span className="font-mono text-sm text-text-2">
+                          ₹{Number(opening.inheritedBalance || 0).toLocaleString('en-IN')}
+                        </span>
+                      </div>
+                    )}
                     <label className="text-xs uppercase tracking-wider font-bold text-text-2">
-                      How much are you putting in the drawer?
+                      {isFirstOfDay ? 'How much are you putting in the drawer?' : 'How much did you count?'}
                     </label>
                     <div className="relative">
                       <span className="absolute left-4 top-1/2 -translate-y-1/2 font-mono text-text-3 text-xl">₹</span>
@@ -271,36 +360,26 @@ export default function ShiftStartModal({ onComplete }) {
                       />
                     </div>
                     <p className="text-[11px] text-text-3 italic">
-                      This is the float the day starts on. Every shift after yours inherits the
-                      drawer rather than being asked again — there is one drawer and it runs until
-                      6 tomorrow morning.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3 mb-6">
-                    <div className="p-4 bg-bg-3 rounded-xl border border-border">
-                      <div className="text-[10px] text-text-3 uppercase tracking-wider font-bold mb-2">
-                        What the last shift left in it
-                      </div>
-                      <div className="text-3xl font-mono font-bold text-neon-green">
-                        ₹{Number(opening.inheritedBalance || 0).toLocaleString('en-IN')}
-                      </div>
-                    </div>
-                    <p className="text-[11px] text-text-3 italic">
-                      This money has already been counted once today. You are not being asked to
-                      count it again or to type it in — you carry on from it, and you count the
-                      drawer when your own shift ends.
+                      {isFirstOfDay
+                        ? 'This is the float the day starts on. Every shift after yours inherits the drawer rather than being asked again — there is one drawer and it runs through the trading day.'
+                        : "Count what's physically in the drawer. If it doesn't match what the last shift left, you'll be asked why."}
                     </p>
                   </div>
                 )}
 
                 <button
                   onClick={handleOpenCash}
-                  disabled={cashLoading || opening === null || (isFirstOfDay && openingBalance === '')}
+                  disabled={cashLoading || opening === null || openingBalance === '' || (mismatch && !reason.trim())}
                   className="w-full py-3.5 rounded-xl text-sm font-bold uppercase tracking-wider flex items-center justify-center gap-2 transition-all bg-accent/10 border border-accent text-accent hover:bg-accent/20 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {cashLoading ? (
                     <Loader2 className="w-5 h-5 animate-spin" />
+                  ) : mismatch ? (
+                    <>
+                      <AlertTriangle className="w-4 h-4" />
+                      Submit & Open Drawer
+                      <ArrowRight className="w-4 h-4" />
+                    </>
                   ) : (
                     <>
                       <Banknote className="w-4 h-4" />

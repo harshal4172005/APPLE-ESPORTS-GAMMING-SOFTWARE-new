@@ -16,6 +16,12 @@ public class Branch
     
     public string? ConfiguredReservationDurations { get; set; }
 
+    /// <summary>Null (the default) means this branch's food/snacks are fully independent.
+    /// Set to share a menu and stock count with every other branch pointing at the same
+    /// FoodGroup — see FoodGroup.cs.</summary>
+    public Guid? FoodGroupId { get; set; }
+    public FoodGroup? FoodGroup { get; set; }
+
     // Navigation
     public ICollection<Operator> Operators { get; set; } = new List<Operator>();
     public ICollection<Pc> Pcs { get; set; } = new List<Pc>();

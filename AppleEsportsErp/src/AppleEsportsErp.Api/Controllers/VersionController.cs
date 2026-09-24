@@ -40,6 +40,24 @@ public class VersionController : ControllerBase
     private Guid CurrentUserId() =>
         Guid.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : Guid.Empty;
 
+    /// <summary>
+    /// The version this exact process is running right now, read straight from the build's own
+    /// assembly (AppleEsportsErp.Api.csproj's &lt;Version&gt;/&lt;AssemblyVersion&gt;) - never a
+    /// hardcoded string that can drift, and not the same thing as "latest" below, which is
+    /// whatever VersionInfo row was published through the update system and may not be what is
+    /// actually installed on this machine. Anonymous and DB-free on purpose: the sidebar renders
+    /// this on every screen, and "what version is live" has to answer even if the database is
+    /// the thing that's broken.
+    /// </summary>
+    [HttpGet("running")]
+    [AllowAnonymous]
+    public IActionResult GetRunningVersion()
+    {
+        var asmVersion = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+        var version = asmVersion == null ? "unknown" : $"{asmVersion.Major}.{asmVersion.Minor}.{asmVersion.Build}";
+        return Ok(ApiResponse<object>.Ok(new { version }));
+    }
+
     [HttpGet("latest")]
     [AllowAnonymous]
     public async Task<IActionResult> GetLatestVersion()
@@ -122,10 +140,12 @@ public class VersionController : ControllerBase
     [Authorize(Policy = "SuperAdminOnly")]
     public async Task<IActionResult> DeleteVersion(int id)
     {
-        var fileName = await _versionService.DeleteVersionAsync(id);
+        var (installerFileName, agentFileName) = await _versionService.DeleteVersionAsync(id);
 
-        if (!string.IsNullOrWhiteSpace(fileName))
+        foreach (var fileName in new[] { installerFileName, agentFileName })
         {
+            if (string.IsNullOrWhiteSpace(fileName)) continue;
+
             var path = Path.Combine(ReleasesController.ResolveReleaseFolder(_env), fileName);
             try { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); }
             catch { /* the record is gone either way; a leftover file on disk harms nothing */ }

@@ -354,7 +354,7 @@ export default function MainDashboardPage() {
               delay={0.6}
             />
             <DashboardStatsCard 
-              title="Online / Wallet" 
+              title="Online / Member Amount"
               value={`₹${(summary?.onlineTotals + summary?.walletTotals || 0).toLocaleString()}`} 
               icon={CreditCard} 
               colorClass="neon-purple"

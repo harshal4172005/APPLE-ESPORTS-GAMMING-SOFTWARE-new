@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using AppleEsportsErp.Application.Interfaces;
+using AppleEsportsErp.Domain.Enums;
 using AppleEsportsErp.Infrastructure.Configuration;
 using AppleEsportsErp.Infrastructure.Data;
 
@@ -101,7 +102,15 @@ public class BranchVersionReporterService : BackgroundService
         // A branch holds exactly one branch row — its own — once it has been adopted. Before
         // adoption it holds none, and there is nothing to report yet: an unadopted branch has no
         // identity Head Office would recognise.
+        //
+        // Ordered, the same way BranchHeartbeatService.BeatAsync already is and for the same
+        // reason: a branch whose local database somehow holds more than one row must still
+        // report the same one every time. Unordered, this and BeatAsync are free to pick
+        // different rows from each other on the same branch - which is exactly how a PC count
+        // taken against one row (35, here) ended up disagreeing with the Sessions grid, built
+        // from the other (16, the real one).
         var branch = await db.Branches.AsNoTracking()
+            .OrderBy(b => b.Id)
             .Select(b => new { b.Id, b.Name })
             .FirstOrDefaultAsync(ct);
 
@@ -111,10 +120,27 @@ public class BranchVersionReporterService : BackgroundService
             return;
         }
 
-        // How many of this branch's gaming PCs are on the current version. Counted from what the
-        // PCs themselves last reported rather than assumed, so "12 of 16 up to date" means
-        // twelve machines said so.
-        var totalPcs = await db.Pcs.CountAsync(p => p.BranchId == branch.Id && !p.IsDeleted, ct);
+        // How many of this branch's gaming PCs are on the current version. Counted from
+        // Pc.AppVersion - what AppleEsports.exe itself last reported (PublicController's
+        // pcs/{id}/app-version, called from MainForm.cs every 30 seconds) - not Pc.AgentVersion,
+        // which is a second, wholly independent program on the same machine (the screen-lock
+        // agent, AppleEsportsAgent.exe) with its own installer component and its own self-update
+        // path. Counting against AgentVersion meant a gaming PC could update for real - the
+        // program a customer actually plays through - and this count would still say it had
+        // not, sometimes for good, if that one release's agent build was never uploaded or the
+        // agent's own update simply had not landed yet. AppVersion is what "the gaming PC got
+        // updated" actually means to somebody looking at the screen.
+        //
+        // AwaitingSetup rows are excluded from the denominator too. Those are seats nobody has
+        // physically claimed yet - a bulk-created placeholder, not a real machine - and counting
+        // them here is why this page could read "0 of 35 up to date" against a branch that only
+        // has sixteen real gaming PCs on the floor: the other nineteen were never going to report
+        // a version because there is no app running on them to report one.
+        var totalPcs = await db.Pcs.CountAsync(
+            p => p.BranchId == branch.Id && !p.IsDeleted && p.State != PcState.AwaitingSetup, ct);
+        var upToDatePcs = await db.Pcs.CountAsync(
+            p => p.BranchId == branch.Id && !p.IsDeleted && p.State != PcState.AwaitingSetup
+                 && p.AppVersion == RunningVersion, ct);
 
         // Written to the branch's OWN database first, before Head Office is even contacted.
         //
@@ -129,7 +155,7 @@ public class BranchVersionReporterService : BackgroundService
         var versions = scope.ServiceProvider.GetRequiredService<IVersionService>();
         try
         {
-            await versions.UpdateBranchVersionStatusAsync(branch.Id, RunningVersion, 0, totalPcs);
+            await versions.UpdateBranchVersionStatusAsync(branch.Id, RunningVersion, upToDatePcs, totalPcs);
         }
         catch (Exception ex)
         {
@@ -139,7 +165,7 @@ public class BranchVersionReporterService : BackgroundService
         var payload = JsonSerializer.Serialize(new
         {
             currentVersion = RunningVersion,
-            upToDateCount = 0,
+            upToDateCount = upToDatePcs,
             totalCount = totalPcs,
         });
 
